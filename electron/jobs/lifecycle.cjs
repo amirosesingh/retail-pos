@@ -10,6 +10,7 @@ const {ShiftGapRecovery,TABLES:SHIFT_GRAPH_TABLES}=require('../sync/shift-gap-re
 const { reportActivity } = require("../db/startup-activity.cjs");
 const {createHistoryPolicyRun}=require('../sync/history-read-scope.cjs');
 const HISTORY_POLICY_UNAVAILABLE='EHISTORY_POLICY_UNAVAILABLE';
+const { bootstrapDiagnostic, tagBootstrapDiagnostic, sqlErrorDiagnostic } = require('../diagnostics.cjs');
 
 class LocalDataLifecycle {
   constructor({connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish=()=>{},historyExecutionProof=()=>false,recoverHeldStatuses=null}){
@@ -17,6 +18,16 @@ class LocalDataLifecycle {
     this.recoverHeldStatuses=recoverHeldStatuses;
     this.historyIndexRecovery=new historyIndex.HistoryIndexRecovery({connectionManager,cloud,jobRepository,jobManager,executionProof:historyExecutionProof,
       onApplied:({branchId})=>this.publish({kind:'general',branchId,source:'cloud',tables:['change_history']})});
+  }
+  syncFailure(result,message){
+    const error=Object.assign(new Error(message),{code:result.code??'ESYNC',...sqlErrorDiagnostic(result)});
+    const registered=this.registry.tables.map(table=>table.cloudTable);
+    const {table:taggedTable,bootstrapPhase:phase,bootstrapOrigin:origin,...fields}=bootstrapDiagnostic(result,registered);
+    let directTable;
+    try{directTable=Object.getOwnPropertyDescriptor(result,'table')?.value;}catch{/* Diagnostics do not replace the failure. */}
+    const table=registered.includes(directTable)?directTable:taggedTable;
+    if(table)error.table=table;
+    return tagBootstrapDiagnostic(error,{...fields,...(table?{table}:{}),...(phase?{phase}:{}),...(origin?{origin}:{})});
   }
   historyIndexAvailable(){return typeof this.cloud.historyIndex==='function'&&typeof this.cloud.historyMissingRows==='function'&&typeof this.cloud.requestContext==='function';}
   async unavailableHistoryPolicy(branchId){
@@ -282,7 +293,7 @@ class LocalDataLifecycle {
       // counts cannot certify that the other rows' updates were applied.
       if(!synced.ok||unrelatedFailure||synced.credentialsInvalid||synced.lastError&&!synced.historyHoldOnly||
         synced.deferredTables?.some(table=>table!=='change_history')||synced.deferredLocalChanges||synced.deferredHeldDeletion||synced.membershipDeferred||Number(synced.failed??0)>0||Number(synced.conflicts??0)>0)
-        throw Object.assign(new Error(synced.error??synced.lastError??'Operational synchronization must complete before protected history can wait.'),{code:synced.code??'ESYNC'});
+        throw this.syncFailure(synced,synced.error??synced.lastError??'Operational synchronization must complete before protected history can wait.');
       const differences=await this.reconcile(branchId,historyDays,{unavailable});
       if(differences.length)throw reconciliationError(differences);
       if(!await this.cachedSnapshotReady(branchId,historyDays,null,{requireOperationalBounds:true}))throw unavailable;
@@ -291,7 +302,7 @@ class LocalDataLifecycle {
       this.databaseService.markReady(detail);
       return{ok:true,...detail,differences};
     }
-    if(!synced.ok)throw Object.assign(new Error(synced.error??"Final synchronization failed."),{code:"ESYNC"});
+    if(!synced.ok)throw this.syncFailure(synced,synced.error??"Final synchronization failed.");
     if(this.deferredHistoryPolicy&&this.historyPending(branchId))await this.historyStep(branchId,{force:true,onActivity});
     reportActivity(onActivity,{phase:"retaining"});
     await this.retain(branchId,historyDays);
@@ -369,7 +380,7 @@ class LocalDataLifecycle {
     const catchUp=async()=>{
       check();reportActivity(onActivity,{phase:"checking"});
       const result=await this.syncCoordinator.runNow({branchId,batchSize:10});check();
-      if(!result.ok)throw Object.assign(new Error(result.error??"Synchronization will retry before reconciliation can finish."),{code:result.code??"ESYNC"});
+      if(!result.ok)throw this.syncFailure(result,result.error??"Synchronization will retry before reconciliation can finish.");
       if(result.credentialsInvalid||result.lastError&&!result.historyHoldOnly)
         throw Object.assign(new Error(result.lastError??"Synchronization authorization must be verified before reconciliation."),{code:result.credentialsInvalid?"EAUTH":"ESYNC"});
       if(result.deferredTables?.length||result.deferredLocalChanges||result.deferredHeldDeletion||Number(result.pending??0)>0||Number(result.failed??0)>0||Number(result.conflicts??0)>0)
@@ -409,13 +420,13 @@ class LocalDataLifecycle {
     const requested=[...new Set((tableNames??[]).map(String).filter(table=>allowed.has(table)))];
     if(!requested.length)return this.reconcile(branchId,historyDays);
     const pushed=await this.syncCoordinator.runNow({branchId,batchSize:10});
-    if(!pushed.ok)throw Object.assign(new Error(pushed.error??"Synchronization failed before repair."),{code:pushed.code??"ESYNC"});
+    if(!pushed.ok)throw this.syncFailure(pushed,pushed.error??"Synchronization failed before repair.");
     for(const tableName of requested){
       if(tableName==='change_history')await this.historyStep(branchId,{force:true});
       else await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName});
     }
     const pulled=await this.syncCoordinator.runNow({branchId,batchSize:10});
-    if(!pulled.ok)throw Object.assign(new Error(pulled.error??"Synchronization failed after repair."),{code:pulled.code??"ESYNC"});
+    if(!pulled.ok)throw this.syncFailure(pulled,pulled.error??"Synchronization failed after repair.");
     return this.reconcile(branchId,historyDays);
   }
   async verify(branchId,historyDays=90,tableNames=[]){

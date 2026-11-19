@@ -9,6 +9,13 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const fail = (code = "ELEGACY_RECOVERY_SCOPE") => { throw Object.assign(new Error("Saved closing recovery is not ready or requires administrator review. Existing shift records remain intact."), { code, table: "shifts" }); };
 const id = value => { const text = recordId(value); if (!UUID.test(text)) fail(); return text; };
+// Branch/terminal identities are protocol labels, not record UUIDs. Keep exact
+// text scopes; canonicalize UUID labels without broadening source authority.
+const scopeLabel = value => {
+  const text = recordId(value);
+  if (typeof text !== "string" || !text || text.length > 128 || text !== text.trim() || /[\u0000-\u001f\u007f]/.test(text)) fail();
+  return text;
+};
 const limitOf = value => { if (!Number.isSafeInteger(value) || value < 1 || value > 100) fail(); return value; };
 class LegacyShiftRecoveryService {
   constructor({ connectionManager, registry, cloud, evidenceStore, outbox, authority, readContext, adopter = null }) {
@@ -40,7 +47,7 @@ class LegacyShiftRecoveryService {
   context() {
     const context = this.readContext();
     if (!context || typeof context !== "object" || !HASH.test(context.backendOriginHash) || typeof context.profileKey !== "string" || !context.profileKey || context.profileKey.length > 16384) fail();
-    return { branchId: id(context.branchId), terminalId: id(context.terminalId), backendOriginHash: context.backendOriginHash, profileKey: context.profileKey };
+    return { branchId: scopeLabel(context.branchId), terminalId: scopeLabel(context.terminalId), backendOriginHash: context.backendOriginHash, profileKey: context.profileKey };
   }
   capture(admin = false) {
     const context = this.context(), pool = this.connectionManager.pool, approval = admin ? this.authority.capture() : null;
@@ -318,7 +325,7 @@ class LegacyShiftRecoveryService {
     });
   }
   pushPending({ branchId, limit = 5 }) {
-    branchId = id(branchId); limitOf(limit);
+    branchId = scopeLabel(branchId); limitOf(limit);
     const pool = this.connectionManager.pool;
     if (this.pushing) {
       if (this.pushing.pool !== pool || this.pushing.branchId !== branchId) fail("ELEGACY_RECOVERY_BUSY");
@@ -330,18 +337,29 @@ class LegacyShiftRecoveryService {
       if (!await this.capability()) return Object.freeze({ skipped: true, reason: "UPGRADE_REQUIRED", acknowledged: 0, pushed: 0, pending: 0 });
       const capture = this.capture(); run.capture = capture;
       if (capture.pool !== pool || branchId !== capture.context.branchId) fail("SYNC_BRANCH_FORBIDDEN");
-      const events = await this.atomic(capture, async (tx, scope) => {
+      const selection = await this.atomic(capture, async (tx, scope) => {
         if (!await this.hasSchema(tx)) return null;
         const pending = [...await this.outbox.pending(tx, scope, { limit })];
+        let adoptionAvailable = false;
         if (this.adopter && pending.length < limit) {
-          const available = await this.adoptionAvailable(tx);
-          for (const recoveryId of await this.convergence(tx, scope, { limit: limit - pending.length, available })) {
+          adoptionAvailable = await this.adoptionAvailable(tx);
+          for (const recoveryId of await this.convergence(tx, scope, { limit: limit - pending.length, available: adoptionAvailable })) {
             const event = await this.outbox.load(tx, scope, recoveryId); if (!event) fail("ELEGACY_RECOVERY_PENDING_STATE"); pending.push(event);
           }
         }
-        return pending;
+        if (pending.length) return { events: pending };
+        // Both scoped ranges were just read empty under this serializable
+        // transaction. Keep the remaining schema verification, then reuse that
+        // empty proof instead of starting another transaction to repeat every
+        // catalog preflight and count. Never cache it across cycles or writes.
+        await this.evidenceStore.preflight(tx, scope);
+        return { events: pending, emptySummary: Object.freeze(this.adopter
+          ? { available: true, adoptionAvailable, uploadPending: 0, convergencePending: 0, pending: 0 }
+          : { available: true, pending: 0 }) };
       });
-      if (events === null) return Object.freeze({ skipped: true, reason: "UPGRADE_REQUIRED", acknowledged: 0, pushed: 0, pending: 0 });
+      if (selection === null) return Object.freeze({ skipped: true, reason: "UPGRADE_REQUIRED", acknowledged: 0, pushed: 0, pending: 0 });
+      const { events, emptySummary } = selection;
+      if (emptySummary) return Object.freeze({ skipped: false, acknowledged: 0, pushed: 0, ...emptySummary, downloadRecoveryComplete: false });
       let acknowledged = 0;
       for (const event of events) {
         this.assertCurrent(capture);

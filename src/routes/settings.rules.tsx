@@ -37,6 +37,8 @@ import { changedDrawerLimit, hasVerifiedRulesBaseline, offlineRulesPatch, reconc
 import { isTransientRulesSaveFailure } from "@/lib/pos-rules-failure";
 import { canonicalBranchId, sameBranchId } from "@/lib/branch-id";
 import type { LocalSyncStatus, StoreSettingsEditReview, StoreSettingsEditUpload } from "@/core/local-db/local-db";
+import { localDb } from "@/core/local-db/local-db";
+import { resolveLocalWriteRoute } from "@/core/local-db/write-route";
 
 const uploadLabels: Partial<Record<StoreSettingsEditUpload["status"], string>> = {
   PENDING: "Edit saved on this till and waiting to upload. Current rules stay in effect.",
@@ -197,6 +199,8 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
   }, [editorScope, rules, rowVersion, drawerLimit]);
 
   const dirty = !rulesEqual(draft, rules) || changedDrawerLimit(drawerLimit, rules.max_drawer_cash_limit);
+  const centralRulesOnly = dirty && Boolean(localDb()) &&
+    !offlineRulesPatch(draft, draftBase.current?.rules ?? rules, drawerLimit);
   const idleDirty = idleLoaded && savedIdle !== null && idle !== savedIdle;
   const hasReviewHold = upload?.status === "REVIEW_REQUIRED" && sameBranchId(upload.branchId, currentStore.id);
   const canReview = mayEdit && hasReviewHold && sameBranchId(branchId, currentStore.id) &&
@@ -240,27 +244,27 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
     let submittedOnline = false;
     try {
       assertContext();
-      const queue = typeof window !== "undefined" ? window.pos?.queueStoreSettingsEdit : undefined;
+      const bridge = localDb();
+      const route = await resolveLocalWriteRoute(bridge);
+      assertContext();
       const offline = (source === "LAST_KNOWN_GOOD" && failure === "network") ||
         (source === "DATABASE" && typeof navigator !== "undefined" && navigator.onLine === false);
-      if (queue && offline) {
+      const base = draftBase.current ?? { rules, version: rowVersion };
+      const patch = offlineRulesPatch(draft, base.rules, drawerLimit);
+      if (route === "local" && patch) {
         if (uncertainOnlineSave.current === editorScope) {
           toast.error("The earlier online save could not be confirmed. Reconnect before saving again.");
           return;
         }
-        const base = draftBase.current ?? { rules, version: rowVersion };
-        const patch = offlineRulesPatch(draft, base.rules, drawerLimit);
-        if (!patch) {
-          toast.error("These edits need a connection to head office, or a valid drawer cash limit. Your draft is still open.");
-          return;
-        }
+        const queue = bridge?.queueStoreSettingsEdit;
+        if (!queue) throw Object.assign(new Error("The local store settings writer is unavailable. Your draft is still open. Retry after the local database is ready."), { code: "ELOCAL_NOT_READY" });
         const key = JSON.stringify([editorScope, base.version, patch]);
         if (queuedAttempt.current?.key !== key) queuedAttempt.current = { key, operationId: crypto.randomUUID() };
         const operationId = queuedAttempt.current.operationId;
         const result = await queue({ branchId: canonicalBranchId(currentStore.id), expectedVersion: base.version, operationId, patch });
         assertContext();
         if (!result.ok || result.operationId !== operationId) {
-          toast.error(result.error ?? "The offline save could not be confirmed. Your draft is still open.");
+          toast.error(result.error ?? "The local save could not be confirmed. Your draft is still open.");
           return;
         }
         queuedAttempt.current = null;
@@ -269,6 +273,10 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
         setDrawerLimit(null);
         setUpload({ status: "PENDING", branchId: currentStore.id });
         toast.success("Rules edit queued for synchronization");
+        return;
+      }
+      if (route === "local" && offline) {
+        toast.error("These edits need a connection to head office, or a valid drawer cash limit. Your draft is still open.");
         return;
       }
       const auth = await getPosCallerAuth();
@@ -561,6 +569,11 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
           </div>
         </section>
 
+        {mayEdit && centralRulesOnly && (
+          <p role="status" className="text-sm text-muted-foreground">
+            These rule changes need a head-office connection. They save centrally and then download to this till; the current rules stay in effect until confirmed.
+          </p>
+        )}
         {mayEdit && (
           <div className="sticky bottom-0 -mx-6 flex items-center gap-3 border-t border-border bg-background/95 px-6 py-3 backdrop-blur">
             <SaveIndicator

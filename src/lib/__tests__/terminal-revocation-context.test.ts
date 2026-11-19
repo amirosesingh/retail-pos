@@ -32,6 +32,7 @@ function fixture() {
     lookup: async (_tokenId: string, _client: unknown): Promise<typeof used | null> => used,
     mobile: false,
     hydrated: true,
+    lastSyncAt: null as string | null,
     restore: async (): Promise<TerminalConfig | null> => state.config,
   };
   const terminalListeners = new Set<() => void>();
@@ -68,7 +69,7 @@ function fixture() {
       },
     },
     "@/platform-config/features": { isMobileShell: () => state.mobile },
-    "@/lib/sync-status": { syncState: () => ({ lastSyncAt: null }) },
+    "@/lib/sync-status": { syncState: () => ({ lastSyncAt: state.lastSyncAt }) },
     "@/lib/external-supabase-config": { supabaseConfig: () => {
       if (!state.source) throw new Error("Connection unavailable");
       return state.source;
@@ -94,7 +95,7 @@ function fixture() {
       if (!(name in modules)) throw new Error(`Unexpected dependency ${name}`);
       return modules[name];
     },
-    setTimeout, clearTimeout, navigator: { onLine: true },
+    Date, setTimeout, clearTimeout, navigator: { onLine: true },
     window: {
       localStorage: { getItem: (key: string) => local.get(key) ?? null, setItem: (key: string, value: string) => local.set(key, value), removeItem: (key: string) => local.delete(key) },
       addEventListener(name: string, listener: () => void) {
@@ -128,6 +129,67 @@ function fixture() {
 afterEach(() => vi.useRealTimers());
 
 describe("terminal revocation connection ownership", () => {
+  it("keeps ten-second security reads while writing idle presence at most once per minute", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-18T00:00:00Z"));
+    const f = fixture(); f.render(); await settle();
+    for (let tick = 0; tick < 5; tick++) {
+      await vi.advanceTimersByTimeAsync(10_000); f.fire("focus"); await settle();
+    }
+    expect(f.fetchStatus).toHaveBeenCalledTimes(6);
+    expect(f.heartbeat).toHaveBeenCalledOnce(); expect(f.writeRecord).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(10_000); f.fire("focus"); await settle();
+    expect(f.fetchStatus).toHaveBeenCalledTimes(7); expect(f.heartbeat).toHaveBeenCalledTimes(2);
+    f.cleanup();
+  });
+
+  it("retries failed presence writes on the next security check instead of throttling a failure", async () => {
+    vi.useFakeTimers();
+    const f = fixture(); f.heartbeat.mockRejectedValueOnce(new Error("Network unavailable"));
+    f.render(); await settle(); expect(f.writeRecord).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(10_000); f.fire("focus"); await settle();
+    expect(f.heartbeat).toHaveBeenCalledTimes(2); expect(f.writeRecord).toHaveBeenCalledOnce();
+    f.cleanup();
+  });
+
+  it("coalesces mounted checkers during an in-flight write without claiming another owner's sync or receipt", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-18T00:00:00Z"));
+    const f = fixture(), reply = deferred<void>(); f.heartbeat.mockImplementationOnce(() => reply.promise);
+    f.render(2); await settle();
+    await vi.advanceTimersByTimeAsync(10_000); f.state.lastSyncAt = new Date().toISOString(); f.fire("focus"); await settle();
+    expect(f.fetchStatus).toHaveBeenCalledTimes(3); expect(f.heartbeat).toHaveBeenCalledOnce();
+    reply.resolve(); await settle(); expect(f.writeRecord).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(60_000); f.fire("focus"); await settle();
+    expect(f.heartbeat).toHaveBeenCalledTimes(2);
+    expect(f.heartbeat).toHaveBeenLastCalledWith(f.original.tokenId, { synced: true }, f.state.client); f.cleanup();
+  });
+
+  it("continues immediate revocation checks inside the presence-write interval", async () => {
+    vi.useFakeTimers();
+    const f = fixture(); f.render(); await settle();
+    f.state.lookup = async () => ({ ...used, status: "revoked" });
+    await vi.advanceTimersByTimeAsync(10_000); f.fire("focus"); await settle();
+    expect(f.clear).toHaveBeenCalledOnce(); expect(f.isTerminalRevoked()).toBe(true);
+    expect(f.heartbeat).toHaveBeenCalledOnce(); f.cleanup();
+  });
+
+  it("does not carry a heartbeat throttle across a concrete connection reset", async () => {
+    const f = fixture(); f.render(); await settle();
+    f.changeSource({ ...f.state.source! }, f.state.client);
+    f.fire("focus"); await settle();
+    expect(f.heartbeat).toHaveBeenCalledTimes(2); f.cleanup();
+  });
+
+  it("reports a new completed sync on the next due heartbeat rather than losing it while throttled", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-18T00:00:00Z"));
+    const f = fixture(); f.render(); await settle();
+    await vi.advanceTimersByTimeAsync(10_000); f.state.lastSyncAt = new Date().toISOString(); f.fire("focus"); await settle();
+    expect(f.heartbeat).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(50_000); f.fire("focus"); await settle();
+    expect(f.heartbeat).toHaveBeenLastCalledWith(f.original.tokenId, { synced: true }, f.state.client);
+    await vi.advanceTimersByTimeAsync(60_000); f.fire("focus"); await settle();
+    expect(f.heartbeat).toHaveBeenLastCalledWith(f.original.tokenId, { synced: false }, f.state.client); f.cleanup();
+  });
+
   it("keeps activation hidden after secure restore fails and retries on focus", async () => {
     const f = fixture();
     f.state.config = null; f.state.hydrated = false;

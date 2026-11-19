@@ -14,6 +14,7 @@ const messages = Object.freeze({
   EACTIVATION_REPAIR_ONLINE_STORE: "The preserved online recovery setup could not be verified. Your previous setup has been kept. Retry recovery before changing registration.",
   EACTIVATION_REPAIR_ONLINE_TARGET: "This online recovery already has a replacement registration. Retry the same activation code or retry saved registration.",
   EACTIVATION_REPAIR_ONLINE_LIMIT: "The preserved recovery history needs review before another registration. All previous setups have been kept.",
+  EACTIVATION_REPAIR_CURRENT_LOCAL: "This registration has a saved current local database. Keep its setup and pending work for verified recovery before changing registration again.",
 });
 const refusal = code => ({ ok: false, ready: false, code, error: messages[code],
   ...(code === "EACTIVATION_REPAIR_DATABASE" ? { requiresLocalDatabase: true } : {}) });
@@ -30,7 +31,7 @@ const target = profile => {
 // so an empty replacement database cannot stand in for the previous local work.
 function createTerminalRepair({ terminalStore, activationBoundary, adminSession, databaseManager,
   databaseConfig, cloudCredentials, configStore, withExclusive, canCheck = () => true,
-  onlineRecovery = null, onlineBusy = () => false, onOnlineHold = () => {} }) {
+  onlineRecovery = null, onlineBusy = () => false, onOnlineHold = () => {}, assertNoCurrentLocalAdmission = () => {} }) {
   let pinned = null;
   const authorized = () => adminSession.hasLevel("admin") || adminSession.recoveryActive();
   const capture = () => ({
@@ -67,6 +68,7 @@ function createTerminalRepair({ terminalStore, activationBoundary, adminSession,
       error?.code === "EONLINE_RECOVERY_STORE" ? "EACTIVATION_REPAIR_ONLINE_STORE" :
       error?.code === "EONLINE_RECOVERY_TARGET" ? "EACTIVATION_REPAIR_ONLINE_TARGET" :
       error?.code === "EONLINE_RECOVERY_LIMIT" ? "EACTIVATION_REPAIR_ONLINE_LIMIT" :
+      error?.code === "ECURRENT_LOCAL_RETAINED" ? "EACTIVATION_REPAIR_CURRENT_LOCAL" :
       /^(?:EONLINE_RECOVERY_CONTEXT|EONLINE_RECOVERY_NOT_READY)$/.test(error?.code ?? "") ? "EACTIVATION_REPAIR_CONTEXT" :
       error?.code === "ESETTINGS_EDIT_PENDING" ? "EACTIVATION_REPAIR_PENDING" : "EACTIVATION_REPAIR_CHECK"); }
   };
@@ -76,6 +78,7 @@ function createTerminalRepair({ terminalStore, activationBoundary, adminSession,
   const onlineReady = () => {
     if (!authorized()) fail("EPRIVILEGE");
     if (!canCheck()) fail("EACTIVATION_REPAIR_CONTEXT");
+    assertNoCurrentLocalAdmission();
     assertNoLocalConnection();
     if (databaseManager.pool) fail("EACTIVATION_REPAIR_ONLINE_BUSY");
     onlineRecovery.assertOnlineReady();
@@ -121,6 +124,7 @@ function createTerminalRepair({ terminalStore, activationBoundary, adminSession,
       return { ok: true, ready: true };
     }),
     continueOnline: evidence => guarded(async () => {
+      assertNoCurrentLocalAdmission();
       if (!onlineRecovery) fail("EACTIVATION_REPAIR_CHECK");
       const saved = check({ allowMissingProfile: true });
       if (!saved.previous) fail("EACTIVATION_REPAIR_STORE");
