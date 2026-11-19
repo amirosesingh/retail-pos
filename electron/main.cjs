@@ -58,16 +58,21 @@ const adminSession = require("./admin-session.cjs");
 let sessionAdoptionRevision = 0;
 const { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin } = require("./synced-staff-login.cjs");
 
-const databaseConfig = createSecureConfig({ app, safeStorage, configStore });
 const databaseManager = new ConnectionManager();
 const terminalOnlineRecovery = require("./terminal-online-recovery.cjs").createTerminalOnlineRecovery({
   app, safeStorage, configStore, terminalStore, cloudCredentials,
   activationBoundary: require("./verified-activation.cjs"),
 });
+const currentLocalAdmission = require("./current-local-admission.cjs").createCurrentLocalAdmission({
+  app, safeStorage, onlineRecovery: terminalOnlineRecovery, terminalStore,
+  activationBoundary: require("./verified-activation.cjs"),
+});
+const databaseConfig = createSecureConfig({ app, safeStorage, configStore, recoveryLocal: currentLocalAdmission });
 const databaseService = new DatabaseService({
   secureConfig: databaseConfig,
   manager: databaseManager,
-  localRecoveryPending: () => terminalOnlineRecovery.pending(),
+  localRecoveryPending: () => currentLocalAdmission.pending(),
+  recoveryLocal: currentLocalAdmission,
   migrate: (profile) => applyMigrations(databaseManager, profile),
   prepareRecoveryMetadata: prepareShiftRecoveryMetadata,
   log: diagnostics.logConnection,
@@ -360,6 +365,7 @@ const terminalRepair = require("./terminal-repair.cjs").createTerminalRepair({
   terminalStore,activationBoundary,adminSession,databaseManager,databaseConfig,cloudCredentials,configStore,
   withExclusive:work=>syncCoordinator.withExclusive(work),canCheck:()=>!quitting&&!closeWriteBarrier.sealed,
   onlineRecovery:terminalOnlineRecovery,
+  assertNoCurrentLocalAdmission:()=>currentLocalAdmission.assertNoCurrentAdmission(),
   onlineBusy:()=>closeWriteBarrier.active.size>1||recoveryMetadataGate.control.size>1||jobManager.running||Boolean(localDataPreparePromise)||
     ["enabled_connecting","enabled_validating","enabled_bootstrapping"].includes(databaseService.snapshot().state),
   onOnlineHold:()=>databaseService.holdLocalRecovery(),
@@ -503,6 +509,7 @@ async function observedDatabaseOperation(category, stage, work) {
     const result = await work();
     if (result?.ok === false) diagnostics.logConnection(`${category}.${stage}.failed`, {
       category, stage, code: result.code ?? "EDATABASE", message: result.error ?? result.message ?? "The database operation did not complete.",
+      ...diagnostics.sqlErrorDiagnostic?.(result),
     });
     else if (result?.historyPending === true || result?.historyHoldOnly === true)
       diagnostics.logConnection(`${category}.${stage}.pending`, { category, stage, state: "history_recovery" });
@@ -511,6 +518,7 @@ async function observedDatabaseOperation(category, stage, work) {
   } catch (error) {
     diagnostics.logConnection(`${category}.${stage}.failed`, {
       category, stage, code: error?.code ?? "EDATABASE", message: error?.message ?? String(error),
+      ...diagnostics.sqlErrorDiagnostic?.(error),
     });
     throw error;
   }
@@ -542,7 +550,7 @@ function prepareLocalData({force=false}={}){
       const detail={phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences};
       if(localDataLifecycle.preserveCachedReady?.())databaseService.markReady(detail);
       else databaseService.transition("enabled_bootstrapping",detail);
-      diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.bootstrapDiagnostic(error,syncRegistry.tables.map(table=>table.cloudTable)) });
+      diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.sqlErrorDiagnostic?.(error), ...diagnostics.bootstrapDiagnostic(error,syncRegistry.tables.map(table=>table.cloudTable)) });
       throw error;
     }finally{activity.finish(preparationError);}
   })().finally(()=>{localDataPreparePromise=null;});
@@ -604,6 +612,10 @@ function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS,{historyContinuation=fals
   automaticSyncScheduler.schedule(delay);
 }
 async function runAutomaticSync() {
+  if(databaseService.snapshot().localRecoveryPending){
+    if(databaseService.canRestoreAdmitted())await recoverLocalDatabase({prepare:false}).catch(error=>recordFault("database.current-local-reconnect",error));
+    scheduleAutomaticSync(AUTO_SYNC_RETRY_MS);return;
+  }
   if(isManagementDevice()){
     const decision=historyCadence.decision(),revision=historyCadence.beginCore();
     if(decision==='wait'){scheduleAutomaticSync(historyCadence.nextDelay(),{historyContinuation:true});return;}
@@ -664,12 +676,13 @@ async function runAutomaticSync() {
     diagnostics.logConnection("synchronization.automatic.recovering", { category:"synchronization", stage:"automatic", state:"recovering", ...diagnostics.bootstrapDiagnostic(result,syncRegistry.tables.map(table=>table.cloudTable)) });
     try {
       result = await prepareLocalData({ force: true });
+      failure = result;
     } catch (error) {
       failure = error;
-      result = { ok: false, code:error?.code??"EBOOTSTRAP", error: String(error?.message ?? error) };
+      result = { ok: false, code:error?.code??"EBOOTSTRAP", error: String(error?.message ?? error), ...diagnostics.sqlErrorDiagnostic?.(error) };
     }
   }
-  if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed.", ...diagnostics.bootstrapDiagnostic(failure,syncRegistry.tables.map(table=>table.cloudTable)) });
+  if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed.", ...diagnostics.sqlErrorDiagnostic?.([result,failure]), ...diagnostics.bootstrapDiagnostic(failure,syncRegistry.tables.map(table=>table.cloudTable)) });
   const scopedReaderUnavailable = result.historyPending === true && result.code === "EHISTORY_POLICY_UNAVAILABLE";
   const coreComplete = result.ok && !scopedReaderUnavailable;
   historyCadence.finishCore(coreRevision,{ok:coreComplete,nextMs:coreComplete?Math.max(250,AUTO_SYNC_OK_MS-(Date.now()-lastActivityFlush)):AUTO_SYNC_RETRY_MS});
@@ -880,7 +893,7 @@ function recordFault(scope, error) {
     severity: fatal ? "fatal" : "recoverable",
     ...(error?.stage ? { stage: String(error.stage).slice(0, 80) } : {}),
     ...(error?.table ? { table: String(error.table).slice(0, 80) } : {}),
-    ...(error?.sqlNumber != null ? { sqlNumber: Number(error.sqlNumber) } : {}),
+    ...diagnostics.sqlErrorDiagnostic?.(error),
     ...(error?.sqlDetail ? { sqlDetail: String(error.sqlDetail).slice(0, 500) } : {}),
     stack: String(error?.stack ?? "")
       .split("\n")
@@ -2135,6 +2148,8 @@ function registerIpc() {
     writeBarrier: {run:work=>recoveryMetadataGate.run(()=>closeWriteBarrier.run(work))},
     isManagementDevice,
     isLocalRecoveryPending:()=>databaseService.snapshot().localRecoveryPending===true,
+    canConfigureLocalRecovery:()=>databaseService.canConfigureRecovery(),
+    isRetainedLocalRecoveryPending:()=>currentLocalAdmission.pending(),
   });
   recoveryMetadataGate.install(ipcMain);
   ipcMain.handle("admin:status", () => adminSession.status());
@@ -2357,6 +2372,8 @@ function registerIpc() {
     try{
       const preflight=await observedDatabaseOperation("migration","preflight",() => databaseService.health());
       if(!preflight.ok){databaseService.migrationFailed(preflight);return{...preflight,state:databaseService.snapshot()};}
+      try{await databaseService.verifyRecoveryPool(databaseConfig.credentials());}
+      catch(error){const failure=databaseService.recoveryError(error);databaseService.migrationFailed(failure);return{...failure,state:databaseService.snapshot()};}
       const migrated=await observedDatabaseOperation("migration","apply",() => applyMigrations(databaseManager));
       if(!migrated.ok){databaseService.migrationFailed(migrated);return{...migrated,state:databaseService.snapshot()};}
       const state=await databaseService.revalidateConnected();
@@ -3257,7 +3274,7 @@ app.on("before-quit", (event) => {
       result = { ok: false, error: String(error?.message ?? error) };
     }
     if (result?.ok === false) {
-      recordFault("shutdown.shift-sync", new Error(result.error ?? "Mandatory shift synchronization failed."));
+      recordFault("shutdown.shift-sync", Object.assign(new Error(result.error ?? "Mandatory shift synchronization failed."), diagnostics.sqlErrorDiagnostic?.(result)));
       quitting = false;
       shutdownFlushStarted = false;
       scheduleAutomaticSync(250);

@@ -268,6 +268,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261107024729_bounded_held_status_reconciliation.sql",
       "supabase/migrations/20261107060000_reviewed_held_sale_graph.sql",
       "supabase/migrations/20261107094311_add_scoped_history_transport.sql",
+      "supabase/migrations/20261117052540_sale_item_parent_sync_scope.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

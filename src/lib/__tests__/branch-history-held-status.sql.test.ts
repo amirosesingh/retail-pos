@@ -35,6 +35,11 @@ describe("branch history and bounded held-status SQL preparation", () => {
       expect(history.md5(entry.definition)).toBe(entry.definition_md5);
     }
     const schema = readFileSync("supabase/schema.sql", "utf8").replaceAll("\r\n", "\n");
+    // Replaying any one predecessor must preserve the later sale-item repair.
+    // Its source guards require it to execute after history and transport.
+    expect(canonical.withHistoryScopeContract(schema, historySql)).toBe(schema);
+    expect(canonical.withBoundedHeldStatusContract(schema, heldSql)).toBe(schema);
+    expect(canonical.withScopedHistoryTransportContract(schema, transportSql)).toBe(schema);
     expect(canonical.withScopedHistoryTransportContract(canonical.withBoundedHeldStatusContract(canonical.withHistoryScopeContract(schema, historySql), heldSql),transportSql)).toBe(schema);
     for (const sql of [historySql, heldSql, transportSql]) {
       expect(sql).not.toMatch(/^\s*(BEGIN|COMMIT)\s*;/mi);
@@ -47,5 +52,7 @@ describe("branch history and bounded held-status SQL preparation", () => {
     expect(schema.indexOf("-- BOUNDED_HELD_STATUS_BEGIN")).toBeLessThan(hardening);
     expect(schema.indexOf("-- SCOPED_HISTORY_TRANSPORT_BEGIN")).toBeGreaterThan(schema.indexOf("-- HISTORY_SCOPE82_END"));
     expect(schema.indexOf("-- SCOPED_HISTORY_TRANSPORT_END")).toBeLessThan(hardening);
+    expect(schema.indexOf("-- SALE_ITEM_PARENT_SYNC_SCOPE_V1_BEGIN")).toBeGreaterThan(schema.indexOf("-- SCOPED_HISTORY_TRANSPORT_END"));
+    expect(schema.indexOf("-- SALE_ITEM_PARENT_SYNC_SCOPE_V1_END")).toBeLessThan(hardening);
   });
 });

@@ -13,6 +13,8 @@ import { serviceRest, serviceKey } from "@/core/api/pos-relay.server";
 import { sameBranchId } from "./branch-id";
 
 export type TerminalAccount = { email: string; password: string };
+type TerminalProfile = { user_id: string; email: string; auth_user_id: string | null;
+  role: string; is_active: boolean; store_id: string | null };
 
 const emailFor = (tokenId: string) => `terminal.${tokenId}@pos.local`;
 
@@ -99,7 +101,8 @@ export async function ensureTerminalAccount(
   if (created.ok) {
     userId = ((await created.json()) as { id?: string }).id ?? null;
   } else {
-    // Already exists: look it up and reset the password to the derived value.
+    // Already exists: locate the identity, then verify its public profile before
+    // resetting credentials. A conflicting human/branch profile is not repairable here.
     // Auth does not support an exact email filter on this list endpoint.
     // Search actual page contents instead of assuming the first user matches.
     for (let page = 1; page <= 20 && !userId; page++) {
@@ -111,22 +114,25 @@ export async function ensureTerminalAccount(
       if (body.users.length < 1000) break;
     }
     if (!userId) throw new Error("Could not prepare this terminal's account");
-    const repaired = await adminFetch(`admin/users/${userId}`, {
-      method: "PUT",
-      body: JSON.stringify({ password, email_confirm: true }),
-    });
-    if (!repaired.ok) throw new Error("Could not repair this terminal's account");
   }
+  if (typeof userId !== "string" || !userId) throw new Error("Could not prepare this terminal's account");
 
   if (userId) {
-    const existingResponse = await serviceRest(`app_users?email=eq.${encodeURIComponent(email)}&select=user_id,auth_user_id,role,is_active,store_id`);
-    if (!existingResponse.ok) throw new Error("Could not verify this terminal account profile");
-    const existing = ((await existingResponse.json()) as {
-      user_id: string; auth_user_id: string | null; role: string; is_active: boolean; store_id: string | null;
-    }[])[0];
-    if (existing && (existing.auth_user_id !== userId || existing.role !== "staff" ||
-        !sameBranchId(existing.store_id, token.location_id)))
-      throw new Error("This terminal account profile needs administrator review");
+    const readProfile = async (filter: string): Promise<TerminalProfile | null> => {
+      const response = await serviceRest(`app_users?${filter}&select=user_id,email,auth_user_id,role,is_active,store_id&limit=2`);
+      if (!response.ok) throw new Error("Could not verify this terminal account profile");
+      const rows: unknown = await response.json();
+      if (!Array.isArray(rows) || rows.length > 1) throw new Error("This terminal account profile needs administrator review");
+      if (!rows.length) return null;
+      const profile = rows[0] as Partial<TerminalProfile> | null;
+      if (!profile || typeof profile.user_id !== "string" || !profile.user_id ||
+          typeof profile.email !== "string" || profile.email.toLowerCase() !== email ||
+          profile.auth_user_id !== userId || profile.role !== "staff" ||
+          typeof profile.is_active !== "boolean" || !sameBranchId(profile.store_id, token.location_id))
+        throw new Error("This terminal account profile needs administrator review");
+      return profile as TerminalProfile;
+    };
+    const existing = await readProfile(`email=eq.${encodeURIComponent(email)}`);
     if (existing?.is_active === false) {
       if (!created.ok) throw new Error("This terminal account is inactive. Ask an administrator to review it.");
       // Auth's signup trigger starts every new profile disabled. Only this
@@ -143,12 +149,15 @@ export async function ensureTerminalAccount(
     // Existing profiles already carry the verified account/branch link. Do not
     // overwrite administrator changes or a legacy username merely to sign in.
     if (!existing) {
-      const profile = await serviceRest("app_users?on_conflict=email", {
+      const username = `terminal-${tokenId}`;
+      // Email is deliberately non-unique. The full machine username has a real
+      // unique constraint, so retries can ignore only that exact identity.
+      const profile = await serviceRest("app_users?on_conflict=user_id", {
         method: "POST",
         prefer: "return=representation,resolution=ignore-duplicates",
         body: JSON.stringify([
           {
-            user_id: `terminal-${tokenId}`,
+            user_id: username,
             full_name: `Terminal ${token.location_name ?? tokenId.slice(0, 8)}`,
             email,
             role: "staff",
@@ -159,10 +168,18 @@ export async function ensureTerminalAccount(
         ]),
       });
       if (!profile.ok) throw new Error("Could not authorize this terminal account");
-      // An Auth signup trigger or another request may have won the same email.
-      // Never silently return credentials for an unverified competing profile.
-      const inserted = (await profile.json()) as unknown[];
-      if (!inserted.length) throw new Error("This terminal account profile changed. Retry the registration check.");
+      // Both a new insert and an ignored concurrent retry require a read-back
+      // of the stable username, exact Auth identity, branch, role and active state.
+      const saved = await readProfile(`user_id=eq.${encodeURIComponent(username)}`);
+      if (!saved || saved.user_id !== username || saved.is_active !== true)
+        throw new Error("This terminal account profile changed. Retry the registration check.");
+    }
+    if (!created.ok) {
+      const repaired = await adminFetch(`admin/users/${userId}`, {
+        method: "PUT",
+        body: JSON.stringify({ password, email_confirm: true }),
+      });
+      if (!repaired.ok) throw new Error("Could not repair this terminal's account");
     }
     const role = await serviceRest("user_roles?on_conflict=user_id,role", {
       method: "POST",

@@ -143,6 +143,7 @@ const repairMessages: Record<string, string> = {
   EACTIVATION_REPAIR_ONLINE_STORE: "The previous local setup could not be preserved safely. Keep it unchanged and retry continuing online.",
   EACTIVATION_REPAIR_ONLINE_TARGET: "This online recovery already has a replacement registration. Retry the same activation code or retry saved registration.",
   EACTIVATION_REPAIR_ONLINE_LIMIT: "The preserved recovery history needs review before another registration. All previous setups have been kept.",
+  EACTIVATION_REPAIR_CURRENT_LOCAL: "This registration has a current local database. Keep its saved work and verify its recovery before changing registration again.",
 };
 const repairFailure = (code?: string) => repairMessages[code ?? ""] ?? "The previous local setup could not be checked. Keep it unchanged and retry the check.";
 const repairableRegistration = (code: string | null) => [

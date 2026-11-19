@@ -346,6 +346,7 @@ try {
       for (const path of ["scripts/generate-supabase-sync-contract.cjs", "scripts/sqlserver-sync-policy.cjs",
         "scripts/history-index-canonical.cjs",
         "scripts/history-scope-canonical.cjs",
+        "scripts/sale-item-sync-scope.cjs",
         "scripts/preparation/shift-branch-sharing.sql",
         "database/sqlserver/schema-registry.json", "supabase/schema.sql", `supabase/migrations/${correctionName}`,
         "supabase/migrations/20261030153259_confirm_shift_closure_sync_acknowledgement.sql",
@@ -363,7 +364,8 @@ try {
         "supabase/migrations/20261107021328_isolate_branch_history_sync.sql",
         "supabase/migrations/20261107024729_bounded_held_status_reconciliation.sql",
         "supabase/migrations/20261107060000_reviewed_held_sale_graph.sql",
-        "supabase/migrations/20261107094311_add_scoped_history_transport.sql"]) {
+        "supabase/migrations/20261107094311_add_scoped_history_transport.sql",
+        "supabase/migrations/20261117052540_sale_item_parent_sync_scope.sql"]) {
         await mkdir(dirname(join(fixture, path)), { recursive: true });
         await copyFile(join(root, path), join(fixture, path));
       }

@@ -5,15 +5,20 @@ vi.mock("../external-supabase-config", () => ({ runtimeEnvValue: () => "unit-tes
 import { ensureTerminalAccount } from "../terminal-account.server";
 const token = "730746a4-4abe-4389-a155-b4c2d0da4834";
 const proof = "a".repeat(64);
-const profile = { user_id: `terminal.${token}`, auth_user_id: "auth-id", role: "staff", is_active: true, store_id: "branch-1" };
+const profile = { user_id: `terminal.${token}`, email: `terminal.${token}@pos.local`, auth_user_id: "auth-id", role: "staff", is_active: true, store_id: "branch-1" };
 beforeEach(() => {
   vi.clearAllMocks(); mocks.profile = { ...profile };
   mocks.fetch.mockResolvedValue(Response.json({ id: "auth-id" }));
   vi.stubGlobal("fetch", mocks.fetch);
   mocks.rest.mockImplementation(async (url: string, options?: RequestInit) => {
-    if (options?.method === "PATCH") return Response.json([{ ...mocks.profile, is_active: true }]);
+    if (options?.method === "PATCH") { mocks.profile = { ...mocks.profile, is_active: true }; return Response.json([mocks.profile]); }
     if (url.startsWith("terminal_tokens?")) return Response.json([{ status: "active", location_id: "branch-1", claimed_at: "2026-10-19", claim_proof: proof }]);
     if (url.startsWith("app_users?email=")) return Response.json(mocks.profile ? [mocks.profile] : []);
+    if (url.startsWith("app_users?user_id=")) return Response.json(mocks.profile ? [mocks.profile] : []);
+    if (url === "app_users?on_conflict=user_id") {
+      if (mocks.profile) return Response.json([]);
+      mocks.profile = JSON.parse(String(options?.body))[0]; return Response.json([mocks.profile]);
+    }
     return Response.json([{}]);
   });
 });
@@ -22,12 +27,23 @@ it("reuses a verified legacy profile without an email conflict or username chang
   expect(await ensureTerminalAccount(token, proof)).toMatchObject({ email: `terminal.${token}@pos.local` });
   expect(mocks.rest.mock.calls.some(([url, options]) => url.startsWith("app_users?") && options?.method === "POST")).toBe(false);
 });
-it("uses the full terminal UUID for a new profile and handles email conflicts without overwriting", async () => {
+it("uses the full terminal UUID for a new profile and verifies its unique identity without overwriting", async () => {
   mocks.profile = null;
   await ensureTerminalAccount(token, proof);
-  const write = mocks.rest.mock.calls.find(([url]) => url === "app_users?on_conflict=email");
+  const write = mocks.rest.mock.calls.find(([url]) => url === "app_users?on_conflict=user_id");
   expect(JSON.parse(write![1].body)[0].user_id).toBe(`terminal-${token}`);
   expect(write![1].prefer).toContain("ignore-duplicates");
+  expect(mocks.rest.mock.calls.some(([url]) => url.startsWith(`app_users?user_id=eq.terminal-${token}`))).toBe(true);
+});
+it("creates a new terminal profile using a real unique key when email has no unique constraint", async () => {
+  mocks.profile = null;
+  const base = mocks.rest.getMockImplementation()!;
+  mocks.rest.mockImplementation(async (url: string, options?: RequestInit) => {
+    if (options?.method === "POST" && url === "app_users?on_conflict=email")
+      return Response.json({ code: "42P10", message: "there is no unique or exclusion constraint matching the ON CONFLICT specification" }, { status: 400 });
+    return base(url, options);
+  });
+  await expect(ensureTerminalAccount(token, proof)).resolves.toMatchObject({ email: `terminal.${token}@pos.local` });
 });
 it.each([
   { is_active: false }, { auth_user_id: "other-user" }, { store_id: "other-branch" }, { role: "admin" },
@@ -38,6 +54,7 @@ it.each([
     : Response.json(url.includes("page=") ? { users: [{ id: "auth-id", email: `terminal.${token}@pos.local` }] } : { id: "auth-id" }));
   await expect(ensureTerminalAccount(token, proof)).rejects.toThrow(/inactive|administrator review/);
   expect(mocks.rest.mock.calls.some(([url, options]) => options?.method === "POST")).toBe(false);
+  expect(mocks.fetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
 });
 it("rejects the wrong device proof before creating credentials or changing profiles", async () => {
   await expect(ensureTerminalAccount(token, "b".repeat(64))).rejects.toThrow("another device");
@@ -62,4 +79,79 @@ it("finds an existing machine identity beyond the first Auth page", async () => 
   });
   await expect(ensureTerminalAccount(token, proof)).resolves.toMatchObject({ email: `terminal.${token}@pos.local` });
   expect(mocks.fetch.mock.calls.some(([url]) => url.includes("page=2&"))).toBe(true);
+});
+
+it("rejects ambiguous non-unique emails before repairing credentials or assigning roles", async () => {
+  const base = mocks.rest.getMockImplementation()!;
+  mocks.rest.mockImplementation(async (url: string, options?: RequestInit) => url.startsWith("app_users?email=")
+    ? Response.json([profile, { ...profile, user_id: "human-account", auth_user_id: "human-auth" }]) : base(url, options));
+  mocks.fetch.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "POST"
+    ? new Response("exists", { status: 422 }) : Response.json({ users: [{ id: "auth-id", email: profile.email }] }));
+  await expect(ensureTerminalAccount(token, proof)).rejects.toThrow("administrator review");
+  expect(mocks.rest.mock.calls.some(([, options]) => options?.method === "POST" || options?.method === "PATCH")).toBe(false);
+  expect(mocks.fetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
+});
+
+it("accepts only the verified exact winner of a concurrent stable-username insert", async () => {
+  mocks.profile = null;
+  const base = mocks.rest.getMockImplementation()!;
+  mocks.rest.mockImplementation(async (url: string, options?: RequestInit) => {
+    if (url === "app_users?on_conflict=user_id") {
+      mocks.profile = { ...profile, user_id: `terminal-${token}` }; return Response.json([]);
+    }
+    return base(url, options);
+  });
+  await expect(ensureTerminalAccount(token, proof)).resolves.toMatchObject({ email: profile.email });
+  expect(mocks.rest.mock.calls.some(([url]) => url === "app_users?on_conflict=email")).toBe(false);
+  expect(mocks.rest.mock.calls.some(([url]) => url.startsWith("user_roles?"))).toBe(true);
+});
+
+it.each([
+  { email: "human@example.invalid" }, { auth_user_id: "other-auth" }, { store_id: "other-branch" },
+  { role: "admin" }, { is_active: false }, { is_active: undefined }, { user_id: "human-account" },
+])("does not take over a mismatched concurrent profile: %j", async patch => {
+  mocks.profile = null;
+  const base = mocks.rest.getMockImplementation()!;
+  mocks.rest.mockImplementation(async (url: string, options?: RequestInit) => {
+    if (url === "app_users?on_conflict=user_id") {
+      mocks.profile = { ...profile, user_id: `terminal-${token}`, ...patch }; return Response.json([]);
+    }
+    return base(url, options);
+  });
+  await expect(ensureTerminalAccount(token, proof)).rejects.toThrow(/administrator review|profile changed/);
+  expect(mocks.rest.mock.calls.some(([url]) => url.startsWith("user_roles?"))).toBe(false);
+  expect(mocks.rest.mock.calls.some(([, options]) => options?.method === "PATCH")).toBe(false);
+  expect(mocks.fetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
+});
+
+it("requires persisted read-back rather than trusting an insert response", async () => {
+  mocks.profile = null;
+  const base = mocks.rest.getMockImplementation()!;
+  mocks.rest.mockImplementation(async (url: string, options?: RequestInit) => url === "app_users?on_conflict=user_id"
+    ? Response.json([{ ...profile, user_id: `terminal-${token}` }]) : base(url, options));
+  await expect(ensureTerminalAccount(token, proof)).rejects.toThrow("profile changed");
+  expect(mocks.rest.mock.calls.some(([url]) => url.startsWith("user_roles?"))).toBe(false);
+});
+
+it("retries the same machine without creating a second public profile or changing its username", async () => {
+  mocks.profile = null;
+  await ensureTerminalAccount(token, proof);
+  const saved = structuredClone(mocks.profile);
+  expect(saved).not.toBeNull();
+  mocks.fetch.mockImplementation(async (url: string, init?: RequestInit) => init?.method === "POST"
+    ? new Response("exists", { status: 422 }) : Response.json(url.includes("page=")
+      ? { users: [{ id: "auth-id", email: profile.email }] } : { id: "auth-id" }));
+  await ensureTerminalAccount(token, proof);
+  expect(mocks.profile).toEqual(saved);
+  expect(mocks.rest.mock.calls.filter(([url]) => url === "app_users?on_conflict=user_id")).toHaveLength(1);
+  expect(mocks.fetch.mock.calls.filter(([, options]) => options?.method === "PUT")).toHaveLength(1);
+  const verified = mocks.rest.mock.calls.map(([url]) => url.startsWith("app_users?email=")).lastIndexOf(true);
+  const repaired = mocks.fetch.mock.calls.findIndex(([, options]) => options?.method === "PUT");
+  expect(mocks.rest.mock.invocationCallOrder[verified]).toBeLessThan(mocks.fetch.mock.invocationCallOrder[repaired]);
+});
+
+it("does not return credentials or write profiles when Auth creation has no verified identity", async () => {
+  mocks.profile = null; mocks.fetch.mockResolvedValueOnce(Response.json({}));
+  await expect(ensureTerminalAccount(token, proof)).rejects.toThrow("Could not prepare");
+  expect(mocks.rest.mock.calls.some(([, options]) => options?.method === "POST" || options?.method === "PATCH")).toBe(false);
 });

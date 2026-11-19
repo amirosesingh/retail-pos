@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 
-const platform = vi.hoisted(() => ({ offlineFirst: false }));
+const platform = vi.hoisted(() => ({ offlineFirst: false, localWriter: true, localAggregate: true }));
 const live = vi.fn();
 const localWrite = vi.fn();
 const localAggregate = vi.fn();
@@ -27,8 +27,8 @@ vi.mock("@/core/local-db/local-db", () => ({
   localDb: () => ({
     query: (...a: unknown[]) => localQuery(...a),
     write: (...a: unknown[]) => localWrite(...a),
-    writeBatch: (...a: unknown[]) => localWrite(...a),
-    commitAggregate: (...a: unknown[]) => localAggregate(...a),
+    writeBatch: platform.localWriter ? (...a: unknown[]) => localWrite(...a) : undefined,
+    commitAggregate: platform.localAggregate ? (...a: unknown[]) => localAggregate(...a) : undefined,
     database: { getState: () => localState() },
   }),
   electronDb: () => null,
@@ -101,6 +101,8 @@ describe("checkout commit", () => {
   });
   beforeEach(() => {
     platform.offlineFirst = false;
+    platform.localWriter = true;
+    platform.localAggregate = true;
     live.mockReset();
     localWrite.mockReset();
     localAggregate.mockReset();
@@ -114,6 +116,47 @@ describe("checkout commit", () => {
     setPreferredDatabaseMode("online");
   });
   afterEach(() => setPreferredDatabaseMode("local"));
+
+  it.each([null, {}, { enabled: true, connected: false }, { enabled: true, connected: true, tradingReady: false }])(
+    "does not cloud-save when the configured native state is unavailable: %j", async state => {
+      localState.mockResolvedValueOnce(state);
+      await expect(commitOps("Saving product", [{ kind: "upsert", table: "products", rows: [{ id: "p1" }] }])).rejects.toMatchObject({
+        code: state && "enabled" in state ? "ELOCAL_NOT_READY" : "ELOCAL_STATE_UNVERIFIED",
+      });
+      expect(localWrite).not.toHaveBeenCalled();
+      expect(localAggregate).not.toHaveBeenCalled();
+      expect(live).not.toHaveBeenCalled();
+    },
+  );
+  it("does not retry a rejected native status or local commit through the cloud", async () => {
+    const ops = [{ kind: "upsert" as const, table: "products", rows: [{ id: "p1" }] }];
+    localState.mockRejectedValueOnce(new Error("Status unavailable"));
+    await expect(commitOps("Saving product", ops)).rejects.toMatchObject({ code: "ELOCAL_STATE_UNVERIFIED" });
+    expect(localAggregate).not.toHaveBeenCalled();
+    localAggregate.mockResolvedValueOnce({ ok: false, error: "Local commit refused", code: "ELOCAL_COMMIT" });
+    await expect(commitOps("Saving product", ops)).rejects.toMatchObject({ code: "ELOCAL_COMMIT" });
+    expect(live).not.toHaveBeenCalled();
+  });
+  it("refuses a missing native writer rather than bypassing a ready local database", async () => {
+    platform.localWriter = false;
+    await expect(commitOps("Saving product", [{ kind: "upsert", table: "products", rows: [{ id: "p1" }] }]))
+      .rejects.toMatchObject({ code: "ELOCAL_WRITER_UNAVAILABLE" });
+    expect(live).not.toHaveBeenCalled();
+    expect(localAggregate).not.toHaveBeenCalled();
+  });
+  it("requires the native aggregate writer for a booking payment", async () => {
+    platform.localAggregate = false;
+    await expect(commitOps("Saving booking payment", [{ kind: "insert", table: "booking_payments", rows: [{ id: "payment" }] }],
+      undefined, { requireLocalAggregate: true })).rejects.toMatchObject({ code: "ELOCAL_WRITER_UNAVAILABLE" });
+    expect(live).not.toHaveBeenCalled();
+    expect(localWrite).not.toHaveBeenCalled();
+  });
+  it("retains the explicit SQL-disabled cloud route", async () => {
+    localState.mockResolvedValueOnce({ enabled: false, connected: false, state: "disabled" });
+    await expect(commitOps("Saving product", [{ kind: "upsert", table: "products", rows: [{ id: "p1" }] }])).resolves.toBe("cloud");
+    expect(localAggregate).not.toHaveBeenCalled();
+    expect(live).toHaveBeenCalledOnce();
+  });
 
   it.each(["saved", "changed", "disconnected"] as const)(
     "uses one version-checked local booking payment aggregate when %s",
