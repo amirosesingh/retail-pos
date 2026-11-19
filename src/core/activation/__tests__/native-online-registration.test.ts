@@ -11,6 +11,7 @@ const { createTerminalRepair } = require("../../../../electron/terminal-repair.c
 const { DatabaseService } = require("../../../../electron/db/service.cjs");
 const privilege = require("../../../../electron/ipc-privilege.cjs");
 const session = require("../../../../electron/admin-session.cjs");
+const ipcGuard = require("../../../../electron/ipc-guard.cjs");
 const { WriteBarrier } = require("../../../../electron/sync/write-barrier.cjs");
 const { RecoveryMetadataGate } = require("../../../../electron/db/shift-recovery-metadata.cjs");
 const source = readFileSync(new URL("../../../../electron/main.cjs", import.meta.url), "utf8");
@@ -42,10 +43,12 @@ function fixture(savedProfile: object | null = null) {
   const service = new DatabaseService({ secureConfig, manager, validator: validate, migrate,
     localRecoveryPending: () => recovery.pending() });
   const barrier = new WriteBarrier(), metadata = new RecoveryMetadataGate();
+  const currentLocalAdmission = { present: false };
   let afterHold: (() => Promise<void>) | null = null;
   const runtime = createTerminalRepair({ terminalStore: terminal, activationBoundary: policy, adminSession: session,
     databaseManager: manager, databaseConfig: secureConfig, cloudCredentials: cloud, configStore: config,
     onlineRecovery: recovery, withExclusive: async (work: () => Promise<unknown>) => work(),
+    assertNoCurrentLocalAdmission: () => { if (currentLocalAdmission.present) throw Object.assign(new Error("Keep the admitted current local setup."), { code: "ECURRENT_LOCAL_RETAINED" }); },
     canCheck: () => !closing && !barrier.sealed, onlineBusy: () => busy || metadata.control.size > 1,
     onOnlineHold: async () => { service.holdLocalRecovery(); await afterHold?.(); } });
   const handlers = new Map<string, (event: unknown, ...args: unknown[]) => Promise<unknown>>();
@@ -75,7 +78,23 @@ function fixture(savedProfile: object | null = null) {
   for (const channel of ["database:save-connect", "database:set-enabled", "database:restore", "sqladmin:execute", "local:mirror", "business:commit-aggregate", "db:write", "staff:login", "sync:resume", "pos:push", "receipts:refund", "config:reset", "config:write", "config:set"])
     ipc.handle(channel, localEffect);
   ipc.handle("database:get-state", async () => service.snapshot());
+  const probeQuery = vi.fn(async () => ({ recordset: [
+    { name: "master", state_desc: "ONLINE", compatibility_level: 170 },
+    { name: "POS_Local_Beta", state_desc: "ONLINE", compatibility_level: 170 },
+  ] }));
+  const probeManager = Object.assign(manager, {
+    testServer: vi.fn(async () => ({ ok: true, version: "17.fixture" })),
+    temporary: vi.fn(async (_profile: unknown, _database: string, work: (pool: unknown) => Promise<unknown>) =>
+      work({ request: () => ({ query: probeQuery }) })),
+  });
+  const discoverServers = vi.fn(async () => ({ ok: true, servers: [{ host: "localhost" }] }));
+  const discoveryStart = source.indexOf('  ipcMain.handle("database:list-servers",');
+  const discoveryEnd = source.indexOf('  ipcMain.handle("database:validate",', discoveryStart);
+  new Function("ipcMain", "discoverLocalSqlServers", "guard", "observedDatabaseOperation", "databaseService",
+    source.slice(discoveryStart, discoveryEnd))(ipc, discoverServers, ipcGuard,
+      (_kind: string, _action: string, work: () => Promise<unknown>) => work(), service);
   return { folder, values, config, cloud, terminal, manager, recovery, runtime, service, validate, migrate, secureConfig, barrier,
+    discoverServers, probeManager, probeQuery, currentLocalAdmission,
     event, response, fetcher, legacyCheck, localEffect, call: (channel: string, ...args: unknown[]) => handlers.get(channel)!(event, ...args),
     continue: (otherEvent: unknown = event) => handlers.get("terminal:repair-continue-online")!(otherEvent, evidence),
     connected: (value: boolean) => { connected = value; }, busy: (value: boolean) => { busy = value; },
@@ -185,6 +204,36 @@ describe("online re-registration through actual native handlers", () => {
     expect(f.localEffect).not.toHaveBeenCalled();
     expect(await f.call("database:get-state")).toMatchObject({ localRecoveryPending: true });
   });
+  it("allows read-only discovery through actual Main handlers while preserving the sealed recovery hold", async () => {
+    const f = fixture({ host: "prior-fixture", database: "prior-pos", authMode: "windows" });
+    session.grantRecovery(); await f.continue(); session.clearRecovery();
+    const record = readFileSync(join(f.folder, "terminal-online-recovery.bin"));
+    const settings = new Map(f.values);
+    const profile = { host: "localhost", port: 1433, database: "POS_Local_Beta", authMode: "windows",
+      username: "", password: "", encrypt: true, trustServerCertificate: false,
+      connectionTimeoutMs: 5000, requestTimeoutMs: 5000 };
+    expect(await f.call("database:list-servers")).toMatchObject({ ok: true, servers: [{ host: "localhost" }] });
+    expect(await f.call("database:test-server", profile)).toMatchObject({ ok: true, version: "17.fixture" });
+    expect(await f.call("database:list-databases", profile)).toMatchObject({ ok: true, databases: [{ name: "POS_Local_Beta" }] });
+    expect(f.probeManager.temporary).toHaveBeenCalledOnce();
+    expect(f.probeManager.temporary.mock.calls[0][1]).toBe("master");
+    expect(f.probeQuery).toHaveBeenCalledOnce();
+    expect(f.values).toEqual(settings);
+    expect(readFileSync(join(f.folder, "terminal-online-recovery.bin"))).toEqual(record);
+    expect(f.recovery.pending()).toBe(true);
+    expect(f.service.snapshot()).toMatchObject({ connected: false, tradingReady: false, localRecoveryPending: true });
+    expect(f.manager.open).not.toHaveBeenCalled(); expect(f.secureConfig.save).not.toHaveBeenCalled();
+    expect(f.validate).not.toHaveBeenCalled(); expect(f.migrate).not.toHaveBeenCalled();
+    expect(await f.call("database:save-connect", profile)).toMatchObject({ code: "ELOCAL_RECOVERY_PENDING" });
+    expect(f.localEffect).not.toHaveBeenCalled();
+    expect(session.status()).toMatchObject({ unlocked: false });
+  });
+  it.each(["database:test-server", "database:list-databases"])("keeps %s profile validation while recovery is held", async channel => {
+    const f = fixture(); session.grantRecovery(); await f.continue(); session.clearRecovery();
+    expect(await f.call(channel, { authMode: "invalid" })).toMatchObject({ ok: false, code: "EBADARG" });
+    expect(f.probeManager.testServer).not.toHaveBeenCalled(); expect(f.probeManager.temporary).not.toHaveBeenCalled();
+    expect(f.recovery.pending()).toBe(true); expect(f.manager.open).not.toHaveBeenCalled();
+  });
   it("requires explicit append-preserving continuation for later re-registration instead of consuming another token first", async () => {
     const f=fixture();session.grantRecovery();
     await f.continue();await f.call("terminal:write",target);f.loseNative();
@@ -200,5 +249,15 @@ describe("online re-registration through actual native handlers", () => {
     expect(retained.attempts[0].replacement.binding.id).toBe(target.tokenId);
     expect(retained.replacement.binding.id).toBe(later.tokenId);
     expect(f.legacyCheck).not.toHaveBeenCalled();
+  });
+  it("does not allow later re-registration to ignore an admitted current local database", async () => {
+    const f = fixture(); session.grantRecovery();
+    await f.continue(); await f.call("terminal:write", target);
+    f.currentLocalAdmission.present = true; f.loseNative();
+    const retained = readFileSync(join(f.folder, "terminal-online-recovery.bin"));
+    expect(await f.call("terminal:repair-status")).toMatchObject({ ok: false, code: "EACTIVATION_REPAIR_CURRENT_LOCAL" });
+    expect(await f.continue()).toMatchObject({ ok: false, code: "EACTIVATION_REPAIR_CURRENT_LOCAL" });
+    expect(readFileSync(join(f.folder, "terminal-online-recovery.bin"))).toEqual(retained);
+    expect(f.recovery.read().attempts).toHaveLength(0); expect(f.terminal.write).toHaveBeenCalledOnce();
   });
 });
