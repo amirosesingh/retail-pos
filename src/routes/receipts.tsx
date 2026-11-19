@@ -94,7 +94,7 @@ const TEMPLATES: { key: Template; label: string; icon: typeof Printer }[] = [
 ];
 
 function ReceiptVault() {
-  const { state, currentStore, refundSale, changeSalePayment, correctSale } = usePos();
+  const { state, currentStore, refundSale, hasUncertainRefundSale, changeSalePayment, correctSale } = usePos();
   const { user, can, isAdmin } = useAuth();
   const viewedShift = useViewedBranchShift();
   const receiptShift = viewedShift.shift ?? (viewedShift.checked ? latestReceiptShift(state.shifts, currentStore.id) : null);
@@ -400,7 +400,7 @@ function ReceiptVault() {
     if (!selected) return;
     const reason = cancelReason.trim();
     if (reason.length < 3) { toast.error("Type why this bill is being cancelled"); return; }
-    const grant = await authorize({
+    const grant = hasUncertainRefundSale?.(selected.id, selected) ? { ok: true as const, grantToken: null } : await authorize({
       action: "refund", title: "Authorise bill void / refund", reason, storeId: currentStore.id,
       requestedBy: user?.staffId ?? user?.name ?? null, requestedAmount: Math.abs(selected.total), valueUnit: "currency",
       payload: {sale_id:selected.id,receipt_no:selected.receiptNo,total:Math.abs(selected.total)}, detail:reason,
@@ -728,11 +728,11 @@ function ReceiptVault() {
               <Button
                 variant="outline"
                 className="w-full justify-start text-destructive hover:text-destructive"
-                disabled={!selected || selected.refunded}
+                disabled={!selected || (selected.refunded && !hasUncertainRefundSale?.(selected.id, selected))}
                 onClick={() => void openCancel()}
               >
                 <Ban className="size-4" />
-                {selected?.refunded ? "Bill already cancelled" : "Cancel this bill"}
+                {selected && hasUncertainRefundSale?.(selected.id, selected) ? "Confirm saved cancellation" : selected?.refunded ? "Bill already cancelled" : "Cancel this bill"}
               </Button>
               <RefundApprovalRecovery sale={selected} branchId={currentStore.id} />
             </div>

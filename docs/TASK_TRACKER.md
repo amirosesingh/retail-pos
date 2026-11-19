@@ -9568,3 +9568,32 @@ Cloudflare beta bindings, production and saved local work intact. The existing
 hosted two-till/stock/central-booking evidence remains valid for unchanged
 runtime sources; documentation updates do not certify additional UI/native
 workflows. Await required exact-head checks before merge and publication.
+
+The owner also explicitly requests merging all open Dependabot PRs. The five
+updates (#462 barcode scanning, #463 Vitest, #464 Alert Dialog, #465 Tailwind
+Vite, #466 Capacitor CLI) were refreshed from beta, independently reviewed and
+merged only after their new application/SQL/audit and platform checks passed.
+Combined beta is `b5c5d9eb`; isolated dependency UI smoke and combined final
+checks remain required before publication. No production promotion occurred.
+
+Reviewing #477 also confirmed an outdated but unresolved renderer retry issue:
+after a locally committed refund loses its IPC response, the caller discarded
+Main's native handle and fresh authorization stopped at `EALREADY`. A narrowly
+fenced transient attempt runner is being verified with the actual authorization
+service and receipt repository; preserve exact replay, context/expiry checks
+and one post-ACK reconciliation. No native policy/schema bypass is permitted.
+
+The focused correction now passes 90 tests across six affected suites, including
+the actual receipt confirmation callback, button props and PosProvider callback
+with the real Main authorization service and receipt repository. It confirms
+the original saved receipt after a lost reply without a fresh UI issuer,
+repeated stock, duplicate activity or another hold. Current actor/branch/amount,
+connection replacement, stale completion, revocation, missing receipt and
+expiry/retention boundaries remain guarded. No Main/native SQL changes.
+
+The five-dependency beta combination also passes its automatic CI, 46 focused
+UI unit tests and all 46 isolated cold-browser scenarios. The first browser run
+hit an optimizer-discovery harness defect; explicitly scanning its generated
+node_modules fixture entry fixes that setup with no assertion/error suppression.
+The failed cache/results remain preserved. Await final #477 combined-head CI,
+merge and selected-beta checks before the already authorized publication.

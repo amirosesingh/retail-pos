@@ -167,7 +167,7 @@ export const verifyRefundAuthorization = async (input: NonNullable<Parameters<ty
       requestedAmount: data.requestedAmount ?? Number.NaN, grantToken: data.grantToken,
       proof: { accessToken: data.accessToken, cashierToken: data.cashierToken, sessionToken: data.sessionToken } });
     if (native.ok && isNativeRefundGrant(native.grantToken)) return { ok: true as const, required: true as const, nativeRefundGrant: native.grantToken };
-    return { ok: false as const, error: native.error ?? "The local refund authorization was not confirmed." };
+    return { ok: false as const, code: native.code, error: native.error ?? "The local refund authorization was not confirmed." };
   }
   return verifyBusinessAuthorization(input);
 };

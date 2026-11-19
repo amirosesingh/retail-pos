@@ -550,3 +550,47 @@ paths. This adapter did not exercise the installed Electron/Android UI, native
 transfer draft upload barrier, disconnected booking handover or FIN62 native
 booking handover. Grouped native booking retains its existing precommit hold;
 central RPC success does not certify that native path or every POS workflow.
+
+## 19 November — actual receipt retry and dependency UI follow-up
+
+The owner requested merging all five open Dependabot updates. PRs #462–466 were
+refreshed onto beta, independently reviewed and merged after their new checks
+passed. Combined dependency source `b5c5d9eb` passes its automatic CI. The fresh
+owned checkout uses official checksum-verified Node 22.22.2/npm 11.4.2 and its
+own exact lockfile installation; system tooling and installed profiles are not
+changed. Forty-six focused UI unit tests pass.
+
+The initial isolated Chrome run completed its interactions but failed the
+zero-console-error gate with two cold-start React errors. The generated entry
+was under node_modules, which Vite excludes from default scanning. Adding only
+that explicit optimizer entry, preserving all guards/assertions and archiving
+the entire initial failed cache, gives a fresh cold pass: 46 scenarios, zero
+external requests, zero console/page errors. This is a test-harness correction,
+not a suppression or a product configuration change.
+
+An outdated but unresolved review also exposed a real receipt UI retry gap:
+after a refund committed locally and lost its IPC response, the renderer lost
+Main's native handle; the UI's fresh issuer could reject `EALREADY` before the
+idempotent repository replay was reachable. A transient, context-bound attempt
+now retains only that native handle, coalesces the save and post-ACK callback,
+and reuses Main's existing proof and original receipt. The actual receipt button
+can confirm this same uncertain attempt even when a background snapshot already
+observes `refunded`; it does not infer authority from that flag or create a new
+approval. Unused expired admission needs separately requested fresh approval.
+
+Ninety focused tests across six suites pass. The new regression tests execute
+the actual receipt confirmation callback/button and PosProvider callback with
+the real Main authorization service and ReceiptRepository against controlled
+stateful SQL requests. They reproduce the old `EALREADY` refusal, then prove one
+stock effect, one receipt and one post-ACK activity/hold after the original
+handle replay. They cover changed actor/branch/amount/source, revocation,
+missing/wrong receipts, stale UI completions and ordinary first-attempt approval.
+The existing public database-state observer fences local-to-local replacement
+and reconnect while ignoring health/activity noise and late initial snapshots.
+
+Main policy, native SQL writers and hosted financial delivery are unchanged.
+This adds no durable queue/schema or expiry extension. Renderer/Main restart or
+Main's existing replay-retention deadline does not invent another refund or
+approval; durable synchronization recovery remains separate. These controlled
+UI/caller tests do not claim new installed-device or hosted transaction runs.
+Final combined-head checks, merge and beta publication remain separate gates.

@@ -83,7 +83,7 @@ async function main() {
   const results = [], externalRequests = [], errors = [];
   try {
     server = await createServer({ configFile: false, root, envDir: dir, envPrefix: "ISOLATED_FIXTURE_", cacheDir: path.join(dir, ".vite"), plugins: [react(), tailwind()],
-      optimizeDeps: { include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "@tanstack/react-router", "@radix-ui/react-dialog", "@radix-ui/react-alert-dialog", "@radix-ui/react-popover", "@radix-ui/react-select", "@radix-ui/react-dropdown-menu", "@radix-ui/react-context-menu", "@radix-ui/react-menubar", "@radix-ui/react-tooltip", "@radix-ui/react-slot", "vaul", "lucide-react", "class-variance-authority", "clsx", "tailwind-merge"] },
+      optimizeDeps: { entries: [path.relative(root, path.join(dir, "index.html")).split(path.sep).join("/")], include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "@tanstack/react-router", "@radix-ui/react-dialog", "@radix-ui/react-alert-dialog", "@radix-ui/react-popover", "@radix-ui/react-select", "@radix-ui/react-dropdown-menu", "@radix-ui/react-context-menu", "@radix-ui/react-menubar", "@radix-ui/react-tooltip", "@radix-ui/react-slot", "vaul", "lucide-react", "class-variance-authority", "clsx", "tailwind-merge"] },
       resolve: { dedupe: ["react", "react-dom", "@tanstack/react-router", "@tanstack/react-query", "@supabase/supabase-js"], alias: [
         ...popupRuntimeAliases(),
         { find: "@/lib/pos-auth", replacement: path.join(dir, "identity.ts") },

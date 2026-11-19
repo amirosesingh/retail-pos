@@ -160,6 +160,16 @@
   Keep the verified operations-PC, witness, branch and approval checks; do not
   require password users to establish another PIN session. Reject machine
   identities and unbound or revoked PIN proofs.
+  Retain Main's native handle for the same uncertain renderer refund attempt;
+  coalesce authorization, save and post-ACK reconciliation. Retry through Main
+  and the existing receipt-proven repository path instead of authorizing a new
+  refund or bypassing `EALREADY`. Fence transient attempts to the current actor,
+  session, branch, receipt amount and database context. Clear them on context
+  change; unused expired admission needs fresh explicit approval. This does not
+  extend admission expiry or Main's existing replay-retention deadline.
+  Receipt confirmation must consult that same bound uncertain attempt before
+  requesting fresh UI approval; a background `refunded` flag alone cannot
+  confirm it. Keep Main's receipt proof and ordinary first-attempt policy.
   A never-uploaded FIN62 sale/refund uses Main's separately signed creation-date
   witness for refund-age eligibility, with current policy and exact original
   financial facts. Match an existing central date or the new projected row;

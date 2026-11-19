@@ -14,6 +14,23 @@ described beta as sharing production's database. The beta release uses the
 isolated Retail POS Beta target and preserves operator-managed configuration.
 Required exact-head checks, merge and publication are still separate gates.
 
+At the owner's further request, all five open Dependabot PRs (#462–466) were
+refreshed, independently reviewed, passed their new checks and merged into beta
+`b5c5d9eb`. Its combined CI passes. The pinned Node 22.22.2/npm 11.4.2 isolated
+dependency UI checks pass 46 unit tests and 46 cold-browser scenarios with zero
+external requests or console/page errors. A one-line harness scan-entry fix
+corrected initial cold-optimizer React errors; all assertions remain intact.
+
+The unresolved #477 review proved a real renderer issue after lost refund IPC
+responses. The actual receipt UI and PosProvider now preserve and reverify the
+same Main handle for an uncertain attempt, including when a background snapshot
+already sees the refund. Context/connection changes invalidate it; a saved
+refund flag alone never authorizes confirmation. Ninety focused tests pass,
+including execution of the actual UI/provider callbacks with the real Main
+authorization and receipt repository against a controlled SQL fixture. Main,
+native SQL and hosted writers are unchanged. The existing renderer/Main restart
+and handle-retention limits remain explicit. Final combined-head CI is required.
+
 ## 18 November — current beta acceptance and conditional release authorization
 
 Latest source checkpoint: `9e458546` passes 7,730 application tests and every
