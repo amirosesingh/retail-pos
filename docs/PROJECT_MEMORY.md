@@ -1,3 +1,19 @@
+## 19 November — dependency advisory refresh and beta release continuation
+
+The owner renews the request to use agents, finish PR #477's checks and merge
+and publish beta only after they pass, preserving production and saved local
+data. The official GHSA-fc5q-39xc-vjpf record was withdrawn at
+2026-11-18T15:38:56Z. A fresh unchanged-lockfile `npm audit --audit-level=high`
+returns exit 0: zero high/critical and 18 moderate findings. No dependency,
+audit threshold, allowlist or waiver changed. Refresh exact-head CI rather than
+treating yesterday's withdrawn record as an unresolved package patch.
+
+The earlier acceptance below remains the runtime evidence; this continuation
+corrects the audit/release status and the stale release guide that incorrectly
+described beta as sharing production's database. The beta release uses the
+isolated Retail POS Beta target and preserves operator-managed configuration.
+Required exact-head checks, merge and publication are still separate gates.
+
 ## 18 November — current beta acceptance and conditional release authorization
 
 Latest source checkpoint: `9e458546` passes 7,730 application tests and every

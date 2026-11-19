@@ -6,6 +6,13 @@ authorized Beta migration and acceptance follow-up is recorded below.
 Production, installed profiles and saved operator local transactions remain
 outside the test targets.
 
+19 November status update: the [official advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)
+was withdrawn at 2026-11-18T15:38:56Z. A fresh audit of the unchanged lockfile
+passes the existing high-severity gate: exit 0, zero high/critical and 18 moderate
+findings. No dependency edit, audit waiver or threshold change was introduced.
+This supersedes the historical audit-blocker status below. Exact-head CI,
+merge and beta publication still require their own successful outcomes.
+
 Latest reviewed runtime head `9e458546` passes 7,730 automatic application tests
 (11 existing skips), all required SQL/upgrade/permission stages, lint,
 TypeScript/build, Android compilation and the unpublished iPhone build. The

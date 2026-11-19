@@ -89,9 +89,14 @@ Production builds/deploys wait for the final
 the final version commit builds and deploys once. The release workflow creates
 that marker even when versioned files were already prepared in the PR.
 
-For now beta uses the existing production database and access rules. Beta sales
-and other writes are real business data. This setup does not create a test
-database or apply migrations.
+Retail POS Beta uses the isolated Supabase project `irjkmhgrjgcaoixcixut`.
+Beta testing and release verification must target that project, preserving the
+existing beta Worker's connection bindings during deployment. Native devices
+retain their operator-managed Settings → Database & Cloud Connection values;
+publishing an update does not replace saved device configuration or local data.
+Database migrations require their reviewed target and upgrade procedure. Beta
+publication does not create/reset databases, apply production migrations or
+authorize production promotion.
 
 Every fix/feature starts on a branch based on `beta`, with a `[BETA]` PR targeting
 `beta` and the `beta` label. Internal PRs are automatically labeled and prefixed

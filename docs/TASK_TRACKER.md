@@ -9552,3 +9552,19 @@ and all 20 original Beta sale/item hashes unchanged (zero missing/changed).
 Installed UI, native transfer-barrier acceptance and disconnected native booking
 remain separate coverage boundaries; grouped booking still holds before writes.
 Keep PR merge and installer publication blocked by the required audit gate.
+
+## 19 November — refresh withdrawn dependency advisory and release checks
+
+The owner again requests agents to resolve the audit blocker, finish PR #477,
+then merge and publish beta only after passing checks. Official advisory
+GHSA-fc5q-39xc-vjpf was withdrawn on 18 November at 15:38:56 UTC. The unchanged
+lockfile's fresh high-severity audit now passes (exit 0, high/critical zero,
+18 moderate). No forced upgrade, fork, waiver or threshold change is needed.
+The failed exact-head CI job is being refreshed against the corrected feed.
+
+The beta release guide's old production-database paragraph must reflect the
+already isolated Retail POS Beta project. Keep device database settings,
+Cloudflare beta bindings, production and saved local work intact. The existing
+hosted two-till/stock/central-booking evidence remains valid for unchanged
+runtime sources; documentation updates do not certify additional UI/native
+workflows. Await required exact-head checks before merge and publication.
