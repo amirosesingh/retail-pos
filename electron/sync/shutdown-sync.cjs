@@ -12,7 +12,7 @@ async function finishShutdownSync({ run, progress = () => {}, sleep = ms => new 
     await sleep(attempt * 1000);
   }
 }
-async function runShutdownSync({ health, pendingSummary, run, signedOut = false, allowSignedOutExit = false }) {
+async function runShutdownSync({ health, pendingSummary, run, networkOnline = () => true, signedOut = false, allowSignedOutExit = false }) {
   if (signedOut && allowSignedOutExit) {
     // Main has already drained accepted writes. A login screen has no person
     // proof: leave durable journal rows pending rather than sending anonymous
@@ -21,12 +21,14 @@ async function runShutdownSync({ health, pendingSummary, run, signedOut = false,
     const remaining = await pendingSummary();
     return { ...remaining, ok: true, synchronized: false, authenticationRequired: true };
   }
+  const exitOffline = async () => ({ ...await pendingSummary(), ok: true, offline: true, synchronized: false });
+  if (!networkOnline()) return exitOffline();
   const connection = await health();
   if (!connection.online && connection.code === "EOFFLINE") {
-    const remaining = await pendingSummary(); // Must prove the local journal is readable.
-    return { ...remaining, ok: true, offline: true, synchronized: false };
+    return exitOffline(); // Must prove the local journal is readable.
   }
   if (!connection.ready) return { ok: false, code: connection.code, error: connection.error };
-  return run();
+  const result = await run();
+  return !result?.ok && !networkOnline() ? exitOffline() : result;
 }
 module.exports = { finishShutdownSync, runShutdownSync };
