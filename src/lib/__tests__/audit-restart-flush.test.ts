@@ -3,13 +3,14 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   stored: "", push: vi.fn(), request: vi.fn(), databaseState: vi.fn(), nativeLog: undefined as undefined | ReturnType<typeof vi.fn>,
   localMode: true,
+  signedIn: false,
 }));
 vi.mock("../business-storage", () => ({
   readBusinessValue: () => mocks.stored,
   writeBusinessValue: (_key: string, value: string) => { mocks.stored = value; },
 }));
 vi.mock("@/core/api/pos-db", () => ({ db: { pushAuditLogs: mocks.push } }));
-vi.mock("../session-presence", () => ({ hasSignedInIdentity: () => false }));
+vi.mock("../session-presence", () => ({ hasSignedInIdentity: () => mocks.signedIn }));
 vi.mock("@/core/local-db/local-db", () => ({ localDb: () => mocks.localMode
   ? { database: {getState: mocks.databaseState}, logConnection: mocks.nativeLog } : null }));
 vi.mock("@/platform-config/platform", () => ({isTerminalApp: () => true}));
@@ -19,6 +20,7 @@ beforeEach(() => {
   vi.resetModules();vi.useFakeTimers();mocks.push.mockReset();mocks.request.mockReset();
   mocks.databaseState.mockReset().mockResolvedValue({ configured: true });
   mocks.localMode = true;
+  mocks.signedIn = false;
   mocks.nativeLog = undefined;
   mocks.stored = JSON.stringify([{id:"pending",at:new Date().toISOString(),category:"other",action:"Opened app",module:"app",details:{},synced_to_cloud:false}]);
   vi.stubGlobal("window",{location:{pathname:"/"}});
@@ -95,6 +97,18 @@ it("an online-only Windows login saves anonymous activity through the native clo
   expect(logConnection).toHaveBeenCalledWith("application.signed-out-activity", expect.objectContaining({ scope: event?.id }));
   expect(mocks.databaseState).not.toHaveBeenCalled();
   expect(mocks.push).not.toHaveBeenCalled();
+});
+
+it("writes signed-in activity to ready native SQL while the closing renderer still has an online route", async () => {
+  mocks.localMode = false;
+  mocks.signedIn = true;
+  const writeBatch = vi.fn();
+  const getState = vi.fn().mockResolvedValue({ enabled: true, configured: true, connected: true, tradingReady: true });
+  vi.stubGlobal("window", { location: { pathname: "/" }, pos: { database: { getState }, writeBatch } });
+  const audit = await import("../audit-log");
+  await expect(audit.flushPendingAuditLogs()).resolves.toBeUndefined();
+  expect(mocks.push).toHaveBeenCalledExactlyOnceWith(expect.any(Array), writeBatch);
+  expect(JSON.parse(mocks.stored)[0].synced_to_cloud).toBe(true);
 });
 
 it("does not discard a signed-out person's unsaved business audit or a failed diagnostic write", async () => {
