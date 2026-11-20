@@ -5,7 +5,7 @@ import { db } from "@/core/api/pos-db";
 import { hasSignedInIdentity } from "./session-presence";
 import { replayOrder, stamp } from "./activity-journal";
 import { isTerminalApp } from "@/platform-config/platform";
-import { localDb } from "@/core/local-db/local-db";
+import { localConfigurationBridge, localDb } from "@/core/local-db/local-db";
 import { desktopBridge } from "./desktop-bridge-registry";
 import {auditDetails,normalizeCachedAuditRows} from "./audit-row-normalization";
 import { pageDataScope } from "./page-data-cache";
@@ -423,7 +423,7 @@ export async function flushPendingAuditLogs(): Promise<void> {
 
 async function flushBatchOnce(waitForLock = false) {
   const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
-  if (!locks) return flushBatchUnderLock();
+  if (!locks) return flushBatchUnderLock(waitForLock);
   await locks.request(CLOUD_FLUSH_LOCK, waitForLock
     ? { mode: "exclusive", signal: AbortSignal.timeout(20_000) }
     : { mode: "exclusive", ifAvailable: true }, async (lock) => {
@@ -431,7 +431,7 @@ async function flushBatchOnce(waitForLock = false) {
     // Tabs share the same persisted journal. Reload it after acquiring the
     // lock so this tab sees rows another tab has already marked as delivered.
     loaded = false;
-    await flushBatchUnderLock();
+    await flushBatchUnderLock(waitForLock);
   }).catch(error => {
     if (waitForLock && (error?.name === "TimeoutError" || error?.name === "AbortError"))
       throw new Error("Another window is still saving activity logs. Please wait a moment and retry.");
@@ -439,7 +439,7 @@ async function flushBatchOnce(waitForLock = false) {
   });
 }
 
-async function flushBatchUnderLock() {
+async function flushBatchUnderLock(preferReadySql = false) {
   load();
   const online = typeof navigator === "undefined" ? true : navigator.onLine;
   // Oldest first, in per-terminal sequence, so the cloud sees the same order
@@ -467,12 +467,20 @@ async function flushBatchUnderLock() {
     setSync({ pending: logs.filter(row => !row.synced_to_cloud).length });
     return;
   }
-  if ((!online && !desktop) || !pending.length) return;
+  if (!pending.length) return;
   // Nobody signed in: the central journal would reject the write anyway.
   // The entries stay queued locally and go up on the next signed-in flush.
   if (!desktop && !hasSignedInIdentity()) return;
 
-  // Push in batches to the cloud audit_logs table; failures stay pending.
+  // A renderer may still be in an online-only screen after native SQL becomes
+  // ready. During close use the verified native writer before trying the cloud.
+  const sql = preferReadySql ? desktop ?? localConfigurationBridge() : null;
+  const state = await sql?.database?.getState();
+  const localWriter = state?.enabled && state.configured && state.connected && state.tradingReady === true &&
+    !state.localRecoveryPending ? sql?.writeBatch : undefined;
+  if (!online && !desktop && !localWriter) return;
+
+  // Send one batch through the selected writer. Failures stay pending.
   const slice = pending.slice(0, BATCH);
   let batch: string[];
   try {
@@ -496,6 +504,7 @@ async function flushBatchUnderLock() {
           receivedAt: new Date().toISOString(),
         },
       })),
+      localWriter,
     );
   } catch (e) {
     // A duplicate key means these entries already reached the cloud — treat

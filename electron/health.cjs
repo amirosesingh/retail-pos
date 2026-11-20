@@ -20,6 +20,7 @@ const file = () => path.join(app.getPath("userData"), "boot-health.json");
 const EMPTY = {
   version: null,
   pending: false,
+  closedBeforeReady: false,
   failures: 0,
   lastGoodVersion: null,
   lastGoodAt: null,
@@ -32,6 +33,7 @@ function sanitize(raw) {
   const failures = Number(state.failures);
   state.failures = Number.isFinite(failures) && failures > 0 ? Math.min(Math.floor(failures), 99) : 0;
   state.pending = state.pending === true;
+  state.closedBeforeReady = state.closedBeforeReady === true;
   state.version = typeof state.version === "string" ? state.version : null;
   state.lastGoodVersion =
     typeof state.lastGoodVersion === "string" ? state.lastGoodVersion : null;
@@ -73,12 +75,13 @@ function beginBoot() {
   }
   // A pending marker from a previous run means that run never reached the UI.
   const carried = sameBuild && prev.pending;
-  const failures = carried ? prev.failures + 1 : 0;
+  const failures = carried ? prev.failures + 1 : sameBuild && prev.closedBeforeReady ? prev.failures : 0;
   if (carried) console.error(`[health] previous launch of ${prev.version} never became ready`);
   return save({
     ...prev,
     version,
     pending: true,
+    closedBeforeReady: false,
     failures,
     lastFailureAt: carried ? new Date().toISOString() : prev.lastFailureAt,
   });
@@ -106,11 +109,19 @@ function markHealthy() {
     ...read(),
     version,
     pending: false,
+    closedBeforeReady: false,
     failures: 0,
     reason: null,
     lastGoodVersion: version,
     lastGoodAt: new Date().toISOString(),
   });
+}
+
+/** A confirmed normal quit can happen before the register finishes loading. */
+function markClosed() {
+  const state = read();
+  if (state.version !== app.getVersion() || !state.pending) return state;
+  return save({ ...state, pending: false, closedBeforeReady: true });
 }
 
 /** At most one failure is ever counted per launch. */
@@ -146,6 +157,7 @@ module.exports = {
   beginBoot,
   beginRecovery,
   markHealthy,
+  markClosed,
   markFailed,
   reset,
   shouldEnterSafeMode,

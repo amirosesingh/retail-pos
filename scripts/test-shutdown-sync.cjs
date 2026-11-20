@@ -23,6 +23,27 @@ test('authorization and still-running timeout require intervention without dupli
 });
 
 const { runShutdownSync } = require('../electron/sync/shutdown-sync.cjs');
+test('a disconnected system skips the cloud probe while verifying its pending local work', async () => {
+  const result = await runShutdownSync({
+    networkOnline: () => false,
+    health: async () => assert.fail('offline close probed HTTPS'),
+    pendingSummary: async () => ({ pending: 2 }),
+    run: async () => assert.fail('offline close tried to sync'),
+  });
+  assert.deepEqual(result, { pending: 2, ok: true, offline: true, synchronized: false });
+});
+
+test('losing the connection during final upload leaves the verified queue available for next time', async () => {
+  let online = true;
+  const result = await runShutdownSync({
+    networkOnline: () => online,
+    health: async () => ({ online: true, ready: true }),
+    pendingSummary: async () => ({ pending: 1 }),
+    run: async () => { online = false; return { ok: false, code: 'ECONNRESET' }; },
+  });
+  assert.deepEqual(result, { pending: 1, ok: true, offline: true, synchronized: false });
+});
+
 test('offline exit proves the journal is readable and preserves pending rows without an ACK', async () => {
   const result = await runShutdownSync({health:async()=>({online:false,ready:false,code:'EOFFLINE'}),
     pendingSummary:async()=>({pending:3,failed:1}),run:async()=>assert.fail('offline sync attempted')});
@@ -71,9 +92,11 @@ function mainClose({
   lease = async work => work(),
   connectedDatabase = 'isolated_update_fixture',
   localRecoveryPending = false,
+  startupDatabaseRestore = null,
+  localEnabled = true,
 } = {}) {
   const source = readFileSync(join(__dirname, '../electron/main.cjs'), 'utf8');
-  const declarations = source.slice(source.indexOf('function shouldInstallUpdateOnClose('), source.indexOf('\napp.on("second-instance"'));
+  const declarations = source.slice(source.indexOf('function flushRendererBeforeClose('), source.indexOf('\napp.on("second-instance"'));
   const calls = [], pendingShiftCloseSync = new Set(['saved-shift']);
   const profile = { database: 'isolated_update_fixture' };
   const queries = [];
@@ -86,13 +109,12 @@ function mainClose({
     sealAndDrain: async () => { calls.push('drain'); await drain(); },
     reopen: () => calls.push('reopen'),
   };
-  const handlers = runInNewContext(declarations + '\n({ prepareApplicationClose, shouldInstallUpdateOnClose })', {
+  const handlers = runInNewContext(declarations + '\n({ prepareApplicationClose })', {
     adminSession: { hasPosAuthority: () => signedIn },
-    closePreparation: null, closeWriteBarrier, pendingShiftCloseSync,
+    closePreparation: null, closeWriteBarrier, pendingShiftCloseSync, startupDatabaseRestore,
     mainWindow: null, reportCloseProgress() {},
-    installUpdateAfterSync() {}, updater: { status: () => ({ status: 'ready' }) },
     isManagementDevice: () => false,
-    databaseService: { snapshot: () => { calls.push('sql-state'); return { enabled: !localRecoveryPending, configured: true, localRecoveryPending }; } },
+    databaseService: { snapshot: () => { calls.push('sql-state'); return { enabled: localEnabled && !localRecoveryPending, configured: true, tradingReady: localEnabled && !localRecoveryPending, localRecoveryPending }; } },
     databaseManager: { pool, profile: { ...profile, database: connectedDatabase }, isConnected: () => true },
     databaseConfig: { profile: () => profile },
     syncCoordinator: { withExclusive: lease },
@@ -107,7 +129,6 @@ function mainClose({
 test('login screen waits for accepted local writes then exits without requiring SQL, sync or a ready installer', async () => {
   let finishWrite, done = false;
   const f = mainClose({ drain: () => new Promise(resolve => { finishWrite = resolve; }) });
-  assert.equal(f.shouldInstallUpdateOnClose(), false);
   const closing = f.prepareApplicationClose().then(result => { done = true; return result; });
   await Promise.resolve();
   assert.deepEqual(f.calls, ['drain']);
@@ -130,11 +151,73 @@ test('an unfinished local write still prevents quitting from login', async () =>
 
 test('signed-in quit keeps its final upload policy', async () => {
   const signedIn = mainClose({ signedIn: true });
-  assert.equal(signedIn.shouldInstallUpdateOnClose(), true);
   assert.equal((await signedIn.prepareApplicationClose()).ok, true);
   assert.deepEqual(signedIn.calls, ['drain', 'sql-state', 'sync']);
   assert.equal(signedIn.pendingShiftCloseSync.size, 0);
 
+});
+
+test('normal window close and system quit leave a downloaded update staged', () => {
+  const source = readFileSync(join(__dirname, '../electron/main.cjs'), 'utf8');
+  const windowClose = source.slice(source.indexOf('mainWindow.on("close"'), source.indexOf('mainWindow.on("closed"'));
+  const systemQuit = source.slice(source.indexOf('app.on("before-quit"'), source.indexOf('app.on("window-all-closed"'));
+  for (const handler of [windowClose, systemQuit]) {
+    assert.match(handler, /prepareApplicationClose\(\)/);
+    assert.doesNotMatch(handler, /installUpdateAfterSync|updater\.install/);
+  }
+});
+
+test('an early close waits for native startup validation to release its connection', async () => {
+  let finishValidation;
+  const validation = new Promise(resolve => { finishValidation = resolve; });
+  const fixture = mainClose({ startupDatabaseRestore: validation });
+  let prepared = false;
+  const closing = fixture.prepareApplicationClose().then(() => { prepared = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(prepared, false);
+  finishValidation();
+  await closing;
+  assert.equal(prepared, true);
+});
+
+test('closing with saved work re-verifies the exact local database without reporting a cloud acknowledgement', async () => {
+  const fixture = mainClose({ signedIn: true, sync: async () => assert.fail('deferred work should not send a second upload') });
+  const result = await fixture.prepareApplicationClose(false, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.synchronized, false);
+  assert.deepEqual(fixture.calls, ['drain', 'sql-state', 'local-read']);
+  assert.equal(fixture.pendingShiftCloseSync.size, 1);
+  const changed = mainClose({ signedIn: true, connectedDatabase: 'changed-fixture' });
+  assert.equal((await changed.prepareApplicationClose(false, true)).stage, 'local-storage');
+  assert.equal(changed.pendingShiftCloseSync.size, 1);
+});
+
+test('repeated intentional early quits never count as failed launches or mark a build healthy', () => {
+  let stored;
+  const module = { exports: {} };
+  const source = readFileSync(join(__dirname, '../electron/health.cjs'), 'utf8');
+  runInNewContext(source, {
+    module, console: { error() {}, warn() {} },
+    require: name => {
+      if (name === 'node:fs') return { readFileSync: () => stored, writeFileSync: (_path, value) => { stored = value; } };
+      if (name === 'electron') return { app: { getPath: () => 'disposable-boot-profile', getVersion: () => 'fixture-beta' } };
+      return require(name);
+    },
+  });
+  const health = module.exports;
+  assert.equal(health.beginBoot().failures, 0);
+  assert.equal(health.beginBoot().failures, 1); // The first launch actually failed.
+  const ended = health.markClosed();
+  assert.equal(ended.pending, false);
+  assert.equal(ended.lastGoodVersion, null);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const state = health.beginBoot();
+    assert.equal(state.failures, 1);
+    assert.equal(health.shouldEnterSafeMode(state), false);
+    health.markClosed();
+  }
+  assert.equal(health.beginBoot().failures, 1);
+  assert.equal(health.shouldEnterSafeMode(health.beginBoot()), true);
 });
 
 test('online recovery close keeps previous shift work held without querying or acknowledging old SQL', async () => {
@@ -146,6 +229,15 @@ test('online recovery close keeps previous shift work held without querying or a
   assert.deepEqual(f.calls, ['drain', 'sql-state']);
   assert.deepEqual([...f.pendingShiftCloseSync], ['saved-shift']);
   assert.equal(f.queries.length, 0);
+});
+
+test('closing a signed-in online-only session preserves the disabled SQL profile and leaves its stored work pending', async () => {
+  const fixture = mainClose({ signedIn: true, localEnabled: false, sync: async () => assert.fail('disabled SQL was synchronized') });
+  const result = await fixture.prepareApplicationClose();
+  assert.equal(result.ok, true);
+  assert.equal(result.synchronized, false);
+  assert.deepEqual(fixture.calls, ['drain', 'sql-state']);
+  assert.deepEqual([...fixture.pendingShiftCloseSync], ['saved-shift']);
 });
 
 test('online recovery update preserves the old hold without requiring its unavailable SQL', async () => {

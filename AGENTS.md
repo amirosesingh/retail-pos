@@ -482,6 +482,10 @@
   Show an actionable failure/retry state and preserve saved settings and pending
   work. Respect operator-disabled SQL and the approved unavailable-SQL online
   fallback; return to local operation only after verified local readiness.
+- A normal quit during startup waits for the accepted local SQL validation
+  work before tearing down Electron. Record the intentional quit after local
+  cleanup without marking the build healthy or counting the quit as a failure.
+  Keep genuine failed launches eligible for Safe Mode.
 - This rule grants no additional migration, schema/data repair or production
   approval. Missing/unreadable previous SQL configuration must not be interpreted
   as a fresh terminal or proof that no pending transactions exist.
