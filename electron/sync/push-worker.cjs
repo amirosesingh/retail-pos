@@ -243,7 +243,7 @@ function terminalWritableChanges(tableName, changes, { branchId = "", terminalId
 
 class PushWorker {
   constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart, validateFinancialBasis, financialHistoryEnabled=false, validateFinancialOperation,
-    uploadCashCheckout = null, uploadGroupedRefund = null }) {
+    uploadCashCheckout = null, uploadGroupedRefund = null, stockHistory = null }) {
     this.financialHistoryEnabled=financialHistoryEnabled===true;
     this.validateFinancialOperation=validateFinancialOperation;
     this.validateAuthor = validateAuthor;
@@ -255,6 +255,7 @@ class PushWorker {
     this.registry = registry;
     this.uploadCashCheckout = uploadCashCheckout;
     this.uploadGroupedRefund = uploadGroupedRefund;
+    this.stockHistory = stockHistory;
   }
   async assertLegacyCashWrites(branchId, operations) {
     if (this.reader.assertLegacyCashWrites) {
@@ -320,9 +321,10 @@ class PushWorker {
       }
     }
   }
-  async pushAggregates(branchId, batchSize, isolate = false, onProgress = () => {}, includeActivity = true) {
+  async pushAggregates(branchId, batchSize, isolate = false, onProgress = () => {}, includeActivity = true, stockHistoryBudget = null) {
     branchId = recordId(branchId);
     this.pushErrors = []; this.blockedTables = new Set();
+    this.stockHistoryHolds = new Set();
     this.cashUploadHeld = null;
     this.refundUploadHeld = null;
     let pushed = 0;
@@ -373,6 +375,22 @@ class PushWorker {
         // Keep the entire dependent group out of the independent CT writer.
         for (const change of aggregate.changes) this.blockedTables.add(change.entity_type);
         originalIds.forEach(id => deferred.add(id)); continue;
+      }
+      if(this.stockHistory?.accepts(aggregate)){
+        // Background report evidence shares the normal upload lane, but may
+        // not monopolize it. This deferral is neither failure nor review.
+        // Final passes retain the existing complete drain and exact barriers.
+        if(stockHistoryBudget?.remaining===0){originalIds.forEach(id=>deferred.add(id));continue;}
+        if(stockHistoryBudget)stockHistoryBudget.remaining--;
+        const result=await this.stockHistory.upload(aggregate,branchId,terminalId);
+        if(result.held){
+          if(result.held.fresh)for(const id of originalIds)await this.reader.failAggregate(id,{code:result.held.code,message:result.held.message,table:'stock_history_movements'});
+          originalIds.forEach(id=>{deferred.add(id);this.stockHistoryHolds.add(id);});
+          continue; // A truthful own-domain hold does not block core trading.
+        }
+        pushed+=result.acknowledged;
+        onProgress({direction:'push',table:'stock_history_movements',completed:result.acknowledged});
+        continue;
       }
       const financialRequired=await this.reader.financialAggregateRequired?.(aggregate.aggregateId,branchId,terminalId)??false;
       const financialOpening=await this.reader.financialOpening?.(aggregate.aggregateId,branchId,terminalId)??null;
@@ -512,16 +530,20 @@ class PushWorker {
         const batchId = frozenBooking
           ? stableUuid({ branchId, bookingUpload: aggregate.aggregateId, checksum: frozenBooking.checksum })
           : stableUuid({ branchId, aggregateId: aggregate.aggregateId, operations });
+        const stockSource=!frozenBooking&&!financialRequired&&!openingSidecar&&originalIds.length===1
+          ?await this.stockHistory?.prepareBusiness?.(originalIds[0],branchId,terminalId,batchId):null;
         const refundSales=financialRequired?operations.filter(op=>op.table==='sales'&&!op.deletePhase).flatMap(op=>op.rows).filter(row=>row.is_refunded===true).map(row=>recordId(row.id)):[];
         const financialRefundApprovals=refundSales.length?await this.reader.financialRefundApprovals?.(branchId,terminalId,refundSales)??[]:[];
         const financialCoverageToken=financialRequired?this.reader.prepareFinancialBusinessCoverage?.({operations,batchId,branchId,terminalId}):null;
         const acknowledged = await this.retry(() =>
-          this.cloud.pushAggregate({ batchId, branchId, operations,...(openingSidecar?{shiftFinancialOpening:openingSidecar}:{}),...(financialRequired?{financialLedgerProjection:true}:{}),...(financialRefundApprovals.length?{financialRefundApprovals}:{}) }),
+          this.cloud.pushAggregate({ batchId, branchId, operations,...(openingSidecar?{shiftFinancialOpening:openingSidecar}:{}),...(financialRequired?{financialLedgerProjection:true}:{}),...(financialRefundApprovals.length?{financialRefundApprovals}:{}),
+            ...(stockSource?{stockSourceCohorts:stockSource.cohorts}:{}) }),
         );
         assertBatchAcknowledgement(acknowledged, batchId);
         assertShiftClosureAcknowledgement(acknowledged, operations, branchId);
         if(financialRequired)await this.reader.acknowledgeFinancialBusinessRows?.({token:financialCoverageToken,operations,batchId,acknowledgement:acknowledged,branchId,terminalId});
         if(financialOpening){if(typeof this.reader.acknowledgeFinancialOpening!=='function')throw Object.assign(new Error('The opening acknowledgement cannot be persisted.'),{code:'EFINANCIAL_HISTORY_UNCONFIRMED',table:'shifts'});await this.reader.acknowledgeFinancialOpening(financialOpening,acknowledged,branchId,terminalId);}
+        if(stockSource)await this.stockHistory.acknowledgeBusiness(stockSource,acknowledged);
         if (frozenBooking) await this.reader.acknowledgeBookingUpload(aggregate, frozenBooking, branchId);
         else for (const id of originalIds) await this.reader.acknowledgeAggregate(id);
         pushed += aggregate.changes.length;
@@ -570,14 +592,16 @@ class PushWorker {
     }
     return pushed;
   }
-  async run({ branchId, batchSize = 500, onProgress = () => {}, includeActivity = true }) {
+  async run({ branchId, batchSize = 500, onProgress = () => {}, includeActivity = true, final = false }) {
     branchId = recordId(branchId);
     if (!branchId) throw new Error("A branch is required for synchronization.");
     batchSize = Math.max(100, Math.min(2000, Number(batchSize) || 500));
     const terminalId = this.cloud.terminalId?.() ?? "";
-    let pushed = await this.pushAggregates(branchId, batchSize, true, onProgress, includeActivity);
+    const stockHistoryBudget=final?null:{remaining:1};
+    let pushed = await this.pushAggregates(branchId, batchSize, true, onProgress, includeActivity, stockHistoryBudget);
     let cashUploadHeld = this.cashUploadHeld;
     let refundUploadHeld = this.refundUploadHeld;
+    const stockHistoryHolds = new Set(this.stockHistoryHolds);
     const deferredTables = new Set();
     let historyUploadHeld=null;
     let financialCoverageAdvanced=false;
@@ -786,14 +810,18 @@ class PushWorker {
     // Exact acknowledged business CT rows may have been the only remaining
     // prerequisite. Drain that protected intent now, without another bootstrap
     // or a blind checkpoint advance. Ordinary legacy passes stay unchanged.
-    if(financialCoverageAdvanced)pushed+=await this.pushAggregates(branchId,batchSize,true,onProgress,includeActivity);
+    if (financialCoverageAdvanced) {
+      pushed += await this.pushAggregates(branchId,batchSize,true,onProgress,includeActivity,stockHistoryBudget);
+      for (const id of this.stockHistoryHolds) stockHistoryHolds.add(id);
+    }
     if (this.pushErrors.length) throw Object.assign(this.pushErrors[0], {pushed, failures:this.pushErrors.length});
     cashUploadHeld ??= this.cashUploadHeld;
     refundUploadHeld ??= this.refundUploadHeld;
     if (cashUploadHeld || refundUploadHeld) deferredTables.add("sales");
     return { pushed, deferredTables:[...deferredTables], ...(cashUploadHeld ? { cashUploadHeld, allUploaded:false } : {}),
       ...(refundUploadHeld ? { refundUploadHeld, allUploaded:false } : {}),
-      ...(historyUploadHeld?{historyUploadHeld,allUploaded:false}:{}) };
+      ...(historyUploadHeld?{historyUploadHeld,allUploaded:false}:{}),
+      ...(stockHistoryHolds.size?{heldStockHistoryAggregates:stockHistoryHolds.size}:{}) };
   }
 }
 module.exports = { PushWorker, collapseChanges, rowsForBranch, terminalWritableChanges, batchAuditAggregates };

@@ -43,7 +43,7 @@ import { LiveClock } from "@/platforms/web/components/pos/LiveClock";
 import { ThemeToggle } from "@/platforms/web/components/pos/ThemeToggle";
 import { hydrateBillSequence } from "@/lib/bill-number";
 import { DbConnectionModal } from "@/platforms/windows/components/DbConnectionModal";
-import { canSeeNavigationItem, routePermissionForPath, type NavItem } from "@/platforms/web/components/pos/nav-config";
+import { canOpenReportsHub, canSeeNavigationItem, routePermissionForPath, type NavItem } from "@/platforms/web/components/pos/nav-config";
 import { setPrintStore, setPrintSettings, setServiceTerms } from "@/lib/pos-print";
 import { bookingRulesOf } from "@/core/types/pos-types";
 import {
@@ -707,7 +707,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                     : settingsHome
                       ? canOpenSettings
                       : reportsHome
-                        ? can("can_view_sales_reports") || can("can_view_audit_trail")
+                        ? canOpenReportsHub(can)
                         : required === null
                           ? true
                           : required === "unknown"

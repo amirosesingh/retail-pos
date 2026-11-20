@@ -2297,24 +2297,32 @@ async function runBatchLive(context: string, ops: SyncOp[], report?: (completed:
  * Callers await this before printing, clearing the cart or starting the next
  * action — nothing moves on while the data is still only in memory.
  */
+export type StockArrival = Readonly<{ effectiveAt: string; reason: string }>;
+type CommitOptions = { requireLocalAggregate?: boolean; stockArrival?: StockArrival };
+
 export function commitOps(
   context: string,
   ops: SyncOp[],
   refundGrant?: string | null,
-  options: { requireLocalAggregate?: boolean } = {},
+  options: CommitOptions = {},
 ): Promise<CommitTarget> {
   return withDataTask(context, async task => {
     const total = commitRowCount(ops);
     task?.report(0,total);
     if ((total ?? 0) >= 200 || ops.length >= 25) await yieldToUi();
-    const target = await commitOpsInternal(context, normalizeUuidFields(ops),task?.report, refundGrant, options.requireLocalAggregate);
+    const target = await commitOpsInternal(context, normalizeUuidFields(ops), task?.report, refundGrant, options);
     if (target !== "offline" && total !== null) task?.report(total,total);
     return target;
   });
 }
 
-async function commitOpsInternal(context: string, ops: SyncOp[], report?: (completed: number, total: number | null) => void,
-  refundGrant?: string | null, requireLocalAggregate = false): Promise<CommitTarget> {
+async function commitOpsInternal(
+  context: string,
+  ops: SyncOp[],
+  report: ((completed: number, total: number | null) => void) | undefined,
+  refundGrant: string | null | undefined,
+  { requireLocalAggregate, stockArrival }: CommitOptions,
+): Promise<CommitTarget> {
   if (!ops.length) return noteCommitTarget("cloud");
   // A packaged or browser till may carry an encrypted tenant override. Never
   // let an early write resolve the client against the build-time tenant first.
@@ -2327,6 +2335,10 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
   const { ops: cloudOps, deltas } = withRelativeStock(ops);
 
   const local = localDb();
+  if (stockArrival && !local?.commitAggregate) {
+    throw Object.assign(new Error("Separate arrival times are not available on this device yet. The receiving invoice has not been saved."),
+      { code: "ESTOCK_ARRIVAL_UNAVAILABLE" });
+  }
   if (await resolveLocalWriteRoute(local) === "local") {
     if (!local?.writeBatch || (requireLocalAggregate && !local.commitAggregate)) {
       throw Object.assign(new Error("The local SQL Server transaction writer is unavailable. Restart the updated application before saving."),
@@ -2366,6 +2378,10 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
       if (requireLocalAggregate && aggregateKind === "settings") {
         throw new Error("This local transaction does not support shared settings.");
       }
+      if (stockArrival && aggregateKind !== "receiving") {
+        throw Object.assign(new Error("A separate arrival time is only available when saving a receiving invoice."),
+          { code: "ESTOCK_ARRIVAL_UNAVAILABLE" });
+      }
       const branchRow = ops
         .flatMap((op): Row[] => {
           if (op.kind === "insert" || op.kind === "upsert") return op.rows as Row[];
@@ -2402,6 +2418,7 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
                 kind: aggregateKind,
                 branchId: branchId || undefined,
                 operations: ops,
+                ...(stockArrival ? { stockArrival } : {}),
               })
             : await local.writeBatch(context, ops);
       if (!stored.ok) {
@@ -2420,6 +2437,10 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
     throw new Error("The local SQL Server transaction is unavailable. Reopen the booking before trying again.");
   }
 
+  if (stockArrival) {
+    throw Object.assign(new Error("Connect this terminal's local database before saving a separate arrival time. The receiving invoice has not been saved."),
+      { code: "ESTOCK_ARRIVAL_UNAVAILABLE" });
+  }
   const operational = ops.every((op) => isOperationalTable(op.table));
   // Browser/Capacitor has no SQL Server. Keep only this pending batch in
   // IndexedDB before starting the network request, then remove it immediately
@@ -2884,6 +2905,7 @@ export const db = {
     inv: ReceivingInvoice,
     movementStoreId?: string | null,
     updateProductPrices = false,
+    stockArrival?: StockArrival,
   ) =>
     commitOps("Saving receiving invoice", [
       { kind: "upsert", table: "purchase_orders", rows: [invoiceRow(inv)] },
@@ -2898,7 +2920,7 @@ export const db = {
         : []),
       ...receivingActivityOps(inv, movementStoreId),
       ...receivingPriceOps(inv, updateProductPrices),
-    ]),
+    ], undefined, { stockArrival }),
 
   /**
    * Save corrections to an existing invoice in place. Removed lines are
@@ -2911,6 +2933,7 @@ export const db = {
     movementStoreId?: string | null,
     correction?: { previous: ReceivingInvoice; attemptId: string },
     updateProductPrices = false,
+    stockArrival?: StockArrival,
   ) =>
     commitOps("Updating receiving invoice", [
       { kind: "upsert", table: "purchase_orders", rows: [invoiceRow(inv)] },
@@ -2932,7 +2955,7 @@ export const db = {
         ? receivingCorrectionOps(inv, correction.previous, correction.attemptId)
         : receivingActivityOps(inv, movementStoreId)),
       ...receivingPriceOps(inv, updateProductPrices),
-    ]),
+    ], undefined, { stockArrival }),
 
   /**
    * Autosave an unfinished receiving order. Same rows as a finalized one, but

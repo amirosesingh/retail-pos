@@ -374,6 +374,14 @@ const originalGroups: NavGroup[] = [
         blurb: "Stock checks, damages, losses and variance.",
       },
       {
+        to: "/reports/inventory",
+        label: "Stock report",
+        icon: CalendarClock,
+        flag: "can_view_inventory",
+        keywords: "historical stock summary inventory quantity selected date time shift closing",
+        blurb: "Verified stock quantities at a selected date, time or shift closing.",
+      },
+      {
         to: "/reports/payments",
         label: "Payments by Cashier",
         icon: BarChart3,
@@ -526,8 +534,15 @@ export function routePermissionForPath(pathname: string): PermissionFlag | null 
 }
 
 /** Shared sidebar visibility predicate; permission and page visibility are both required. */
+export function canOpenReportsHub(can: (flag: PermissionFlag) => boolean): boolean {
+  return can("can_view_sales_reports") || can("can_view_audit_trail") || can("can_view_inventory");
+}
+
 export function canSeeNavigationItem(item: NavItem, can: (flag: PermissionFlag) => boolean,
   isAdmin: boolean, visibleRoute: (path: string) => boolean): boolean {
+  // The hub lists links only. Each report retains its own permission and data
+  // admission; inventory access does not grant Sales or Audit report access.
+  if (item.to === "/reports") return canOpenReportsHub(can) && visibleRoute(item.to);
   if (item.flag && !can(item.flag)) return false;
   if (item.adminOnly && !isAdmin && !item.flag) return false;
   return visibleRoute(item.to);
