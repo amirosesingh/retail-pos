@@ -1,3 +1,31 @@
+## 20 November — reduce scoped Electron feed requests
+
+The owner authorized a separate Beta performance change. Keep the existing
+authorized v2 feed and its private projection intact. Prepare an optional
+service-only batch endpoint for the same projected feed, with exact ordering,
+hard byte limits and safe replay. Use the current protected v2 endpoint only
+when the new capability is absent. Preserve authority and all other failures.
+Compare a fresh and warm disposable profile and verify that a failed page does
+not advance its cursor. Source preparation authorizes no hosted migration,
+production, merge or installer publication.
+
+The separate v3 routine stages at most 50 results from already authorized,
+redacted ten-row v2 chunks. Both versions returned identical ordered content
+and final cursor in the 2,925-visible-row fixture, with 293 versus 59
+requests. All 153 focused tests, 23 notification/canonical generator cases,
+TypeScript, targeted lint and the actual loopback Worker checks passed.
+The loopback used a mocked upstream and the database benchmark used disposable
+PGlite. Hosted startup, database CPU, and billed Worker time remain unmeasured.
+
+When separately approved for the exact Beta project, apply the additive SQL
+first and verify the v2 prerequisite fingerprint and service-only v3 grants.
+Verify PostgREST discovery before switching the Worker and repeating the
+fresh/warm Electron measurement. The Worker can run before the migration
+through its exact missing-v3 fallback to protected v2. Other failures remain
+visible. Revert the Worker to v2 if needed. A future v2 definition update must
+carry its corresponding v3 prerequisite update. No hosted migration or
+deployment occurred for this source check.
+
 ## 10 November — receipt report tender amounts
 
 Fix the beta receipt report crash when a synced tender carries its decimal

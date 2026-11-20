@@ -652,7 +652,8 @@ const historyPageBegin = "-- PROTECTED_HISTORY_PAGE_BEGIN", historyPageEnd = "--
 const historyProjectionBegin = "-- PROTECTED_HISTORY_PROJECTION_PERFORMANCE_BEGIN", historyProjectionEnd = "-- PROTECTED_HISTORY_PROJECTION_PERFORMANCE_END";
 const refundReceiptBegin = "-- NATIVE_REFUND_FINANCIAL_RECEIPT_BEGIN", refundReceiptEnd = "-- NATIVE_REFUND_FINANCIAL_RECEIPT_END";
 const factKeyOrderBegin = "-- FINANCIAL_FACT_KEY_ORDER_BEGIN", factKeyOrderEnd = "-- FINANCIAL_FACT_KEY_ORDER_END";
-for (const [blockBegin, blockEnd] of [[authorBegin, authorEnd], [correctionBegin, correctionEnd], [startBegin, startEnd], [graphReadBegin, graphReadEnd], [historyPageBegin, historyPageEnd], [historyProjectionBegin, historyProjectionEnd], [refundReceiptBegin, refundReceiptEnd], [factKeyOrderBegin, factKeyOrderEnd]]) {
+const batchedFeedBegin = "-- BATCHED_SCOPED_FEED_BEGIN", batchedFeedEnd = "-- BATCHED_SCOPED_FEED_END";
+for (const [blockBegin, blockEnd] of [[authorBegin, authorEnd], [correctionBegin, correctionEnd], [startBegin, startEnd], [graphReadBegin, graphReadEnd], [historyPageBegin, historyPageEnd], [historyProjectionBegin, historyProjectionEnd], [refundReceiptBegin, refundReceiptEnd], [factKeyOrderBegin, factKeyOrderEnd], [batchedFeedBegin, batchedFeedEnd]]) {
   const blockStart = schema.indexOf(blockBegin), blockFinish = schema.indexOf(blockEnd);
   if (blockStart >= 0) {
     if (blockFinish < blockStart) throw new Error("Incomplete final shift authority contract");
@@ -699,9 +700,10 @@ schema = require("./sale-item-sync-scope.cjs").withSaleItemScope(schema);
 // when older generators move their own final authority components.
 const refundReceiptMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261117233612_native_refund_exact_financial_receipt_probe.sql"), "utf8").replaceAll("\r\n", "\n").trim();
 const factKeyOrderMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261118060529_deterministic_financial_fact_key_order.sql"), "utf8").replaceAll("\r\n", "\n").trim();
+const batchedFeedMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261120082442_batched_scoped_feed.sql"), "utf8").replaceAll("\r\n", "\n").trim();
 const refundHardening = schema.lastIndexOf("-- Final public-schema privilege hardening after notification rule definitions.");
 if (refundHardening < 0) throw new Error("Missing refund receipt hardening boundary");
-schema = `${schema.slice(0, refundHardening).trimEnd()}\n\n${refundReceiptBegin}\n${refundReceiptMigration}\n${refundReceiptEnd}\n\n${factKeyOrderBegin}\n${factKeyOrderMigration}\n${factKeyOrderEnd}\n\n${schema.slice(refundHardening).trimStart()}`;
+schema = `${schema.slice(0, refundHardening).trimEnd()}\n\n${refundReceiptBegin}\n${refundReceiptMigration}\n${refundReceiptEnd}\n\n${factKeyOrderBegin}\n${factKeyOrderMigration}\n${factKeyOrderEnd}\n\n${batchedFeedBegin}\n${batchedFeedMigration}\n${batchedFeedEnd}\n\n${schema.slice(refundHardening).trimStart()}`;
 fs.writeFileSync(schemaPath, schema);
 console.log(`Supabase sync contract generated for ${tables.length} keyed tables`);
 
