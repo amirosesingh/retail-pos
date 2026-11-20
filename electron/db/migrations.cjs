@@ -1,7 +1,7 @@
 const fs=require("node:fs");
 const path=require("node:path");
 const { safeError }=require("./errors.cjs");
-const { installerSections, migrationBundleSql, splitBatches, TARGET_GUARD, SESSION_OPTIONS }=require("./installer-source.cjs");
+const { installerSections, bookingUploadSql, migrationBundleSql, splitBatches, TARGET_GUARD, SESSION_OPTIONS }=require("./installer-source.cjs");
 
 // Installing the initial schema executes a generated batch of roughly 800 KB.
 // It is setup work, not a normal till query, so the operator's short runtime
@@ -34,6 +34,7 @@ async function runOnPool(connectionManager,pool){
    await runScript(connectionManager,pool,file.sql);
    applied.push(file.name);
   }
+  await runScript(connectionManager,pool,bookingUploadSql());
   // Validation is part of the same packaged source, not a separate stale list.
   await runScript(connectionManager,pool,installer.validation);
   return{ok:true,applied,schemaRepair:true,source:"retail-pos-local-database.sql"};

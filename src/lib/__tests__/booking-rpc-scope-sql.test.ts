@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 const schema = readFileSync("supabase/schema.sql", "utf8").replaceAll("\r\n", "\n");
 const preparation = readFileSync("scripts/preparation/pos-booking-rpc-scope-v1.sql", "utf8");
 const handoverPreparation = readFileSync("scripts/preparation/pos-booking-handover-v1.sql", "utf8");
+const nativeTerminal = "a1111111-1111-4111-8111-111111111111";
 const routines = ["booking_net_paid", "booking_balance_state", "booking_collect", "booking_refund", "booking_cancel"];
 const signatures = [
   "booking_net_paid(uuid)", "booking_balance_state(uuid)",
@@ -82,7 +83,12 @@ it("keeps all booking money RPCs within the table's branch and authorization rul
       ${["sales", "sale_items", "payment_transactions", "item_activity_logs", "members"].map(tableDefinition).join("\n")}
       ALTER TABLE public.sales ADD PRIMARY KEY(id), ADD UNIQUE(bill_number), ADD UNIQUE(client_transaction_id);
       ALTER TABLE public.sale_items ADD PRIMARY KEY(id);
+      ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS branch_id text;
+      ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS refunded_qty integer NOT NULL DEFAULT 0;
       ALTER TABLE public.payment_transactions ADD PRIMARY KEY(id);
+      ALTER TABLE public.payment_transactions ADD COLUMN IF NOT EXISTS order_id text;
+      ALTER TABLE public.payment_transactions ADD COLUMN IF NOT EXISTS payment_method text;
+      ALTER TABLE public.payment_transactions ADD COLUMN IF NOT EXISTS transaction_reference text;
       ALTER TABLE public.item_activity_logs ADD PRIMARY KEY(id);
       ALTER TABLE public.members ADD PRIMARY KEY(id);
       CREATE FUNCTION public.stock_apply_deltas(jsonb) RETURNS TABLE(status text, reason text)
@@ -98,19 +104,26 @@ it("keeps all booking money RPCs within the table's branch and authorization rul
       ${["is_app_supervisor", "is_staff", "is_staff_now", "is_supervisor_now", "user_store_id",
         "store_visible", "user_has_store_access", "has_perm", ...routines,
         "booking_payment_within_total", "bookings_block_unpaid_collection", "bump_row_version",
-        "pos_sale_commit", "pos_sync_push_aggregate", "sync_apply_booking_payments"].map(definition).join("\n")}
+        "pos_sale_commit", "pos_sync_push_aggregate", "sync_apply_booking_payments",
+        "sync_apply_sale_items", "sync_delete_sale_items", "sync_apply_payment_transactions",
+        "sync_delete_payment_transactions"].map(definition).join("\n")}
       CREATE TABLE public.sync_idempotency_receipts(batch_id uuid PRIMARY KEY, organization_id text,
         branch_id text, table_name text, payload_hash text, applied_count integer);
       CREATE FUNCTION public.pos_sync_validate_scope(text,text,text) RETURNS void LANGUAGE plpgsql AS $scope$
       BEGIN
-        IF auth.role() IS DISTINCT FROM 'service_role' OR $2 IS DISTINCT FROM 'a' OR $3 IS DISTINCT FROM 'fixture-terminal'
+        IF auth.role() IS DISTINCT FROM 'service_role' OR $2 IS DISTINCT FROM 'a' OR
+          coalesce($3,'') NOT IN ('fixture-terminal','${nativeTerminal}')
           THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
       END $scope$;
       CREATE FUNCTION public.sync_apply_bookings(rows jsonb) RETURNS integer LANGUAGE plpgsql AS $booking$
       DECLARE changed integer;
       BEGIN
-        UPDATE public.bookings b SET paid=(x->>'paid')::numeric,status=x->>'status',sale_receipt_no=x->>'sale_receipt_no'
-          FROM jsonb_array_elements(rows) x WHERE b.id=(x->>'id')::uuid AND b.row_version < (x->>'row_version')::integer;
+        INSERT INTO public.bookings(id,store_id,total,paid,status,sale_receipt_no,closed_at,row_version)
+          SELECT id,store_id,total,paid,status,sale_receipt_no,closed_at,row_version
+          FROM jsonb_populate_recordset(NULL::public.bookings,rows)
+          ON CONFLICT(id) DO UPDATE SET paid=EXCLUDED.paid,status=EXCLUDED.status,
+            sale_receipt_no=EXCLUDED.sale_receipt_no,closed_at=EXCLUDED.closed_at
+          WHERE public.bookings.row_version < EXCLUDED.row_version;
         GET DIAGNOSTICS changed=ROW_COUNT; RETURN changed;
       END $booking$;
       CREATE FUNCTION public.sync_apply_sales(rows jsonb) RETURNS integer LANGUAGE plpgsql AS $sale$
@@ -246,7 +259,28 @@ it("keeps all booking money RPCs within the table's branch and authorization rul
     await db.exec("RESET ROLE; SET ROLE anon");
     await expect(balance(local)).rejects.toThrow(/permission denied/);
     await expect(handover("BOOKING-1", 25)).rejects.toThrow(/permission denied/);
+    if (process.env.POS_BOOKING_NATIVE_FIXTURE === "1") {
+      const { verifyNativeBooking } = await import("../../../scripts/lib/booking-upload-native-fixture.cjs");
+      await actor(null, "service_role");
+      const native = await verifyNativeBooking({ branchId: "a", terminalId: nativeTerminal,
+        push: async ({ batchId, branchId, operations }: { batchId: string; branchId: string; operations: unknown }) => {
+          const result = await db.query<{ receipt: Record<string, unknown> }>(`
+            SELECT public.pos_sync_push_aggregate($1,'default',$2,$3,$4::jsonb) AS receipt`,
+            [batchId, branchId, nativeTerminal, JSON.stringify(operations)]);
+          return result.rows[0].receipt;
+        },
+      });
+      expect((await balance(native.bookingId)).rows[0]).toMatchObject({ status: "collected", settled_paid: "25.00" });
+      expect((await db.query("SELECT amount::float8,change_given::float8 FROM public.booking_payments WHERE booking_id=$1 ORDER BY amount",
+        [native.bookingId])).rows).toEqual([{ amount: 10, change_given: 0 }, { amount: 15, change_given: 5 }]);
+      await db.exec("RESET ROLE");
+      expect((await db.query("SELECT bill_number FROM public.sales WHERE id=$1", [native.saleId])).rows)
+        .toEqual([{ bill_number: native.bill }]);
+      expect((await db.query("SELECT id FROM public.sale_items WHERE sale_id=$1", [native.saleId])).rows).toEqual([{ id: native.itemId }]);
+      expect((await db.query("SELECT id,amount::float8 FROM public.payment_transactions WHERE sale_id=$1", [native.saleId])).rows)
+        .toEqual([{ id: native.saleTenderId, amount: 25 }]);
+    }
   } finally {
     await db.close();
   }
-});
+}, 60_000);
