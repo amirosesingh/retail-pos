@@ -12,11 +12,10 @@ const { cashCheckoutForContext } = require("./cash-checkout-route.cjs");
 const refundRoute = require("./grouped-refund-native.cjs");
 const financialRefund = require("./financial-refund-approval.cjs");
 const { readCashRoute, cashTrackingCoverage, assertLegacyCashWrites } = require("../db/sale-event-outbox.cjs");
+const bookingUpload = require("../db/booking-upload.cjs");
 const SHIFT_GRAPH_TABLES = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
   "shift_notifications", "shift_variance_alerts"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const BOOKING_HANDOVER_TABLES = new Set(["bookings", "booking_payments", "sales", "sale_items", "payment_transactions",
-  "item_activity_logs", "products", "members", "stock_movements", "stock_delta_applied", "held_orders", "audit_logs"]);
 const ctVersion = value => { const text=typeof value==='number'&&Number.isSafeInteger(value)?String(value):value;return typeof text === "string" && /^(0|[1-9]\d*)$/.test(text) && BigInt(text) <= 9223372036854775807n ? text : null; };
 const financialPrimary = table => {
   const primary=table.columns.filter(column=>column.primaryKey);
@@ -112,25 +111,27 @@ class ChangeReader {
   assertLegacyRefundWrites(branchId, keys) { return refundRoute.assertLegacyRefundWrites(this.connectionManager, branchId, keys); }
   async bookingHandoverTracking(branchId, table, changes) {
     const covered = new Set();
-    if (!BOOKING_HANDOVER_TABLES.has(table) || !changes.length) return { pending: false, covered };
+    if (!bookingUpload.BOOKING_TABLES.has(table) || !changes.length) return { pending: false, covered };
     const key = table === "stock_delta_applied" ? "movement_id" : "id";
     const ids = [...new Set(changes.map(change => recordId(change.key?.[key])).filter(id => UUID.test(id)))];
     if (!ids.length) return { pending: false, covered };
-    const isPayment = table === "booking_payments";
-    const paymentVersion = isPayment ? "payment.row_version" : "NULL";
+    const exactVersion = bookingUpload.COVERED_VERSIONS.has(table);
     const result = await this.connectionManager.pool.request().input("branch", branchId).input("table", table)
       .input("ids", JSON.stringify(ids)).query(`
-        SELECT wanted.[value] AS id, j.acknowledged_at, j.operation, j.entity_version, ${paymentVersion} AS payment_version
+        SELECT wanted.[value] AS id, j.acknowledged_at, j.operation, j.entity_version, r.operation_type,
+          ${exactVersion ? "live.row_version" : "NULL"} AS current_version
         FROM dbo.sync_change_journal j
-        INNER JOIN dbo.local_operation_receipts r ON r.operation_id=j.aggregate_id AND r.operation_type=N'booking_handover'
+        INNER JOIN dbo.local_operation_receipts r ON r.operation_id=j.aggregate_id
+          AND r.operation_type IN(N'booking_handover',N'booking_frozen',N'booking_handover_frozen')
         INNER JOIN OPENJSON(@ids) wanted ON TRY_CONVERT(uniqueidentifier,wanted.[value])=
           TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id END,'$.${key}'))
-        ${isPayment ? "LEFT JOIN dbo.booking_payments payment ON payment.id=TRY_CONVERT(uniqueidentifier,wanted.[value])" : ""}
+        ${exactVersion ? `LEFT JOIN dbo.[${table}] live ON live.id=TRY_CONVERT(uniqueidentifier,wanted.[value])` : ""}
         WHERE j.branch_id=@branch AND j.entity_type=@table;`);
     const rows = result.recordset ?? [];
     if (rows.some(row => row.acknowledged_at == null)) return { pending: true, covered };
-    const exact = new Set(rows.filter(row => row.operation === "insert" && row.payment_version != null &&
-      Number(row.payment_version) === Number(row.entity_version)).map(row => recordId(row.id)));
+    const exact = new Set(rows.filter(row => (bookingUpload.TYPES.includes(row.operation_type) ||
+      (table === "booking_payments" && row.operation === "insert")) &&
+      row.current_version != null && Number(row.current_version) === Number(row.entity_version)).map(row => recordId(row.id)));
     for (const change of changes)
       if (change.operation !== "D" && exact.has(recordId(change.key?.[key]))) covered.add(change);
     return { pending: false, covered };
@@ -151,14 +152,10 @@ class ChangeReader {
       // row snapshot with its still-unaccepted financial side effects.
       if(!exactFinancial && await this.financialBusinessPending(table,changes,branchId,source.identity.terminalId,tx))
         throw Object.assign(new Error('The complete financial transaction is still awaiting acceptance. Saved changes remain pending.'),{code:'EFINANCIAL_BUSINESS_PENDING',table:table.sqlServerTable});
-      const rows=(result.recordset??[]).map(value=>{const{__financial_row_json,...physical}=value,exact=JSON.parse(__financial_row_json),wire=this.financialBusinessWire(table,toCloudRow(table,physical),exact,exactFinancial),key=this.financialCoverageKey(table,exact,source);
-        // PushWorker canonicalizes SQL-equivalent branch labels at upload.
-        const branchColumn=table.scope==='branch'&&table.direction!=='pull'?(table.columns.some(c=>c.cloudColumn==='store_id')?'store_id':table.columns.some(c=>c.cloudColumn==='branch_id')?'branch_id':null):null;
-        const sent=branchColumn&&(!String(wire[branchColumn]??'').trim()||recordId(String(wire[branchColumn]).trim())===recordId(branchId))?{...wire,[branchColumn]:recordId(branchId)}:wire;
-        const captureId=table.cloudTable+':'+recordId(wire[financialKey.cloudColumn])+':'+createHash('sha256').update(JSON.stringify(sent)).digest('hex'),prior=this.financialCoverageCaptures.get(captureId);
-        this.financialCoverageCaptures.set(captureId,prior&&prior.key.rowHash!==key.rowHash?{ambiguous:true,key}:prior?.ambiguous?prior:{key,ambiguous:false});
+      const rows=(result.recordset??[]).map(value=>{const{__financial_row_json,...physical}=value,exact=JSON.parse(__financial_row_json),wire=this.financialBusinessWire(table,toCloudRow(table,physical),exact,exactFinancial);
+        this.captureFinancialBusinessRow(table, wire, exact, source, branchId);
         return wire;});
-      if(this.financialCoverageCaptures.size>10000)this.financialCoverageCaptures.clear();source.assertSource();return rows;
+      source.assertSource();return rows;
     });
     const request = this.connectionManager.pool.request();
     const clauses = changes.map((change, index) => {
@@ -251,17 +248,66 @@ class ChangeReader {
         ${excluded.length ? `AND aggregate_id NOT IN (${excluded.join(",")})` : ""}
       GROUP BY aggregate_id ORDER BY MIN(change_id)
     )
-    SELECT journal.change_id,journal.entity_type,journal.entity_id,journal.operation,journal.entity_version,journal.aggregate_id
+    SELECT journal.change_id,journal.entity_type,journal.entity_id,journal.operation,journal.entity_version,journal.aggregate_id,receipt.operation_type
       FROM dbo.sync_change_journal journal JOIN selected ON selected.aggregate_id=journal.aggregate_id
+      LEFT JOIN dbo.local_operation_receipts receipt ON receipt.operation_id=journal.aggregate_id
       WHERE journal.acknowledged_at IS NULL ORDER BY selected.first_change,journal.change_id;`);
     const byAggregate = new Map();
     for (const row of result.recordset ?? []) {
       const id = String(row.aggregate_id);
-      if (!byAggregate.has(id)) byAggregate.set(id, []);
+      if (!byAggregate.has(id)) byAggregate.set(id, { aggregateId: id, changes: [], operationType: row.operation_type });
       let key; try { key = JSON.parse(row.entity_id); } catch { key = { id: row.entity_id }; }
-      byAggregate.get(id).push({ ...row, key });
+      const { operation_type, ...change } = row;
+      byAggregate.get(id).changes.push({ ...change, key });
     }
-    return [...byAggregate.entries()].map(([aggregateId, changes]) => ({ aggregateId, changes }));
+    return [...byAggregate.values()];
+  }
+  async bookingUpload(aggregate, branchId, terminalId, financialRequired) {
+    const pool = this.connectionManager.pool;
+    const result = await pool.request().input("operation", aggregate.aggregateId).query(`
+      SELECT payload.payload_json,payload.payload_sha256,LOWER(CONVERT(varchar(36),db.family_guid)) AS family_guid
+      FROM ${bookingUpload.TABLE} AS payload CROSS JOIN sys.database_recovery_status AS db
+      WHERE payload.operation_id=@operation AND db.database_id=DB_ID();`);
+    if (result.recordset?.length !== 1) throw bookingUpload.fail();
+    const snapshot = { ...bookingUpload.readBookingPayload(result.recordset[0], { ...aggregate, branchId, terminalId }), pool };
+    if (!financialRequired) return snapshot;
+    const source = this.financialCoverageBinding(branchId, terminalId);
+    for (const [tableName, rows] of snapshot.rows) {
+      const { table } = this.table(tableName);
+      snapshot.rows.set(tableName, rows.map(({ row, exact }) => {
+        if (typeof exact !== "string") throw bookingUpload.fail();
+        const physical = JSON.parse(exact);
+        const wire = this.financialBusinessWire(table, row, physical, true);
+        if (source && financialPrimary(table)) this.captureFinancialBusinessRow(table, wire, physical, source, branchId);
+        return { row: wire };
+      }));
+    }
+    return snapshot;
+  }
+  async acknowledgeBookingUpload(aggregate, snapshot, branchId) {
+    if (this.connectionManager.pool !== snapshot.pool) throw bookingUpload.fail();
+    const sql = this.connectionManager.sql();
+    const transaction = new sql.Transaction(snapshot.pool);
+    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+    try {
+      const result = await transaction.request().input("operation", aggregate.aggregateId).input("branch", branchId)
+        .input("checksum", snapshot.checksum).input("family", snapshot.family).input("expected", aggregate.changes.length)
+        .query(`
+          SET NOCOUNT ON;
+          IF NOT EXISTS(SELECT 1 FROM sys.database_recovery_status WHERE database_id=DB_ID() AND family_guid=@family)
+            THROW 51041, 'The original booking database changed.', 1;
+          DELETE ${bookingUpload.TABLE} WHERE operation_id=@operation AND payload_sha256=@checksum;
+          IF @@ROWCOUNT<>1 THROW 51041, 'The original booking payload changed.', 1;
+          UPDATE dbo.sync_change_journal SET acknowledged_at=SYSDATETIMEOFFSET(),last_error=NULL
+            WHERE aggregate_id=@operation AND branch_id=@branch AND acknowledged_at IS NULL;
+          IF @@ROWCOUNT<>@expected THROW 51041, 'The original booking journal changed.', 1;
+          SELECT 1 AS acknowledged;`);
+      if (result.recordset?.[0]?.acknowledged !== 1 || this.connectionManager.pool !== snapshot.pool) throw bookingUpload.fail();
+      await transaction.commit();
+    } catch (error) {
+      await transaction.rollback().catch(() => undefined);
+      throw error;
+    }
   }
   async protectedIntent(aggregateId,branchId) {
     const intent=await this.intents.get(aggregateId,branchId);
@@ -428,6 +474,22 @@ class ChangeReader {
     const schemaHash=createHash('sha256').update(JSON.stringify(table.columns.map(c=>[c.sqlServerColumn,c.cloudColumn,c.sqlServerType,c.cloudType]))).digest('hex');
     const rowHash=createHash('sha256').update(JSON.stringify(table.columns.map(c=>[c.sqlServerColumn,String(c.cloudType).toLowerCase()==='uuid'?recordId(row[c.sqlServerColumn]):row[c.sqlServerColumn]]))).digest('hex');
     return{schemaHash,rowHash,id:stableUuid({domain:'retail-pos.financial-business-row-ack.v1',source:source.identity,table:table.cloudTable,id,schemaHash,rowHash}),entity:table.cloudTable+':'+id};
+  }
+  captureFinancialBusinessRow(table, wire, exact, source, branchId) {
+    const primary = financialPrimary(table);
+    const key = this.financialCoverageKey(table, exact, source);
+    // PushWorker canonicalizes SQL-equivalent branch labels at upload.
+    const columns = new Set(table.columns.map(column => column.cloudColumn));
+    const branchColumn = table.scope === "branch" && table.direction !== "pull"
+      ? ["store_id", "branch_id"].find(column => columns.has(column)) : null;
+    const suppliedBranch = branchColumn && String(wire[branchColumn] ?? "").trim();
+    const sent = branchColumn && (!suppliedBranch || recordId(suppliedBranch) === recordId(branchId))
+      ? { ...wire, [branchColumn]: recordId(branchId) } : wire;
+    const captureId = table.cloudTable + ":" + recordId(wire[primary.cloudColumn]) + ":" +
+      createHash("sha256").update(JSON.stringify(sent)).digest("hex");
+    const prior = this.financialCoverageCaptures.get(captureId);
+    if (this.financialCoverageCaptures.size > 10000) this.financialCoverageCaptures.clear();
+    this.financialCoverageCaptures.set(captureId, { key, ambiguous: Boolean(prior?.ambiguous || prior && prior.key.rowHash !== key.rowHash) });
   }
   financialBusinessWire(table,ordinary,physical,enabled){
     if(!enabled)return ordinary;

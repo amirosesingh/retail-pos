@@ -24,6 +24,7 @@ const LOCAL_SUPPORT_TABLES = {
   sync_change_journal:["change_id","entity_type","entity_id","operation","branch_id","entity_version","aggregate_id","acknowledged_at"],
   sync_conflicts:["conflict_id","entity_type","entity_id","branch_id","status"],
   local_operation_receipts:["operation_id","operation_type","entity_id","note","committed_at"],
+  pos_sync_booking_payloads_v1:["operation_id","payload_json","payload_sha256"],
   pos_document_counters:["prefix","branch_id","next_value","updated_at"],
 };
 function inspectLocalSupport(actual) {

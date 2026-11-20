@@ -7,6 +7,7 @@ const { assertShiftClosureAcknowledgement } = require("./shift-closure-ack.cjs")
 const {prepareShiftFinancialBasis,assertShiftFinancialAcknowledgement}=require("./shift-financial-ack.cjs");
 const cashRoute = require("./cash-checkout-route.cjs");
 const refundRoute = require("./grouped-refund-native.cjs");
+const bookingRoute = require("../db/booking-upload.cjs");
 
 function groupBy(values, key) {
   const groups = new Map();
@@ -413,6 +414,8 @@ class PushWorker {
         deferred.add(aggregate.aggregateId);
         continue;
       }
+      const frozenBooking = bookingRoute.TYPES.includes(aggregate.operationType)
+        ? await this.reader.bookingUpload(aggregate, branchId, terminalId, financialRequired) : null;
       const operations = [];
       const openingRows=aggregate.changes.some(change=>change.entity_type==="shifts")
         ? await this.reader.frozenOpeningRows?.(aggregate.aggregateId,branchId)??[]:[];
@@ -428,6 +431,8 @@ class PushWorker {
         });
         const live = writable.filter((change) => change.operation !== "delete");
         const removed = writable.filter((change) => change.operation === "delete");
+        const savedBookingRows = frozenBooking?.rows.get(tableName);
+        if (frozenBooking && (!savedBookingRows || removed.length)) throw bookingRoute.fail();
         if (live.length)
           operations.push({
             table: table.cloudTable,
@@ -436,7 +441,9 @@ class PushWorker {
             changes: live,
             rows: await uploadRows(table.cloudTable, rowsForBranch(
               table,
-              (await this.reader.rows(table, live, { branchId,exactFinancial:financialRequired })).map(row=>table.cloudTable==="shifts" ? openings.get(recordId(row.id))??row:row),
+              (savedBookingRows ? savedBookingRows.map(entry => entry.row)
+                : await this.reader.rows(table, live, { branchId,exactFinancial:financialRequired }))
+                .map(row=>table.cloudTable==="shifts" ? openings.get(recordId(row.id))??row:row),
               branchId,
             )),
           });
@@ -465,7 +472,7 @@ class PushWorker {
       if(waitingForIntent){originalIds.forEach(id=>deferred.add(id));continue;}
       for(let index=operations.length-1;index>=0;index--)if(!operations[index].rows.length&&!operations[index].changes.length)operations.splice(index,1);
       try {
-        await includeMissingParents(operations, this.reader, this.registry, branchId,{exactFinancial:financialRequired});
+        if (!frozenBooking) await includeMissingParents(operations, this.reader, this.registry, branchId,{exactFinancial:financialRequired});
         await includeClosedShiftGraphs(operations, this.reader, this.registry, branchId);
       } catch (error) {
         throw error;
@@ -502,7 +509,9 @@ class PushWorker {
           if(operations.length!==1||operations[0].table!=='shifts'||operations[0].deletePhase||operations[0].rows.length!==1||recordId(operations[0].rows[0].id)!==verified.shiftId)throw Object.assign(new Error('The protected opening requires its exact original business group.'),{code:'EFINANCIAL_HISTORY_INVALID',table:'shifts'});
           openingSidecar={openingJson:verified.openingJson,proof:verified.proof};
         }
-        const batchId = stableUuid({ branchId, aggregateId: aggregate.aggregateId, operations });
+        const batchId = frozenBooking
+          ? stableUuid({ branchId, bookingUpload: aggregate.aggregateId, checksum: frozenBooking.checksum })
+          : stableUuid({ branchId, aggregateId: aggregate.aggregateId, operations });
         const refundSales=financialRequired?operations.filter(op=>op.table==='sales'&&!op.deletePhase).flatMap(op=>op.rows).filter(row=>row.is_refunded===true).map(row=>recordId(row.id)):[];
         const financialRefundApprovals=refundSales.length?await this.reader.financialRefundApprovals?.(branchId,terminalId,refundSales)??[]:[];
         const financialCoverageToken=financialRequired?this.reader.prepareFinancialBusinessCoverage?.({operations,batchId,branchId,terminalId}):null;
@@ -513,7 +522,8 @@ class PushWorker {
         assertShiftClosureAcknowledgement(acknowledged, operations, branchId);
         if(financialRequired)await this.reader.acknowledgeFinancialBusinessRows?.({token:financialCoverageToken,operations,batchId,acknowledgement:acknowledged,branchId,terminalId});
         if(financialOpening){if(typeof this.reader.acknowledgeFinancialOpening!=='function')throw Object.assign(new Error('The opening acknowledgement cannot be persisted.'),{code:'EFINANCIAL_HISTORY_UNCONFIRMED',table:'shifts'});await this.reader.acknowledgeFinancialOpening(financialOpening,acknowledged,branchId,terminalId);}
-        for (const id of originalIds) await this.reader.acknowledgeAggregate(id);
+        if (frozenBooking) await this.reader.acknowledgeBookingUpload(aggregate, frozenBooking, branchId);
+        else for (const id of originalIds) await this.reader.acknowledgeAggregate(id);
         pushed += aggregate.changes.length;
         onProgress({ direction: "push", table: operations.map(op => op.table).join(", "), completed: aggregate.changes.length });
       } catch (error) {
