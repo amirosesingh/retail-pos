@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   stored: "", push: vi.fn(), request: vi.fn(), databaseState: vi.fn(), nativeLog: undefined as undefined | ReturnType<typeof vi.fn>,
   localMode: true,
   signedIn: false,
+  localConfigurationAvailable: true,
 }));
 vi.mock("../business-storage", () => ({
   readBusinessValue: () => mocks.stored,
@@ -11,8 +12,10 @@ vi.mock("../business-storage", () => ({
 }));
 vi.mock("@/core/api/pos-db", () => ({ db: { pushAuditLogs: mocks.push } }));
 vi.mock("../session-presence", () => ({ hasSignedInIdentity: () => mocks.signedIn }));
-vi.mock("@/core/local-db/local-db", () => ({ localDb: () => mocks.localMode
-  ? { database: {getState: mocks.databaseState}, logConnection: mocks.nativeLog } : null }));
+vi.mock("@/core/local-db/local-db", () => ({
+  localDb: () => mocks.localMode ? { database: {getState: mocks.databaseState}, logConnection: mocks.nativeLog } : null,
+  localConfigurationBridge: () => mocks.localConfigurationAvailable ? window.pos : null,
+}));
 vi.mock("@/platform-config/platform", () => ({isTerminalApp: () => true}));
 vi.mock("../activity-journal", () => ({ replayOrder: (rows: unknown[]) => rows, stamp: () => ({deviceTime:new Date().toISOString(),seq:2}) }));
 
@@ -21,6 +24,7 @@ beforeEach(() => {
   mocks.databaseState.mockReset().mockResolvedValue({ configured: true });
   mocks.localMode = true;
   mocks.signedIn = false;
+  mocks.localConfigurationAvailable = true;
   mocks.nativeLog = undefined;
   mocks.stored = JSON.stringify([{id:"pending",at:new Date().toISOString(),category:"other",action:"Opened app",module:"app",details:{},synced_to_cloud:false}]);
   vi.stubGlobal("window",{location:{pathname:"/"}});
@@ -109,6 +113,20 @@ it("writes signed-in activity to ready native SQL while the closing renderer sti
   await expect(audit.flushPendingAuditLogs()).resolves.toBeUndefined();
   expect(mocks.push).toHaveBeenCalledExactlyOnceWith(expect.any(Array), writeBatch);
   expect(JSON.parse(mocks.stored)[0].synced_to_cloud).toBe(true);
+});
+
+it("does not use the native SQL writer for a management session", async () => {
+  mocks.localMode = false;
+  mocks.signedIn = true;
+  mocks.localConfigurationAvailable = false;
+  const writeBatch = vi.fn();
+  const getState = vi.fn().mockResolvedValue({ enabled: true, configured: true, connected: true, tradingReady: true });
+  vi.stubGlobal("window", { location: { pathname: "/" }, pos: { database: { getState }, writeBatch } });
+  vi.stubGlobal("navigator", { onLine: true });
+  const audit = await import("../audit-log");
+  await expect(audit.flushPendingAuditLogs()).resolves.toBeUndefined();
+  expect(mocks.push).toHaveBeenCalledExactlyOnceWith(expect.any(Array), undefined);
+  expect(getState).not.toHaveBeenCalled();
 });
 
 it("does not discard a signed-out person's unsaved business audit or a failed diagnostic write", async () => {

@@ -5,7 +5,7 @@ import { db } from "@/core/api/pos-db";
 import { hasSignedInIdentity } from "./session-presence";
 import { replayOrder, stamp } from "./activity-journal";
 import { isTerminalApp } from "@/platform-config/platform";
-import { localDb } from "@/core/local-db/local-db";
+import { localConfigurationBridge, localDb } from "@/core/local-db/local-db";
 import { desktopBridge } from "./desktop-bridge-registry";
 import {auditDetails,normalizeCachedAuditRows} from "./audit-row-normalization";
 import { pageDataScope } from "./page-data-cache";
@@ -474,9 +474,10 @@ async function flushBatchUnderLock(preferReadySql = false) {
 
   // A renderer may still be in an online-only screen after native SQL becomes
   // ready. During close use the verified native writer before trying the cloud.
-  const state = preferReadySql ? await diagnostics?.database?.getState() : undefined;
+  const sql = preferReadySql ? desktop ?? localConfigurationBridge() : null;
+  const state = await sql?.database?.getState();
   const localWriter = state?.enabled && state.configured && state.connected && state.tradingReady === true &&
-    !state.localRecoveryPending ? diagnostics?.writeBatch : undefined;
+    !state.localRecoveryPending ? sql?.writeBatch : undefined;
   if (!online && !desktop && !localWriter) return;
 
   // Send one batch through the selected writer. Failures stay pending.
