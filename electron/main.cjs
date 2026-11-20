@@ -563,7 +563,14 @@ function prepareLocalData({force=false}={}){
       let sourceTable;
       try{sourceTable=Object.getOwnPropertyDescriptor(error,"table")?.value;}catch{/* Diagnostic fields do not replace the failure. */}
       const table=registeredTables.includes(sourceTable)?sourceTable:failureDiagnostic.table;
-      const detail={phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences,...(table?{table}:{})};
+      const retryableConnection = Boolean(failureDiagnostic.transportStage && !failureDiagnostic.httpStatus &&
+        (failureDiagnostic.transportCode || error?.code === "ETIMEDOUT" ||
+         (failureDiagnostic.transportStage === "fetch" && failureDiagnostic.transportErrorName === "TypeError")));
+      const detail={phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",
+        error:retryableConnection
+          ? "Retail could not reach the central service to finish verifying store data. Verification will retry when the connection returns."
+          : String(error?.message??error),
+        differences:error?.differences,...(retryableConnection?{retryableConnection:true,retryForce:force}:{}),...(table?{table}:{})};
       if(localDataLifecycle.preserveCachedReady?.())databaseService.markReady(detail);
       else databaseService.transition("enabled_bootstrapping",detail);
       diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.sqlErrorDiagnostic?.(error), ...failureDiagnostic });
@@ -658,6 +665,24 @@ async function runAutomaticSync() {
   // terminal identity. Revocation clears the vault before this can run again.
   if (!terminalStore.read()?.tokenId || !databaseManager.isConnected() || !localBranchId() || jobManager.running || localDataPreparePromise || syncCoordinator.paused) {
     scheduleAutomaticSync();
+    return;
+  }
+  if (databaseState.state === "enabled_bootstrapping" && databaseState.detail?.retryableConnection === true) {
+    let retryDelay = AUTO_SYNC_RETRY_MS;
+    const branchId = localBranchId(), terminalId = terminalStore.read()?.tokenId, pool = databaseManager.pool;
+    try {
+      const centralReady = (await syncCloud.health({ timeoutMs: 5000 })).ready;
+      const latest = databaseService.snapshot();
+      if (centralReady && !quitting && !syncCoordinator.paused && databaseManager.pool === pool &&
+          localBranchId() === branchId && terminalStore.read()?.tokenId === terminalId &&
+          latest.state === "enabled_bootstrapping" && latest.detail?.retryableConnection === true) {
+        await prepareLocalData({force:latest.detail.retryForce === true});
+        retryDelay = 250;
+      }
+    } catch {
+      // The lifecycle keeps and reports the original verification failure.
+    }
+    scheduleAutomaticSync(retryDelay);
     return;
   }
   // A pre-install busy lease may retry only while startup data is still gated.
