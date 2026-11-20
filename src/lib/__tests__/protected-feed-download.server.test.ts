@@ -121,3 +121,70 @@ it("rejects compressed errors instead of forwarding encoded bytes as JSON",async
   state.rest.mockResolvedValue(new Response("compressed",{status:503,headers:{"Content-Encoding":"gzip"}}));
   expect((await download(args))!.status).toBe(502);
 });
+
+const scoped = { ...args, scopedTransport: true as const, limit: 100 };
+const missingBatch = () => Response.json({
+  code: "PGRST202", message: "Could not find the function public.pos_sync_feed_page_v3(p_limit) in the schema cache",
+}, { status: 404 });
+
+it("admits a bounded larger projected page only on the scoped v3 route", async () => {
+  const body = JSON.stringify(Array.from({ length: 50 }, (_, i) => ({ cursor: i + 124 })));
+  state.rest.mockResolvedValueOnce(attested(body, { "X-POS-Feed-Rows": "50", "X-POS-Feed-Continue": "1" }));
+  const response = await download(scoped);
+  expect(response?.headers.get("X-POS-Feed-Continue")).toBe("1");
+  expect(await response?.text()).toBe(body);
+  expect(state.rest.mock.calls[0][0]).toBe("rpc/pos_sync_feed_page_v3");
+  expect(JSON.parse(state.rest.mock.calls[0][1].body)).toMatchObject({ p_limit: 50, p_max_bytes: 2097152 });
+  state.rest.mockResolvedValueOnce(attested(body, { "X-POS-Feed-Rows": "50" }));
+  expect((await download({ ...scoped, limit: 20 }))?.status).toBe(502);
+});
+
+it("reuses the same scope, cursor and cancellation signal only on exact scoped v3 absence", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1000);
+  const controller = new AbortController();
+  state.rest.mockImplementation(async name => name.endsWith("_v3") ? missingBatch() : attested());
+  const read = { ...scoped, signal: controller.signal };
+  expect(await (await download(read))?.text()).toBe(content);
+  const [batchCall, fallbackCall] = state.rest.mock.calls;
+  expect(batchCall[0]).toBe("rpc/pos_sync_feed_page_v3");
+  expect(fallbackCall[0]).toBe("rpc/pos_sync_feed_page_v2");
+  const { p_limit, ...batchScope } = JSON.parse(batchCall[1].body);
+  expect(p_limit).toBe(50);
+  expect(JSON.parse(fallbackCall[1].body)).toEqual(batchScope);
+  expect(fallbackCall[1].signal).toBe(controller.signal);
+  await download(read);
+  expect(state.rest.mock.calls.map(call => call[0])).toEqual([
+    "rpc/pos_sync_feed_page_v3", "rpc/pos_sync_feed_page_v2", "rpc/pos_sync_feed_page_v2",
+  ]);
+  state.project = "https://two.test";
+  await download(read);
+  expect(state.rest.mock.calls.at(-2)?.[0]).toBe("rpc/pos_sync_feed_page_v3");
+  state.project = "https://one.test";
+  vi.setSystemTime(32_000);
+  await download(read);
+  expect(state.rest.mock.calls.at(-2)?.[0]).toBe("rpc/pos_sync_feed_page_v3");
+});
+
+it.each([
+  [403, { code: "42501", message: "denied" }],
+  [503, { message: "temporarily unavailable" }],
+  [404, { code: "PGRST202", message: "Could not find the function public.pos_sync_feed_page_v2(args)" }],
+  [400, { code: "P0001", message: "POS_FEED_BATCH_UNSUPPORTED_SOURCE" }],
+])("never falls back on a scoped capability failure other than exact absence (%s)", async (status, error) => {
+  state.rest.mockImplementation(async () => Response.json(error, { status }));
+  const response = await download(scoped);
+  expect(response?.status).toBe(status);
+  expect(await response?.json()).toEqual(error);
+  expect(state.rest).toHaveBeenCalledOnce();
+});
+
+it("keeps malformed, oversized and transport failures on the scoped route", async () => {
+  state.rest.mockResolvedValueOnce(attested(content, { "X-POS-Feed-Rows": "51" }));
+  state.rest.mockResolvedValueOnce(attested(content, { "X-POS-Feed-Bytes": "5242881" }));
+  state.rest.mockRejectedValueOnce(new Error("connection closed"));
+  expect((await download(scoped))?.status).toBe(502);
+  expect((await download(scoped))?.status).toBe(502);
+  await expect(download(scoped)).rejects.toThrow("connection closed");
+  expect(state.rest.mock.calls.map(call => call[0])).toEqual(Array(3).fill("rpc/pos_sync_feed_page_v3"));
+});

@@ -21,7 +21,7 @@ import {
 } from "@/integrations/supabase/external-client";
 import { defaultSettings, sampleState } from "@/lib/pos-seed";
 import { broadcastSettingsChange, runOpLive } from "@/lib/sync-engine";
-import { localDb } from "@/core/local-db/local-db";
+import { localDb, type PosBridge } from "@/core/local-db/local-db";
 import { resolveLocalWriteRoute } from "@/core/local-db/write-route";
 import { routedQuery } from "@/core/api/db-query";
 import type { SyncOp } from "@/lib/sync-outbox";
@@ -2760,9 +2760,10 @@ export const db = {
       module: string;
       details: Record<string, unknown>;
     }[],
+    localWriter?: NonNullable<PosBridge["writeBatch"]>,
   ) {
-    if (localDb()?.writeBatch) {
-      await commitOps("Saving audit logs", [
+    if (localWriter || localDb()?.writeBatch) {
+      const operations: SyncOp[] = [
         {
           kind: "upsert",
           table: "audit_logs",
@@ -2780,7 +2781,13 @@ export const db = {
             created_at: r.at,
           })),
         },
-      ]);
+      ];
+      if (localWriter) {
+        const saved = await localWriter("Saving audit logs", operations);
+        if (!saved?.ok) throw new Error(saved?.error ?? "Activity logs could not be saved to the local database.");
+      } else {
+        await commitOps("Saving audit logs", operations);
+      }
       return rows.map((r) => r.id);
     }
     if (!hasStaffSession()) {

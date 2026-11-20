@@ -20,6 +20,20 @@ function fixture(failure: unknown, cached = false) {
 }
 
 describe("native startup recovery domain marker", () => {
+  it("reports a fetch transport outage with a retryable message and keeps an unverified store gated", async () => {
+    const failure = tagBootstrapDiagnostic(new TypeError("fetch failed"), {
+      phase: "download", table: "products", transportStage: "fetch", transportErrorName: "TypeError",
+    });
+    const f = fixture(failure);
+    await expect(f.prepare()).rejects.toBe(failure);
+    expect(f.transition).toHaveBeenCalledWith("enabled_bootstrapping", expect.objectContaining({
+      retryableConnection: true, syncReady: false,
+      error: expect.stringContaining("Verification will retry"),
+    }));
+    expect(f.markReady).not.toHaveBeenCalled();
+    expect(f.logConnection).toHaveBeenCalledWith("synchronization.bootstrap.failed", expect.objectContaining({ message: "fetch failed" }));
+  });
+
   it.each([false, true])("preserves a registered shift domain and the original error without changing cached admission (%j)", async cached => {
     const failure = Object.assign(new Error("Retained shift facts remain unverified"), { code: "ELOCAL_PENDING_UNVERIFIED", table: "shifts", sqlNumber: 547 });
     const f = fixture(failure, cached);

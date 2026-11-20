@@ -50,6 +50,8 @@ function fixture() {
   const runNow = vi.fn(async (_input: object): Promise<Result> => ({ ok: true }));
   const recovered = { ok: true, source: "existing lifecycle" };
   const ensure = vi.fn(async (_input: object): Promise<Result> => recovered);
+  const databaseState = { enabled: true, configured: true, connected: true,
+    state: "enabled_ready", detail: null as { retryableConnection?: boolean; retryForce?: boolean } | null };
   const report = vi.fn(), finish = vi.fn();
   const manual = new Map<string, (_event: unknown, options?: object) => Promise<unknown>>();
   const context = {
@@ -57,11 +59,12 @@ function fixture() {
     automaticSyncQueued: false, automaticSyncScheduler: { schedule: (delay: number) => scheduled.push(delay) },
     isManagementDevice: () => false, managementReplica: { run: vi.fn() },
     terminalStore: { read: () => ({ tokenId: "registered" }) }, terminalIdentityPausedSync: false,
-    databaseService: { snapshot: () => ({ enabled: true, configured: true, connected: true }),
+    databaseService: { snapshot: () => databaseState,
       beginStartupActivity: () => ({ report, finish }), markReady: vi.fn(), transition: vi.fn() },
     databaseManager: { isConnected: () => true }, recoverLocalDatabase: vi.fn(), shouldRetryRecoveryMetadata,recoveryMetadataInstaller:{approvedArtifactHash:null},recordFault: vi.fn(),
     localBranchId: () => "A", jobManager: { running: false }, localDataPreparePromise: null,
     syncCoordinator: { paused: false, running: false, runNow }, approvalTokenVerifier: { refresh: vi.fn() },
+    syncCloud: { health: vi.fn(async () => ({ ready: true })) },
     lastActivityFlush: Date.now(), ACTIVITY_INTERVAL_MS: 120000, AUTO_SYNC_OK_MS: 120000,
     AUTO_SYNC_RETRY_MS: 60000, AUTO_VERIFY_MS: 900000, lastAutomaticVerification: Date.now(),
     localDataLifecycle: { ensure, preserveCachedReady: () => false,
@@ -81,12 +84,26 @@ function fixture() {
   runInNewContext(source('  ipcMain.handle("sync:run-now"', '  ipcMain.handle("sync:finalize-shift-close"'), context);
   const api = context as typeof context & { runAutomaticSync: () => Promise<void>; scheduleAutomaticSync: (delay?: number) => void };
   const gap = () => runNow.mockResolvedValueOnce({ ok: false, code: "ECHANGEGAP", error: "Change Tracking expired." });
-  return { context: api, log, calls, runNow, ensure, recovered, report, finish, scheduled, gap,
+  return { context: api, log, calls, runNow, ensure, recovered, report, finish, scheduled, gap, databaseState,
     manual: (options = {}) => manual.get("sync:run-now")!(null, options) };
 }
 afterEach(() => vi.useRealTimers());
 
 describe("actual Main scoped recovery reports the final operation outcome", () => {
+  it.each([false, true])("resumes startup verification with its original force policy after the central service recovers (%s)", async force => {
+    const f = fixture();
+    f.databaseState.state = "enabled_bootstrapping";
+    f.databaseState.detail = { retryableConnection: true, retryForce: force };
+    f.context.syncCloud.health.mockResolvedValueOnce({ ready: false });
+    await f.context.runAutomaticSync();
+    expect(f.ensure).not.toHaveBeenCalled();
+    expect(f.scheduled.at(-1)).toBe(60_000);
+    await f.context.runAutomaticSync();
+    expect(f.ensure).toHaveBeenCalledExactlyOnceWith({ branchId: "A", historyDays: 90, force, onActivity: f.report });
+    expect(f.runNow).not.toHaveBeenCalled();
+    expect(f.scheduled.at(-1)).toBe(250);
+  });
+
   it("reports automatic recovery, not a failed attempt, when the existing lifecycle succeeds", async () => {
     const f = fixture(); f.gap(); await f.context.runAutomaticSync();
     expect(f.calls.map(row => row.event)).toEqual([

@@ -96,7 +96,7 @@ describe("scoped history Worker transport", () => {
     [{ action: "finish", upperId: id }, "pos_sync_history_index_v3", { p_action: "finish", p_after_id: null, p_upper_id: id }],
     [{ action: "rows", ids: [id] }, "pos_sync_history_rows_v3", { p_ids: [id] }],
     [{ action: "bootstrap", cursor: null, historyDays: 90, limit: 10 }, "pos_sync_history_page_v2", { p_history_days: 90, p_after_cursor: null }],
-    [{ action: "feed", cursor: 25, limit: 100 }, "pos_sync_feed_page_v2", { p_after_cursor: 25 }],
+    [{ action: "feed", cursor: 25, limit: 100 }, "pos_sync_feed_page_v3", { p_after_cursor: 25, p_limit: 50 }],
     [{ action: "counts", historyDays: 90 }, "pos_sync_counts_history_v2", { p_history_days: 90 }],
   ])("sends only the requested scoped RPC for %j", async (action, name, args) => {
     const response = await scoped(action);
@@ -166,7 +166,7 @@ describe("scoped history Worker transport", () => {
 
   it("attests only the exact v3 begin absence, while missing page, rows, bootstrap, feed and counts stay errors", async () => {
     for (const name of ["pos_sync_history_index_v3", "pos_sync_history_rows_v3", "pos_sync_history_page_v2",
-      "pos_sync_feed_page_v2", "pos_sync_counts_history_v2"]) failures.set(name, () => missing(name));
+      "pos_sync_feed_page_v3", "pos_sync_feed_page_v2", "pos_sync_counts_history_v2"]) failures.set(name, () => missing(name));
     const absent = await scoped({ action: "begin" });
     expect(absent.status).toBe(409);
     expect(absent.headers.get("X-POS-History-Reconcile-Version")).toBe("2");
@@ -187,7 +187,7 @@ describe("scoped history Worker transport", () => {
     }
     expect(calls.map(call => call.name)).toEqual([
       "pos_sync_history_index_v3", "pos_sync_history_index_v3", "pos_sync_history_rows_v3",
-      "pos_sync_history_page_v2", "pos_sync_feed_page_v2", "pos_sync_counts_history_v2",
+      "pos_sync_history_page_v2", "pos_sync_feed_page_v3", "pos_sync_feed_page_v2", "pos_sync_counts_history_v2",
     ]);
     failures.set("pos_sync_history_index_v3", () => missing("pos_sync_history_index_v2"));
     expect((await scoped({ action: "begin" })).status).toBe(404);

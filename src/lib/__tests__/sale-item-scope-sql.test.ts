@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {createRequire} from "node:module";
 import {afterAll,beforeAll,describe,expect,it} from "vitest";
 const require=createRequire(import.meta.url);
@@ -119,3 +120,77 @@ describe("effective parent-scoped PostgreSQL sync contracts",()=>{
   expect((await db.query("SELECT has_function_privilege('authenticated','public.pos_sync_sale_item_feed_visible_v1(uuid,text,boolean)','EXECUTE') allowed")).rows[0].allowed).toBe(false);
  });
 });
+
+it("batches the deployed parent-scoped v2 results with an unchanged stream and persisted cursor boundary", async () => {
+  const migration = readFileSync("supabase/migrations/20261120082442_batched_scoped_feed.sql", "utf8");
+  const { db, uid } = fixture;
+  const signature = "public.pos_sync_feed_page_v2(text,text,text,bigint,boolean,integer)";
+  await db.exec("BEGIN");
+  try {
+    const schema = readFileSync("supabase/schema.sql", "utf8");
+    const marker = "CREATE OR REPLACE FUNCTION public.pos_sync_history_project_v1(";
+    const start = schema.lastIndexOf(marker);
+    const delimiter = schema.slice(start).match(/AS (\$[a-z_]+\$)/i)?.[1];
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(delimiter).toBeDefined();
+    const body = schema.indexOf(delimiter!, start) + delimiter!.length;
+    await db.exec(schema.slice(start, schema.indexOf(delimiter!, body) + delimiter!.length) + ";");
+    await db.exec("REVOKE ALL ON FUNCTION " + signature + " FROM PUBLIC, anon, authenticated;" +
+      "GRANT EXECUTE ON FUNCTION " + signature + " TO service_role;");
+    await db.exec(migration);
+    await db.exec(
+      "DELETE FROM public.sync_change_feed;" +
+      "INSERT INTO public.sale_items(id,sale_id,branch_id,row_version,created_at) " +
+        "SELECT ('00000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid," +
+        "CASE WHEN n%3=0 THEN '" + uid(2) + "'::uuid ELSE '" + uid(1) + "'::uuid END,NULL,1,now() " +
+        "FROM generate_series(1000,1159) n;" +
+      "DELETE FROM public.sale_items WHERE id='" + uid(1001) + "';"
+    );
+    type CursorRow = { cursor: number; entity_id: string; tombstone: boolean };
+    const page = async (version: "v2" | "v3", cursor: number, limit = 50) => {
+      const signature = version === "v3" ? "pos_sync_feed_page_v3('default','A','terminal',$1,false,2097152,$2)" :
+        "pos_sync_feed_page_v2('default','A','terminal',$1,false,2097152)";
+      const { rows: [response] } = await db.query("WITH r AS MATERIALIZED(SELECT public." + signature +
+        " page) SELECT page::text body, current_setting('response.headers') headers FROM r",
+        version === "v3" ? [cursor, limit] : [cursor]);
+      const headers = Object.assign({}, ...JSON.parse(response.headers));
+      const rows: CursorRow[] = JSON.parse(response.body);
+      expect(Number(headers["X-POS-Feed-Bytes"])).toBe(Buffer.byteLength(response.body));
+      expect(Number(headers["X-POS-Feed-Rows"])).toBe(rows.length);
+      return { rows, continuation: headers["X-POS-Feed-Continue"] === "1" };
+    };
+    async function collect(version: "v2" | "v3") {
+      const rows: CursorRow[] = [];
+      let after = 0;
+      let requests = 0;
+      for (;;) {
+        const current = await page(version, after);
+        requests++;
+        rows.push(...current.rows);
+        if (!current.continuation) return { requests, rows };
+        after = current.rows.at(-1)!.cursor;
+      }
+    }
+    const v2 = await collect("v2");
+    const v3 = await collect("v3");
+    expect(v3.rows).toEqual(v2.rows);
+    expect(v3.rows).toHaveLength(107);
+    expect(v3.requests).toBe(3);
+    expect(v2.requests).toBe(11);
+    expect(v3.rows.filter(row => row.tombstone)).toHaveLength(1);
+    const first = await page("v3", 0, 27);
+    expect(first.rows).toHaveLength(27);
+    const saved = first.rows.at(-1)!.cursor;
+    expect(await page("v3", saved, 27)).toEqual(await page("v3", saved, 27));
+    const privilege = await db.query(
+      "SELECT has_function_privilege('anon',oid,'EXECUTE') anon,has_function_privilege('authenticated',oid,'EXECUTE') actor," +
+      "has_function_privilege('service_role',oid,'EXECUTE') service FROM pg_proc WHERE oid=to_regprocedure($1)",
+      ["public.pos_sync_feed_page_v3(text,text,text,bigint,boolean,integer,integer)"],
+    );
+    expect(privilege.rows).toEqual([{ anon: false, actor: false, service: true }]);
+    await expect(db.query("SELECT public.pos_sync_feed_page_v3('default','outside','terminal',0,false,2097152,50)"))
+      .rejects.toThrow("SYNC_BRANCH_FORBIDDEN");
+  } finally {
+    await db.exec("ROLLBACK");
+  }
+}, 30000);

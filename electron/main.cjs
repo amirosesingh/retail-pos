@@ -5,7 +5,7 @@ const os = require("node:os");
 const net = require("node:net");
 const { randomUUID, createHash } = require("node:crypto");
 const { spawn } = require("node:child_process");
-const { app, BrowserWindow, ipcMain, screen, dialog, session, shell, safeStorage, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, screen, dialog, session, shell, safeStorage, Menu, net: electronNet } = require("electron");
 
 require("./window-rendering.cjs").configureWindowRendering(app);
 
@@ -563,7 +563,14 @@ function prepareLocalData({force=false}={}){
       let sourceTable;
       try{sourceTable=Object.getOwnPropertyDescriptor(error,"table")?.value;}catch{/* Diagnostic fields do not replace the failure. */}
       const table=registeredTables.includes(sourceTable)?sourceTable:failureDiagnostic.table;
-      const detail={phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences,...(table?{table}:{})};
+      const retryableConnection = Boolean(failureDiagnostic.transportStage && !failureDiagnostic.httpStatus &&
+        (failureDiagnostic.transportCode || error?.code === "ETIMEDOUT" ||
+         (failureDiagnostic.transportStage === "fetch" && failureDiagnostic.transportErrorName === "TypeError")));
+      const detail={phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",
+        error:retryableConnection
+          ? "Retail could not reach the central service to finish verifying store data. Verification will retry when the connection returns."
+          : String(error?.message??error),
+        differences:error?.differences,...(retryableConnection?{retryableConnection:true,retryForce:force}:{}),...(table?{table}:{})};
       if(localDataLifecycle.preserveCachedReady?.())databaseService.markReady(detail);
       else databaseService.transition("enabled_bootstrapping",detail);
       diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.sqlErrorDiagnostic?.(error), ...failureDiagnostic });
@@ -658,6 +665,24 @@ async function runAutomaticSync() {
   // terminal identity. Revocation clears the vault before this can run again.
   if (!terminalStore.read()?.tokenId || !databaseManager.isConnected() || !localBranchId() || jobManager.running || localDataPreparePromise || syncCoordinator.paused) {
     scheduleAutomaticSync();
+    return;
+  }
+  if (databaseState.state === "enabled_bootstrapping" && databaseState.detail?.retryableConnection === true) {
+    let retryDelay = AUTO_SYNC_RETRY_MS;
+    const branchId = localBranchId(), terminalId = terminalStore.read()?.tokenId, pool = databaseManager.pool;
+    try {
+      const centralReady = (await syncCloud.health({ timeoutMs: 5000 })).ready;
+      const latest = databaseService.snapshot();
+      if (centralReady && !quitting && !syncCoordinator.paused && databaseManager.pool === pool &&
+          localBranchId() === branchId && terminalStore.read()?.tokenId === terminalId &&
+          latest.state === "enabled_bootstrapping" && latest.detail?.retryableConnection === true) {
+        await prepareLocalData({force:latest.detail.retryForce === true});
+        retryDelay = 250;
+      }
+    } catch {
+      // The lifecycle keeps and reports the original verification failure.
+    }
+    scheduleAutomaticSync(retryDelay);
     return;
   }
   // A pre-install busy lease may retry only while startup data is still gated.
@@ -760,6 +785,7 @@ async function flushSyncBeforeShutdown({ allowSignedOutExit = false } = {}) {
       progress: reportCloseProgress,
       run: async () => {
         const settled = await settleWithin(() => require('./sync/shutdown-sync.cjs').runShutdownSync({
+          networkOnline: () => electronNet.isOnline(),
           health: () => syncCloud.health({ timeoutMs: 8000 }),
           pendingSummary: () => legacyRecoveryRuntime.reader.pendingSummary(branchId),
           run: () => syncCoordinator.runFinal({branchId,batchSize:500}),
@@ -839,20 +865,38 @@ async function restoreShiftCloseGuard() {
   if (result.recordset?.length) pendingShiftCloseSync.add("recovered-shift-close");
 }
 
-async function showMandatorySyncFailure(result) {
+let closeFailureDialog = null;
+function showMandatorySyncFailure(result) {
+  if (closeFailureDialog) return closeFailureDialog;
+  closeFailureDialog = showCloseFailure(result).finally(() => { closeFailureDialog = null; });
+  return closeFailureDialog;
+}
+
+async function showCloseFailure(result) {
   const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
   const savingLocally = ["renderer", "local-writes", "local-storage"].includes(result?.stage);
+  const mayDefer = result?.stage === "synchronization" && databaseService.snapshot().tradingReady === true;
   const response = await dialog.showMessageBox(win, {
     type: "error",
     title: savingLocally ? "Local changes still need saving" : "Synchronization incomplete",
-    message: savingLocally ? "Retail could not finish saving local changes before closing." : "Synchronization must finish before the application can close.",
+    message: savingLocally ? "Retail could not finish saving local changes before closing." : "Retail could not confirm that synchronization finished.",
     detail: String(result?.error ?? "Retry after checking the synchronization status."),
-    buttons: win ? [savingLocally ? "Retry closing" : "Retry sync and close", "Keep application open"] : ["Keep application open"],
+    buttons: win ? [savingLocally ? "Retry closing" : "Retry sync and close", "Keep application open",
+      ...(mayDefer ? ["Close and sync later"] : [])] : ["Keep application open"],
     defaultId: 0,
     cancelId: win ? 1 : 0,
     noLink: true,
   });
   if (win && response.response === 0) setImmediate(() => { if (!win.isDestroyed()) win.close(); });
+  if (win && mayDefer && response.response === 2 && !win.isDestroyed()) {
+    const prepared = await prepareApplicationClose(false, true);
+    if (!prepared.ok) {
+      setImmediate(() => { if (!win.isDestroyed()) void showMandatorySyncFailure(prepared); });
+      return;
+    }
+    allowMainWindowClose = true;
+    win.close();
+  }
 }
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
@@ -965,13 +1009,8 @@ const pendingShiftCloseSync = new Set();
 let mandatoryShiftSyncRun = null;
 let allowMainWindowClose = false;
 let closePreparation = null;
+let startupDatabaseRestore = null;
 let installUpdateAfterSync = null;
-
-function shouldInstallUpdateOnClose() {
-  // Closing the login or recovery screen must not enter the installer's
-  // signed-in transaction checks merely because a download is ready.
-  return Boolean(!closePreparation && installUpdateAfterSync && adminSession.hasPosAuthority() && updater.status().status === "ready");
-}
 
 function flushRendererBeforeClose(forUpdate = false) {
   const win=mainWindow;
@@ -989,9 +1028,14 @@ function flushRendererBeforeClose(forUpdate = false) {
   });
 }
 
-async function verifyLocalStorageForUpdate() {
+async function verifyLocalStorageForExit(requireConnected = false) {
   const state = databaseService.snapshot();
-  if (!state.enabled || !state.configured) return;
+  if (requireConnected && state.tradingReady !== true)
+    throw new Error("Reconnect the saved local database before closing with pending sync.");
+  if (!state.enabled || !state.configured || state.localRecoveryPending) {
+    if (requireConnected) throw new Error("Reconnect the saved local database before closing with pending sync.");
+    return;
+  }
   const pool = databaseManager.pool;
   const savedProfile = databaseConfig.profile();
   const profile = JSON.stringify(savedProfile);
@@ -1003,7 +1047,7 @@ async function verifyLocalStorageForUpdate() {
   const assertCurrent = () => {
     if (!pool || !databaseManager.isConnected() || databaseManager.pool !== pool ||
         JSON.stringify(databaseConfig.profile()) !== profile || target(databaseManager.profile) !== expectedTarget)
-      throw new Error("Reconnect the saved local database before installing so local work can be verified.");
+      throw new Error("Reconnect the saved local database so local work can be verified.");
   };
   await syncCoordinator.withExclusive(async () => {
     assertCurrent();
@@ -1017,7 +1061,7 @@ async function verifyLocalStorageForUpdate() {
   });
 }
 
-function prepareApplicationClose(forUpdate = false) {
+function prepareApplicationClose(forUpdate = false, syncLater = false) {
   if(closePreparation)return closePreparation;
   closePreparation=(async()=>{
     let closeStage="renderer";
@@ -1029,14 +1073,21 @@ function prepareApplicationClose(forUpdate = false) {
       closeStage="local-writes";
       const drained=await settleWithin(() => closeWriteBarrier.sealAndDrain(), SHUTDOWN_SYNC_TIMEOUT_MS);
       if(!drained.ok)throw new Error("Local writes are still finishing. Keep the application open and retry closing.");
-      if (forUpdate) {
+      const restoring = startupDatabaseRestore;
+      if (restoring) {
         closeStage = "local-storage";
-        reportCloseProgress({ active: true, message: "Checking saved local data before installing…" });
-        const checked = await settleWithin(verifyLocalStorageForUpdate, SHUTDOWN_SYNC_TIMEOUT_MS);
-        if (checked.timedOut) throw new Error("Local database work is still finishing. Retry installation when it finishes.");
+        reportCloseProgress({ active: true, message: "Finishing the local database check…" });
+        const settled = await settleWithin(() => restoring);
+        if (!settled.ok) throw new Error("The local database check is still finishing. Try closing when it completes.");
+      }
+      if (forUpdate || syncLater) {
+        closeStage = "local-storage";
+        reportCloseProgress({ active: true, message: "Checking saved local data…" });
+        const checked = await settleWithin(() => verifyLocalStorageForExit(syncLater), SHUTDOWN_SYNC_TIMEOUT_MS);
+        if (checked.timedOut) throw new Error("Local database work is still finishing. Try again when it finishes.");
         if (!checked.ok) throw new Error(checked.error?.message ?? "The saved local database could not be read. Retry installation after checking the local connection.");
-        // Every accepted write is committed. Replacing app files neither
-        // acknowledges uploads nor finalizes a pending shift close.
+        // Local verification leaves cloud acknowledgements and pending shift
+        // closures for the next authorized synchronization.
         return { ok: true, locallySaved: true, synchronized: false, syncDeferred: true };
       }
       // Once accepted writes are durable, a signed-out quit needs neither a
@@ -1046,11 +1097,12 @@ function prepareApplicationClose(forUpdate = false) {
         return { ok: true, synchronized: false, authenticationRequired: true };
       const databaseState=databaseService.snapshot();
       if(databaseState.localRecoveryPending)return {ok:true,synchronized:false,syncDeferred:true,localRecoveryPending:true};
+      if(databaseState.enabled === false)return {ok:true,synchronized:false,syncDeferred:true};
       if(isManagementDevice() || (!databaseState.configured && !pendingShiftCloseSync.size))return {ok:true,skipped:true};
       closeStage="synchronization";
       const result=await flushSyncBeforeShutdown({ allowSignedOutExit: !forUpdate && !pendingShiftCloseSync.size });
       if(!result?.ok)throw new Error(result?.error??"Pending data has not been acknowledged by the cloud.");
-      pendingShiftCloseSync.clear();
+      if (result.synchronized !== false) pendingShiftCloseSync.clear();
       return result;
     } catch(error) {
       diagnostics.logConnection("shutdown.prepare.failed",{category:"application",stage:closeStage,code:error?.code??"ECLOSE",message:String(error?.message??error)});
@@ -1419,10 +1471,6 @@ function createWindows(initialRoute = "/") {
     if (allowMainWindowClose || shutdownFlushComplete) return;
     event.preventDefault();
     const closingWindow = mainWindow;
-    if (shouldInstallUpdateOnClose()) {
-      void installUpdateAfterSync(false).then(result => { if (!result.ok) return showMandatorySyncFailure(result); });
-      return;
-    }
     void prepareApplicationClose().then(async (result) => {
       if (!result.ok) {
         await showMandatorySyncFailure(result);
@@ -3330,15 +3378,21 @@ app.whenReady().then(async () => {
   });
 
   let restoredDatabase;
+  startupDatabaseRestore = (async () => {
+    const restored = await databaseService.restore();
+    if (!quitting && !safeMode)
+      await restoreShiftCloseGuard().catch((error) => recordFault("shift-close.guard-restore", error));
+    return restored;
+  })();
   try {
-    restoredDatabase = await databaseService.restore();
+    restoredDatabase = await startupDatabaseRestore;
   } catch (error) {
     recordFault("database.startup-restore", error);
     if (!quitting) enterSafeMode("The local database startup check failed unexpectedly");
     return;
-  }
+  } finally { startupDatabaseRestore = null; }
+  if (closePreparation && (await closePreparation).ok) return;
   if (quitting || safeMode) return;
-  await restoreShiftCloseGuard().catch((error) => recordFault("shift-close.guard-restore", error));
   if (restoredDatabase.state === "enabled_bootstrapping")
     void prepareLocalData().catch((error) => recordFault("local-data.prepare", error));
   scheduleAutomaticSync(5_000);
@@ -3350,13 +3404,6 @@ app.on("before-quit", (event) => {
   if (shutdownFlushComplete) return;
   event.preventDefault();
   if (shutdownFlushStarted) return;
-  if (shouldInstallUpdateOnClose()) {
-    shutdownFlushStarted = true;
-    void installUpdateAfterSync(false).then(async result => {
-      if (!result.ok) { shutdownFlushStarted = false; await showMandatorySyncFailure(result); }
-    });
-    return;
-  }
   shutdownFlushStarted = true;
   quitting = true;
   stopAutomaticSync();
@@ -3387,6 +3434,7 @@ app.on("before-quit", (event) => {
     if (databaseClose.timedOut) recordFault("shutdown.database-close-timeout", new Error("SQL Server did not close before the shutdown deadline."));
     else if (!databaseClose.ok) recordFault("shutdown.database-close", databaseClose.error);
     shutdownFlushComplete = true;
+    if (!safeMode) health.markClosed();
     // Cleanup above is bounded and every pending write is durable. app.exit is
     // intentional here: native ODBC work that began during startup must not
     // leave a headless Electron process after the operator chose Exit.

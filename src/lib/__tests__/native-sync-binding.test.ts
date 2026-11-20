@@ -24,7 +24,7 @@ beforeEach(()=>{
   if(url.includes("/stores?"))return Response.json([{id:branch}]);
   if(url.includes("/rpc/")){
    rpc(url,JSON.parse(String(options?.body)));
-   if(url.endsWith("/rpc/pos_sync_feed_page_v2"))return new Response("[]",{headers:{
+   if(url.endsWith("/rpc/pos_sync_feed_page_v3"))return new Response("[]",{headers:{
     "content-type":"application/json","X-POS-Feed-Projection":"1","X-POS-Feed-Bytes":"2",
     "X-POS-Feed-Rows":"0","X-POS-Feed-Continue":"0",
    }});
@@ -47,7 +47,7 @@ describe("real Operations CloudClient through sync authorization",()=>{
   if(action==="pull"){
    expect(requestBody).toHaveProperty("sqlServerScopedHistory.action","feed");
    expect(requestBody).not.toHaveProperty("sqlServerPull");
-   expect(rpc).toHaveBeenCalledWith(expect.stringContaining("/rpc/pos_sync_feed_page_v2"),expect.objectContaining({p_branch_id:branch,p_terminal_id:id}));
+   expect(rpc).toHaveBeenCalledWith(expect.stringContaining("/rpc/pos_sync_feed_page_v3"),expect.objectContaining({p_branch_id:branch,p_terminal_id:id}));
   }
   expect(rpc).toHaveBeenCalledWith(expect.any(String),expect.objectContaining({p_branch_id:branch,p_terminal_id:id}));
  });
