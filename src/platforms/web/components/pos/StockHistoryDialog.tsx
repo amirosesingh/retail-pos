@@ -13,11 +13,20 @@ import { effectiveTimeZone } from "@/lib/time-zone";
 import { useReportShifts } from "@/lib/use-report-shifts";
 import { sessionEpoch } from "@/lib/session-epoch";
 import { loadStockHistoryPage } from "@/lib/stock-history-client";
+import { loadStockHistoryMovements } from "@/lib/stock-history-movements-client";
+import { STOCK_MOVEMENT_PAGE_SIZE, type StockHistoryMovementCursor, type StockHistoryMovementPage } from "@/lib/stock-history-movements";
 import { exportStockHistoryXlsx, stockHistoryForExport } from "@/lib/stock-history-export";
 import { stockDateTimeInput, stockTimeChoices, type StockTimeChoice } from "@/lib/stock-history-selection";
 import { stockHistoryExplanation, type StockHistoryPage, type StockHistoryRequest } from "@/lib/stock-history-report";
 import { stockReportDay } from "../../../../../electron/shared/stock-report-day.mjs";
 import { stockInstant } from "@/lib/stock-as-of";
+
+type MovementProduct = { productId: string; name: string };
+type MovementView = { product: MovementProduct; page: StockHistoryMovementPage | null; number: number; identity: string; error: string };
+const movementLabels: Record<StockHistoryMovementPage["rows"][number]["kind"], string> = {
+  sale: "Sale", refund: "Refund", receiving: "Receiving", stock: "Stock adjustment", product: "Product change",
+  transfer: "Transfer", sponsorship: "Sponsorship", missed_bill: "Missed bill", general: "Stock movement",
+};
 
 /** Presentation gate only; the authorized reader validates the underlying proof. */
 // eslint-disable-next-line react-refresh/only-export-components -- Pure presentation decision is independently regression tested.
@@ -42,11 +51,14 @@ export function StockHistoryDialog({ open, onOpenChange, branchId, branchName }:
   const [value, setValue] = useState(() => stockDateTimeInput(new Date(), timeZone));
   const [mode, setMode] = useState("time"), [shiftId, setShiftId] = useState("");
   const [showPeriod, setShowPeriod] = useState(false);
-  const periodId = useId();
+  const periodId = useId(), movementHeadingId = useId();
   const [choices, setChoices] = useState<StockTimeChoice[]>([]), [choice, setChoice] = useState("");
   const [page, setPage] = useState<StockHistoryPage | null>(null), [request, setRequest] = useState<StockHistoryRequest | null>(null);
   const [error, setError] = useState(""), [busy, setBusy] = useState(false), [exporting, setExporting] = useState(false);
   const [pageIdentity, setPageIdentity] = useState(""), [activityIdentity, setActivityIdentity] = useState("");
+  const [movement, setMovement] = useState<MovementView | null>(null);
+  const movementHeading = useRef<HTMLHeadingElement>(null), movementTrigger = useRef<HTMLButtonElement | null>(null);
+  const returnMovementFocus = useRef(false);
   const generation = useRef(0), mounted = useRef(false);
   const identity = JSON.stringify([open, branchId, timeZone, mayRead, mayExport, mayReadShifts, sessionEpoch(),
     authUserId, appUser?.id, terminalUser?.cashierId, user?.staffId]);
@@ -57,10 +69,20 @@ export function StockHistoryDialog({ open, onOpenChange, branchId, branchName }:
   const active = activityIdentity === identity;
   const shownBusy = active && busy, shownExporting = active && exporting, shownError = active ? error : "";
   const grade = stockReportDisplayGrade(visiblePage);
+  const canOpenMovements = grade === "verified" && Boolean(visiblePage?.sourceRevision && visiblePage.baselineAt);
+  const visibleMovement = canOpenMovements && movement?.identity === identity ? movement : null;
+  const movementProductId = visibleMovement?.product.productId, movementPageNumber = visibleMovement?.number;
+  useEffect(() => {
+    if (movementProductId) movementHeading.current?.focus();
+    else if (returnMovementFocus.current) {
+      returnMovementFocus.current = false;
+      movementTrigger.current?.focus();
+    }
+  }, [movementProductId, movementPageNumber]);
   useEffect(() => { mounted.current = true; const lifecycle = { mounted, generation };
     return () => { lifecycle.mounted.current = false; lifecycle.generation.current++; }; }, []);
   useEffect(() => {
-    generation.current++; setPage(null); setRequest(null); setError(""); setBusy(false); setExporting(false);
+    generation.current++; setPage(null); setRequest(null); setMovement(null); setError(""); setBusy(false); setExporting(false);
     setPageIdentity(""); setActivityIdentity(identity);
     setChoices([]); setChoice(""); setShiftId(""); setMode("time"); setShowPeriod(false);
     if (open) setValue(stockDateTimeInput(new Date(), timeZone));
@@ -72,7 +94,7 @@ export function StockHistoryDialog({ open, onOpenChange, branchId, branchName }:
   const shiftOptions = useMemo(() => shifts.shifts.filter(shift =>
     ["closed", "completed"].includes(String(shift.status).toLowerCase()) && !!shift.closedAt)
     .map(shift => ({ value: shift.id, label: `${shift.id.slice(0, 8)} · ${shift.cashier || "Shift"}` })), [shifts.shifts]);
-  function invalidate() { generation.current++; setPage(null); setRequest(null); setPageIdentity(""); setActivityIdentity(identity); setError(""); setBusy(false); setExporting(false); }
+  function invalidate() { generation.current++; setPage(null); setRequest(null); setMovement(null); setPageIdentity(""); setActivityIdentity(identity); setError(""); setBusy(false); setExporting(false); }
   function context() {
     const captured = ++generation.current, epoch = sessionEpoch(), key = currentIdentity.current;
     return () => {
@@ -82,7 +104,7 @@ export function StockHistoryDialog({ open, onOpenChange, branchId, branchName }:
   }
   async function read(next?: StockHistoryRequest) {
     if (!open || !mayRead) return;
-    const assertCurrent = context(); setActivityIdentity(identity); setBusy(true); setError("");
+    const assertCurrent = context(); setActivityIdentity(identity); setMovement(null); setBusy(true); setError("");
     try {
       let selected = next;
       if (!selected) {
@@ -113,6 +135,37 @@ export function StockHistoryDialog({ open, onOpenChange, branchId, branchName }:
     } catch (failure) {
       try { assertCurrent(); setError(failure instanceof Error ? failure.message : "The stock report could not be loaded."); } catch { /* Stale read has no visible result. */ }
     } finally { try { assertCurrent(); setBusy(false); } catch { /* New context owns its state. */ } }
+  }
+  async function readMovements(product: MovementProduct, after: StockHistoryMovementCursor | null = null, number = 1) {
+    if (!canOpenMovements || !visibleRequest || !visiblePage?.sourceRevision || shownBusy || shownExporting) return;
+    const assertCurrent = context();
+    const view = { product, page: null, number, identity, error: "" };
+    setMovement(view); setActivityIdentity(identity); setBusy(true);
+    try {
+      const result = await loadStockHistoryMovements({
+        branchId: visiblePage.branchId, productId: product.productId, cutoff: visiblePage.cutoff,
+        timeZone: visiblePage.timeZone, sourceRevision: visiblePage.sourceRevision,
+        periodStart: visiblePage.period?.start, closedShiftId: visibleRequest.closedShiftId,
+        after, limit: STOCK_MOVEMENT_PAGE_SIZE,
+      });
+      assertCurrent();
+      if (result.status === "complete" && result.baselineAt !== visiblePage.baselineAt) {
+        throw new Error("The verified opening changed. Refresh the stock report before continuing.");
+      }
+      setMovement({ ...view, page: result });
+    } catch (failure) {
+      try {
+        assertCurrent();
+        setMovement({ ...view, error: failure instanceof Error ? failure.message : "Stock movements could not be loaded." });
+      } catch { /* A new report context owns the visible result. */ }
+    } finally {
+      try { assertCurrent(); setBusy(false); } catch { /* A new report context owns its state. */ }
+    }
+  }
+  function closeMovements() {
+    if (shownBusy) { generation.current++; setBusy(false); }
+    returnMovementFocus.current = true;
+    setMovement(null);
   }
   async function download() {
     if (!visibleRequest || !mayExport || grade !== "verified" || visiblePage?.status !== "complete") return;
@@ -155,10 +208,47 @@ export function StockHistoryDialog({ open, onOpenChange, branchId, branchName }:
             {visiblePage.reasons.filter(reason => grade !== "provisional" || !["WRITER_COVERAGE_PENDING", "WRITER_COVERAGE_UNKNOWN"].includes(reason)).map(reason => <p key={reason} className="mt-1 text-sm">{stockHistoryExplanation(reason)}</p>)}
           </div>
           {grade !== "unavailable" && <><div className="overflow-x-auto rounded-md border"><Table><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>SKU / barcode</TableHead>{visiblePage.period && <TableHead className="text-right">Opening stock</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock in</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock out</TableHead>}<TableHead className="text-right">Stock available</TableHead></TableRow></TableHeader><TableBody>
-            {visiblePage.rows.length ? visiblePage.rows.map(row => <TableRow key={row.productId}><TableCell className="min-w-40 max-w-80 whitespace-normal break-words">{row.name}</TableCell><TableCell className="max-w-52 whitespace-normal break-all text-xs">{row.sku || "—"}<br />{row.barcode || "—"}</TableCell>{visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.openingQuantity}</TableCell>}{visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.inQuantity}</TableCell>}{visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.outQuantity}</TableCell>}<TableCell className={`numeric whitespace-nowrap text-right ${row.negative ? "text-destructive" : ""}`}>{row.quantity}{row.negative && <span className="block text-xs">Negative stock</span>}</TableCell></TableRow>) : <TableRow><TableCell colSpan={visiblePage.period ? 6 : 3}>No products in the verified opening for this location.</TableCell></TableRow>}
+            {visiblePage.rows.length ? visiblePage.rows.map(row => <TableRow key={row.productId}>
+              <TableCell className="min-w-40 max-w-80 whitespace-normal break-words"><span>{row.name}</span>
+                {canOpenMovements && <Button variant="link" size="sm" className="block h-auto px-0 py-1" disabled={shownBusy || shownExporting}
+                  aria-label={`View movements for ${row.name}`} aria-expanded={movementProductId === row.productId}
+                  aria-controls={movementProductId === row.productId ? `${movementHeadingId}-panel` : undefined}
+                  onClick={event => { movementTrigger.current = event.currentTarget; void readMovements(row); }}>View movements</Button>}
+              </TableCell>
+              <TableCell className="max-w-52 whitespace-normal break-all text-xs">{row.sku || "—"}<br />{row.barcode || "—"}</TableCell>
+              {visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.openingQuantity}</TableCell>}
+              {visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.inQuantity}</TableCell>}
+              {visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.outQuantity}</TableCell>}
+              <TableCell className={`numeric whitespace-nowrap text-right ${row.negative ? "text-destructive" : ""}`}>{row.quantity}{row.negative && <span className="block text-xs">Negative stock</span>}</TableCell>
+            </TableRow>) : <TableRow><TableCell colSpan={visiblePage.period ? 6 : 3}>No products in the verified opening for this location.</TableCell></TableRow>}
           </TableBody></Table></div>
           {visiblePage.next && visibleRequest && <Button variant="outline" disabled={shownBusy || shownExporting} onClick={() => void read({ ...visibleRequest, after: visiblePage.next })}>Next products</Button>}
           <p className="break-all text-[11px] text-muted-foreground">Read at {visiblePage.readAt} · Source {visiblePage.sourceRevision}</p></>}
+          {visibleMovement && <section id={`${movementHeadingId}-panel`} className="space-y-3 rounded-md border p-3" aria-labelledby={movementHeadingId} aria-busy={shownBusy}>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <h3 ref={movementHeading} id={movementHeadingId} tabIndex={-1} className="break-words text-sm font-semibold">Stock movements · {visibleMovement.product.name}</h3>
+              <Button variant="ghost" size="sm" disabled={shownExporting} onClick={closeMovements}>Close movements</Button>
+            </div>
+            <p className="break-words text-xs text-muted-foreground">{visiblePage.period ? `From ${visiblePage.period.start}` : `After the verified opening at ${visiblePage.baselineAt}`} through {visiblePage.cutoff} (inclusive).</p>
+            {shownBusy && <p role="status" className="text-sm text-muted-foreground">Loading stock movements…</p>}
+            {visibleMovement.error && <p role="alert" className="text-sm text-destructive">{visibleMovement.error}</p>}
+            {visibleMovement.page && (visibleMovement.page.status === "complete" ? <>
+              {visibleMovement.page.rows.length ? <div className="overflow-x-auto"><Table aria-label="Verified stock movements">
+                <TableHeader><TableRow><TableHead data-sortable={false}>Effective time (UTC)</TableHead><TableHead>Movement</TableHead><TableHead className="text-right">Quantity change</TableHead></TableRow></TableHeader>
+                <TableBody>{visibleMovement.page.rows.map(row => <TableRow key={row.id}>
+                  <TableCell className="break-all text-xs"><time dateTime={row.effectiveAt}>{row.effectiveAt}</time></TableCell>
+                  <TableCell>{movementLabels[row.kind]}</TableCell>
+                  <TableCell className="numeric whitespace-nowrap text-right">{row.delta.startsWith("-") ? row.delta : `+${row.delta}`}</TableCell>
+                </TableRow>)}</TableBody>
+              </Table></div> : <p className="text-sm text-muted-foreground">No recorded stock movements in this interval.</p>}
+              {(visibleMovement.page.next || visibleMovement.number > 1) && <div className="flex flex-wrap items-center gap-2" aria-label="Stock movement pages">
+                <span role="status" className="text-xs text-muted-foreground">Page {visibleMovement.number}</span>
+                {visibleMovement.number > 1 && <Button variant="outline" size="sm" disabled={shownBusy || shownExporting} onClick={() => void readMovements(visibleMovement.product)}>First movement page</Button>}
+                {visibleMovement.page.next && <Button variant="outline" size="sm" disabled={shownBusy || shownExporting}
+                  onClick={() => void readMovements(visibleMovement.product, visibleMovement.page!.next, visibleMovement.number + 1)}>Next movements</Button>}
+              </div>}
+            </> : <p role="alert" className="text-sm text-muted-foreground">Movement details are unavailable for this report.{visibleMovement.page.reasons.length > 0 && ` ${stockHistoryExplanation(visibleMovement.page.reasons[0]!)}`}</p>)}
+          </section>}
         </div>}
       </div>
     </DialogContent>

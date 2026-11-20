@@ -6,7 +6,7 @@ const SOURCE_BATCHES=new WeakMap();
 const fail=()=>contract.fail('ESTOCK_HISTORY_ACK_UNCONFIRMED');
 /** Optional metadata in the existing SQL journal. No file/browser queue exists. */
 class StockHistoryOutbox{
- constructor(manager,{assertCurrent=()=>{}}={}){this.manager=manager;this.assertCurrent=assertCurrent;this.store=new StockHistoryStore(manager,{assertCurrent});}
+ constructor(manager,{assertCurrent=()=>{},expectedDatabaseGuid=null}={}){this.manager=manager;this.assertCurrent=assertCurrent;this.store=new StockHistoryStore(manager,{assertCurrent,expectedDatabaseGuid});}
  async transaction(work){
   const pool=this.manager.pool;if(!pool)fail();this.assertCurrent();
   const sql=this.manager.sql(),tx=new sql.Transaction(pool);await tx.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);

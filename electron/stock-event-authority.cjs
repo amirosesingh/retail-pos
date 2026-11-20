@@ -35,9 +35,9 @@ class StockEventAuthority{
    if(!permits())fail('ESTOCK_AUTHOR_PERMISSION_REVOKED');
   }});this.captures.add(captured);return captured;
  }
- async prepare(capture){
+ async prepare(capture,transaction=null){
   if(!this.captures.has(capture))fail('ESTOCK_AUTHOR_INVALID');capture.assertCurrent();
-  const sql=this.connectionManager.sql(),request=new sql.Request(this.connectionManager.pool);
+  const sql=this.connectionManager.sql(),request=new sql.Request(transaction??this.connectionManager.pool);
   // Read only an existing key reference. Missing material remains pending;
   // never call prepare without expectedKeyId and never insert a new reference.
   const rows=(await request.input('stock_scope',scopeHash(capture.binding)).query(

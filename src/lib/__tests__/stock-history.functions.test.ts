@@ -2,7 +2,7 @@ import {beforeEach,describe,it,expect,vi} from 'vitest';
 const {rest,verify}=vi.hoisted(()=>({rest:vi.fn(),verify:vi.fn()}));
 vi.mock('@/core/api/pos-relay.server',()=>({serviceRest:rest,verifyRelayCaller:verify}));
 vi.mock('@tanstack/react-start',()=>({createServerFn:()=>({validator:(parse:(value:unknown)=>unknown)=>({handler:(fn:(input:{data:unknown})=>unknown)=>async(input:{data:unknown})=>fn({data:parse(input.data)})})})}));
-import {loadStockHistoryPageDirect} from '../stock-history.functions';
+import {loadStockHistoryMovementsDirect,loadStockHistoryPageDirect} from '../stock-history.functions';
 import {checkedStockHistoryPage} from '../stock-history-validation';
 const terminal='10000000-0000-4000-8000-000000000001',product='20000000-0000-4000-8000-000000000001';
 const request={cutoff:'2026-11-05T01:00:00.0000001Z',timeZone:'Asia/Brunei',branchId:'a'};
@@ -15,6 +15,8 @@ beforeEach(()=>{
  rest.mockImplementation(async(path:string)=>path.startsWith('app_users?')?new Response(JSON.stringify([row]),{status:200}):new Response(JSON.stringify(complete()),{status:200}));
 });
 const call=(extra={})=>loadStockHistoryPageDirect({data:{terminalToken:terminal,deviceBindingProof:'a'.repeat(64),cashierToken:'signed',request:{...request,...extra}}});
+const movementsRequest={...request,productId:product,sourceRevision:'source-1'};
+const callMovements=(extra={})=>loadStockHistoryMovementsDirect({data:{terminalToken:terminal,deviceBindingProof:'a'.repeat(64),cashierToken:'signed',request:{...movementsRequest,...extra}}});
 describe('actual stock-history function with existing current-account scope resolver',()=>{
  it('propagates secure proof and resolves current actor rather than trusting request identity',async()=>{
   expect(await call()).toMatchObject({status:'complete',rows:[{quantity:'9007199254740993'}]});
@@ -70,5 +72,24 @@ describe('actual stock-history function with existing current-account scope reso
    {...complete(),rows:[{...complete().rows[0],quantity:'1.5'}]},
    {...complete(),rows:[{...complete().rows[0],negative:true}]},
    {...complete(),next:'20000000-0000-4000-8000-000000000099'}])expect(()=>checkedStockHistoryPage(value,'a')).toThrow();
+ });
+ it('uses the same current branch and signed-in authority for bounded movement details',async()=>{
+  const movement={id:product,effectiveAt:request.cutoff,recordedAt:request.cutoff,kind:'stock',delta:'9007199254740993'};
+  const details={...movementsRequest,status:'complete',reasons:[],baselineAt:'2026-11-05T00:00:00.0000000Z',rows:[movement],next:null};
+  rest.mockImplementation(async(path:string)=>new Response(JSON.stringify(path.startsWith('app_users?')?[row]:details)));
+  expect(await callMovements()).toEqual(details);
+  const sent=JSON.parse(rest.mock.calls.find(([path])=>path==='rpc/pos_stock_history_movements_v1')![1].body);
+  expect(sent).toMatchObject({p_actor:'cashier',p_terminal:terminal,p_branch:'a',p_product:product,p_cutoff:request.cutoff,p_source_revision:'source-1',p_limit:50});
+  await expect(callMovements({branchId:'b'})).rejects.toThrow(/authorized branch/);
+  await expect(callMovements({closedShiftId:product})).rejects.toThrow(/shift history permission/i);
+  expect(rest.mock.calls.filter(([path])=>path==='rpc/pos_stock_history_movements_v1')).toHaveLength(1);
+ });
+ it('returns an unavailable movement page only when the specific upgrade function is absent',async()=>{
+  rest.mockImplementation(async(path:string)=>path.startsWith('app_users?')?new Response(JSON.stringify([row])):
+   new Response(JSON.stringify({code:'PGRST202',message:'pos_stock_history_movements_v1 not found'}),{status:404}));
+  expect(await callMovements()).toEqual({...movementsRequest,status:'unavailable',reasons:['SCHEMA_NOT_INSTALLED'],rows:[],next:null});
+  rest.mockImplementation(async(path:string)=>path.startsWith('app_users?')?new Response(JSON.stringify([row])):
+   new Response(JSON.stringify({message:'STOCK_HISTORY_SOURCE_CHANGED'}),{status:400}));
+  await expect(callMovements()).rejects.toMatchObject({code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
  });
 });

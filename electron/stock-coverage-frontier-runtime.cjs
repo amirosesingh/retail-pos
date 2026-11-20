@@ -12,7 +12,7 @@ const observed=(state,reason=null)=>Object.freeze({state,...(reason?{reason}:{})
 const sameSnapshot=(a,b)=>a?.available===true&&b?.available===true&&JSON.stringify([a.databaseKey,a.sourceSequence,a.sourceRoot,a.sourceGeneration,a.gapHash,a.pending])===
  JSON.stringify([b.databaseKey,b.sourceSequence,b.sourceRoot,b.sourceGeneration,b.gapHash,b.pending]);
 function createStockCoverageFrontierRuntime({manager,keys,session,terminal,branch,project,context=()=>null,cloud,
- readSnapshot=readStockHistoryFrontierSnapshot,now=()=>performance.now()}){
+ readSnapshot=readStockHistoryFrontierSnapshot,now=()=>performance.now(),expectedDatabaseGuid=null}){
  let active=null,nextAt=0,lastKey=null,lastPool=null,last=observed('unavailable','NOT_OBSERVED'),pending=null;
  function capture(assertLease){
   if(typeof assertLease!=='function'||!session.hasPosAuthority?.())fail('ESTOCK_FRONTIER_AUTHOR_UNAVAILABLE');
@@ -33,7 +33,10 @@ function createStockCoverageFrontierRuntime({manager,keys,session,terminal,branc
  }
  async function snapshot(capture){
   capture.assertCurrent();const result=await readSnapshot({manager,branchId:capture.branchId,terminalId:capture.binding.terminalId,assertCurrent:capture.assertCurrent,assertLease:capture.assertLease});
-  capture.assertCurrent();return result;
+  capture.assertCurrent();
+  if(expectedDatabaseGuid&&result.available&&result.databaseId!==expectedDatabaseGuid)
+   return {available:false,reason:'DATABASE_SCOPE_CHANGED'};
+  return result;
  }
  async function originalKey(capture){
   const sql=manager.sql(),request=new sql.Request(manager.pool,{requestTimeout:1000});

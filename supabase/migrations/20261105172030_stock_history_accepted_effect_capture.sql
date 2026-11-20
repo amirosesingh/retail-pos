@@ -99,9 +99,19 @@ BEGIN
  IF (SELECT count(*) FROM (SELECT 1 FROM jsonb_object_keys(before_map||after_map) LIMIT 2001) bounded)>2000 THEN
   PERFORM private.stock_history_capture_gap((item->>'id')::uuid,NULL,TG_OP,'UNVERIFIED_STOCK_SHAPE');RETURN NULL;
  END IF;
- IF TG_OP IN('INSERT','DELETE') AND before_map||after_map='{}'::jsonb THEN
-  -- No branch quantity/cohort can be inferred from owner or today's aggregate.
-  PERFORM private.stock_history_capture_gap((item->>'id')::uuid,NULL,TG_OP,'MISSING_SCOPED_COHORT');RETURN NULL;
+ IF TG_OP IN('INSERT','DELETE') THEN
+  IF before_map||after_map='{}'::jsonb THEN
+   -- No branch quantity/cohort can be inferred from owner or today's aggregate.
+   PERFORM private.stock_history_capture_gap((item->>'id')::uuid,NULL,TG_OP,'MISSING_SCOPED_COHORT');RETURN NULL;
+  END IF;
+  branch:=item->>'owner_store_id';
+  IF length(branch) BETWEEN 1 AND 128 AND btrim(branch)=branch AND NOT ((before_map||after_map) ? branch) THEN
+   -- An actual catalogue owner still needs birth/deletion evidence when only
+   -- other branches have stock-map keys. Keep their actual effects below.
+   IF EXISTS(SELECT 1 FROM public.stores s WHERE s.id=branch AND convert_to(s.id,'UTF8')=convert_to(branch,'UTF8')) THEN
+    PERFORM private.stock_history_capture_gap((item->>'id')::uuid,branch,TG_OP,'MISSING_OWNER_STOCK_COHORT');
+   END IF;
+  END IF;
  END IF;
  FOR branch IN SELECT jsonb_object_keys(before_map||after_map) ORDER BY 1 LOOP
   IF length(branch) NOT BETWEEN 1 AND 128 OR btrim(branch)<>branch THEN

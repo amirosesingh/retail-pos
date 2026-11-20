@@ -7,8 +7,8 @@ async function main(){
  const root=process.cwd(),directory=path.join(root,'.tmp','stock-report-ui');fs.mkdirSync(directory,{recursive:true});
  fs.writeFileSync(path.join(directory,'index.html'),'<div id="root"></div><script type="module" src="/.tmp/stock-report-ui/main.tsx"></script>');
  fs.writeFileSync(path.join(directory,'fixture.ts'),`import{useSyncExternalStore}from'react';
-export let model={branch:'a',name:'Fixture A',open:true,mount:true,inventory:true,export:true,shifts:true,zone:'Asia/Brunei',epoch:1,kind:'complete'};
-const listeners=new Set();export const calls=[],exports=[],pending=[],commits=[];let defer=false;
+export let model={branch:'a',name:'Fixture A',open:true,mount:true,inventory:true,export:true,shifts:true,zone:'Asia/Brunei',epoch:1,kind:'complete',movementKind:'complete'};
+const listeners=new Set();export const calls=[],movementCalls=[],exports=[],pending=[],commits=[];let defer=false,deferMovement=false;
 export const set=next=>{model={...model,...next};listeners.forEach(fn=>fn());};export const watch=()=>useSyncExternalStore(fn=>{listeners.add(fn);return()=>listeners.delete(fn);},()=>model);
 export const useAuth=()=>{const m=watch();return{isAdmin:false,user:{staffId:'fixture-'+m.epoch},can:key=>key==='can_view_inventory'?m.inventory:key==='can_export_reports'?m.export:key==='can_shift_closing_history_view'?m.shifts:false};};
 export const usePos=()=>{const m=watch();return{state:{shifts:[]},currentStore:{id:m.branch,name:m.name}};};
@@ -28,7 +28,19 @@ function response(r){const cutoff=r.closedShiftId?'2026-11-05T13:00:00.1234567Z'
  return record;
 }
 export const loadStockHistoryPage=async r=>{calls.push(r);if(model.kind==='error')throw new Error('Synthetic stock reader unavailable');const page=response(r);if(defer){defer=false;return new Promise(resolve=>pending.push(()=>resolve(page)));}return page;};
+export const loadStockHistoryMovements=async r=>{
+ movementCalls.push(r);
+ const {after,limit,...scope}=r;
+ const first='40000000-0000-4000-8000-000000000001',second='40000000-0000-4000-8000-000000000002';
+ const page={...scope,status:model.movementKind,reasons:[],baselineAt:'2026-11-01T00:00:00.0000000Z',next:null,rows:[]};
+ if(model.movementKind==='complete'){
+  const row={id:after?second:first,effectiveAt:r.cutoff,recordedAt:'2099-01-01T00:00:00.0000000Z',kind:after?'sale':'receiving',delta:after?'-3':'9007199254740993'};
+  page.rows=[row];page.next=after?null:{id:row.id,effectiveAt:row.effectiveAt};
+ }else if(model.movementKind==='incomplete')page.reasons=['WRITER_COVERAGE_PENDING'];
+ if(deferMovement){deferMovement=false;return new Promise(resolve=>pending.push(()=>resolve(page)));}return page;
+};
 export const deferNext=()=>defer=true,resolve=()=>pending.shift()?.();
+export const deferNextMovement=()=>deferMovement=true;
 export const xlsx={utils:{book_new:()=>({sheets:[]}),aoa_to_sheet:rows=>rows,json_to_sheet:rows=>rows,book_append_sheet:(book,sheet,name)=>book.sheets.push({name,sheet})},writeFile:(book,name)=>exports.push({book,name})};
 `);
  fs.writeFileSync(path.join(directory,'xlsx.ts'),`export{utils,writeFile};import{xlsx}from'./fixture';const{utils,writeFile}=xlsx;`);
@@ -40,7 +52,7 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
  let server,browser,passed=0;
  try{
   const fixture=path.join(directory,'fixture.ts');server=await createServer({configFile:false,root,cacheDir:path.join(directory,'.vite'),plugins:[react(),tailwind()],resolve:{alias:[
-   ...['pos-auth','pos-store','time-zone','use-report-shifts','session-epoch','stock-history-client','personal-appearance'].map(name=>({find:new RegExp('^@/lib/'+name+'$'),replacement:fixture})),
+   ...['pos-auth','pos-store','time-zone','use-report-shifts','session-epoch','stock-history-client','stock-history-movements-client','personal-appearance'].map(name=>({find:new RegExp('^@/lib/'+name+'$'),replacement:fixture})),
    {find:/^@\/platforms\/web\/components\/pos\/AppShell$/,replacement:path.join(directory,'shell.tsx')},{find:/^xlsx$/,replacement:path.join(directory,'xlsx.ts')},...popupRuntimeAliases(),{find:'@',replacement:path.join(root,'src')},
   ]},server:{host:'127.0.0.1',port:0,fs:{allow:[root,fs.realpathSync(path.join(root,'node_modules'))]}},logLevel:'error'});
   await server.listen();const origin='http://127.0.0.1:'+server.httpServer.address().port;browser=await chromium.launch({channel:'chrome',headless:true,args:['--disable-gpu']});
@@ -48,6 +60,7 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
    await page.route('**/*',route=>route.request().url().startsWith(origin)?route.continue():route.abort());await page.goto(origin+'/.tmp/stock-report-ui/index.html'+(report?'?report':''));
    if(dark)await page.evaluate(()=>document.documentElement.classList.add('dark'));await page.getByRole(report?'heading':'dialog',{name:report?'Stock report':/Stock report/}).waitFor();return page;};
   const show=page=>page.getByRole('button',{name:'Show stock',exact:true}),explain=page=>page.getByRole('switch',{name:/Show inventory changes for this day/});
+  const details=page=>page.getByRole('button',{name:/View movements for Fixture A product/});
   for(const width of[1440,390])for(const dark of[false,true]){
    const page=await fresh(width,dark);assert.equal(await page.evaluate(()=>window.fixture.calls.length),0);
    await page.getByLabel('Stock report date and time').fill('2026-11-06T08:00');await explain(page).check();await show(page).click();
@@ -73,6 +86,7 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
    const page=await fresh(width);await page.evaluate(()=>window.fixture.set({kind:'provisional'}));await show(page).click();
    await page.getByRole('alert').getByText('Provisional recorded stock',{exact:true}).waitFor();await page.getByText('9007199254740993',{exact:true}).waitFor();
    assert.equal(await page.getByText('Some terminals have not confirmed uploads; this recorded balance may change.',{exact:true}).count(),1);assert(await page.getByRole('button',{name:'Export Excel'}).isDisabled());
+   assert.equal(await details(page).count(),0);assert.equal(await page.evaluate(()=>window.fixture.movementCalls.length),0);
    assert.equal(await page.evaluate(()=>window.fixture.exports.length),0);passed++;console.log('PASS explicit provisional recorded stock visible with warning/no export '+width);await page.close();
   }
   for(const change of[{branch:'b',name:'Fixture B'},{epoch:2},{export:false}]){
@@ -99,6 +113,51 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
    await page.getByRole('combobox',{name:'Closed shift stock cutoff'}).click();await page.getByRole('option',{name:/Fixture cashier/}).click();await show(page).click();
    await page.getByText(/Exact cutoff: 2026-11-05T13:00:00.1234567Z/).waitFor();const request=await page.evaluate(()=>window.fixture.calls[0]);assert.equal(request.closedShiftId,'30000000-0000-4000-8000-000000000001');assert.equal(request.periodStart,undefined);assert.equal(request.cutoff,'1970-01-01T00:00:00.0000000Z');
    assert.equal(await page.getByRole('combobox',{name:'Stock cutoff UTC offset'}).count(),0);assert.equal(await page.getByRole('columnheader',{name:/^Opening stock/}).count(),0);passed++;console.log('PASS saved shift bypasses displayed DST gap/repetition '+displayedTime);await page.close();
+  }
+  for(const width of [1440,390]){
+   const page=await fresh(width);await page.getByLabel('Stock report date and time').fill('2026-11-06T08:00');await explain(page).check();await show(page).click();
+   assert.equal(await page.evaluate(()=>window.fixture.movementCalls.length),0);await details(page).click();
+   const region=page.getByRole('region',{name:/Stock movements/}),heading=region.getByRole('heading',{name:/Stock movements/});
+   await region.getByText('+9007199254740993',{exact:true}).waitFor();assert.equal(await heading.evaluate(element=>document.activeElement===element),true);
+   const first=await page.evaluate(()=>window.fixture.movementCalls[0]);
+   assert.equal(first.branchId,'a');assert.equal(first.productId,'20000000-0000-4000-8000-000000000001');assert.equal(first.sourceRevision,'source-a');
+   assert.equal(first.cutoff,'2026-11-06T00:00:00.0000000Z');assert.equal(first.periodStart,'2026-11-05T16:00:00.0000000Z');assert.equal(first.after,null);
+   await region.getByRole('button',{name:'Next movements'}).click();await region.getByText('-3',{exact:true}).waitFor();assert(await region.getByText('Page 2',{exact:true}).isVisible());
+   assert.equal(await region.getByText('+9007199254740993',{exact:true}).count(),0);
+   const next=await page.evaluate(()=>window.fixture.movementCalls[1]);assert.deepEqual(next,{...first,after:{id:'40000000-0000-4000-8000-000000000001',effectiveAt:first.cutoff}});
+   await region.getByRole('button',{name:'First movement page'}).click();await region.getByText('+9007199254740993',{exact:true}).waitFor();
+   await region.getByRole('button',{name:'Close movements'}).click();await region.waitFor({state:'detached'});assert(await details(page).evaluate(element=>document.activeElement===element));
+   passed++;console.log('PASS accessible finite product movement paging and exact quantities '+width);await page.close();
+  }
+  {
+   const page=await fresh();await page.getByLabel('Stock report date and time').fill('2026-11-06T08:00');
+   await page.getByRole('combobox',{name:'Stock cutoff method'}).click();await page.getByRole('option',{name:'After a closed shift'}).click();
+   await page.getByRole('combobox',{name:'Closed shift stock cutoff'}).click();await page.getByRole('option',{name:/Fixture cashier/}).click();await show(page).click();
+   await details(page).click();await page.getByRole('region',{name:/Stock movements/}).getByText('2026-11-05T13:00:00.1234567Z',{exact:true}).waitFor();
+   const request=await page.evaluate(()=>window.fixture.movementCalls[0]);assert.equal(request.cutoff,'2026-11-05T13:00:00.1234567Z');assert.equal(request.closedShiftId,'30000000-0000-4000-8000-000000000001');
+   passed++;console.log('PASS movement details keep the exact saved shift cutoff and authority');await page.close();
+  }
+  {
+   const page=await fresh();await show(page).click();await details(page).waitFor();await page.evaluate(()=>window.fixture.deferNextMovement());
+   await details(page).click();await page.getByRole('status').getByText('Loading stock movements…').waitFor();
+   const region=page.getByRole('region',{name:/Stock movements/});await region.getByRole('button',{name:'Close movements'}).click();
+   await region.waitFor({state:'detached'});await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='View movements for Fixture A product');
+   await page.evaluate(()=>window.fixture.resolve());assert.equal(await region.count(),0);
+   passed++;console.log('PASS cancelling an in-flight movement read returns focus and ignores its response');await page.close();
+  }
+  {
+   const page=await fresh();await show(page).click();await details(page).waitFor();await page.evaluate(()=>window.fixture.deferNextMovement());
+   await details(page).click();await page.getByRole('status').getByText('Loading stock movements…').waitFor();
+   await page.evaluate(()=>{window.fixture.set({branch:'b',name:'Fixture B',epoch:2});window.fixture.resolve();});
+   assert.equal(await page.getByRole('region',{name:/Stock movements/}).count(),0);
+   assert((await page.evaluate(()=>window.fixture.commits.filter(commit=>commit.branch==='b'))).every(commit=>!commit.text.includes('Stock movements')));
+   passed++;console.log('PASS pending movement rows stay hidden on the first changed branch/session layout');await page.close();
+  }
+  {
+   const page=await fresh();await show(page).click();await details(page).waitFor();await page.evaluate(()=>window.fixture.set({movementKind:'incomplete'}));
+   await details(page).click();const region=page.getByRole('region',{name:/Stock movements/});await region.getByRole('alert').getByText(/Movement details are unavailable/).waitFor();
+   assert.equal(await region.getByRole('table').count(),0);assert.equal(await region.getByRole('button',{name:'Next movements'}).count(),0);
+   passed++;console.log('PASS an incomplete movement page exposes no rows or pagination');await page.close();
   }
   {
    const page=await fresh();await page.evaluate(()=>window.fixture.set({zone:'America/New_York'}));await page.getByLabel('Stock report date and time').fill('2026-11-01T01:30');await show(page).click();

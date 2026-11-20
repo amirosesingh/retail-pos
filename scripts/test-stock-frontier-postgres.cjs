@@ -52,6 +52,11 @@ let started=false,groups=0;const sessions=[],pass=name=>{groups++;console.log('P
  assert.equal(JSON.parse((await two.query(challengeSql(timed)))[0].result).challengeId,timed);pass('actual lock-wait cancellation changes no business work or duplicate nonce and later retry recovers');
  assert.equal(await f.stock(),'7');assert.equal(await scalar('SELECT count(*) FROM sync_idempotency_receipts'),'1');assert.equal(await scalar('SELECT count(*) FROM stock_history_movements'),'1');
  pass('all concurrent observation groups preserve actual original business stock, business ACK and movement receipt');
+ const acceptOpeningFrontier=async changes=>{
+  const requested=await challenge(),receipt=JSON.parse((await control.query(accept(sign(requested,changes))))[0].result);
+  assert.equal(receipt.state,'accepted');return requested.challengeId;
+ };
+ await require('./stock-opening-observation-postgres-cases.cjs')({control,one,two,f,bind,pass,pause,header,acceptOpeningFrontier});
  console.log('PASS '+groups+' actual PostgreSQL frontier groups on '+version+'; provider/installed acceptance separate');
 }finally{
  for(const client of sessions)client.close();if(started)command('pg_ctl',['-D',directory,'-m','fast','-w','stop'],{stdio:'ignore'});

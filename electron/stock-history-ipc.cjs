@@ -2,23 +2,25 @@ const { createHash } = require('node:crypto');
 const { StockHistoryStore } = require('./db/stock-history.cjs');
 const { identifier, fail } = require('./db/stock-history-contract.cjs');
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+const reportKeys = new Set(['cutoff','timeZone','branchId','after','sourceRevision','limit','export','closedShiftId','periodStart']);
+const movementKeys = new Set(['cutoff','timeZone','branchId','after','sourceRevision','limit','productId','closedShiftId','periodStart']);
 const permissions = value => {
   if (typeof value === 'string') { try { value = JSON.parse(value); } catch { fail('PERMISSION_DENIED'); } }
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('PERMISSION_DENIED');
   return value;
 };
-function safeRequest(value) {
-  const keys = new Set(['cutoff','timeZone','branchId','after','sourceRevision','limit','export','closedShiftId','periodStart']);
+function safeRequest(value, movements) {
+  const keys = movements ? movementKeys : reportKeys;
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !keys.has(key)) ||
       Buffer.byteLength(JSON.stringify(value), 'utf8') > 4096 || (value.export != null && typeof value.export !== 'boolean')) fail();
   return { ...value };
 }
 /** Dedicated read admission; no SQL text, ledger writes or renderer-selected identity. */
-function createStockHistoryReader({manager,session,terminal,branch,isPosSender,context=()=>[]}) {
+function createStockHistoryReader({manager,session,terminal,branch,isPosSender,context=()=>[]}, movements=false) {
   return async (event,raw) => {
     try {
       if (!isPosSender(event) || !session.hasPosAuthority()) fail('PERMISSION_DENIED');
-      const request = safeRequest(raw), pool = manager.pool, epoch = session.epoch();
+      const request = safeRequest(raw,movements), pool = manager.pool, epoch = session.epoch();
       const actor = session.identity(), registered = terminal(), registeredBranch = branch();
       if (!pool || !actor || actor.source !== 'pos' || !UUID.test(actor.authorId ?? '') || !registered?.tokenId ||
           registered.deviceUse === 'management' || !registeredBranch) fail('PERMISSION_DENIED');
@@ -49,12 +51,14 @@ function createStockHistoryReader({manager,session,terminal,branch,isPosSender,c
         return {contextKey,branchId,canViewInventory,canExportReports,canViewShiftHistory};
       };
       const store = new StockHistoryStore(manager,{assertCurrent,authorizeRead});
-      const page = await store.readPage(request); assertCurrent(); session.touch();
+      const page = movements ? await store.readMovements(request) : await store.readPage(request);
+      assertCurrent(); session.touch();
       return {ok:true,page};
     } catch (error) {
       const code = typeof error?.code === 'string' && /^(?:ESTOCK_HISTORY_|PERMISSION_DENIED$|SYNC_BRANCH_FORBIDDEN$)/.test(error.code) ? error.code : 'ESTOCK_HISTORY_READ';
       return {ok:false,code,error:code === 'PERMISSION_DENIED' ? 'Your current account or terminal cannot read this stock report.' :
         code === 'ESTOCK_HISTORY_SOURCE_CHANGED' ? 'Stock history changed. Refresh the report before continuing.' :
+        code === 'ESTOCK_HISTORY_MOVEMENT_CURSOR_INVALID' ? 'The movement page is no longer available. Open the report again.' :
         code === 'ESTOCK_HISTORY_CONTEXT_CHANGED' ? 'The signed-in account, terminal or database changed. Open the report again.' :
         code === 'ESTOCK_HISTORY_SHIFT_UNAVAILABLE' ? 'The selected shift is not closed or is outside this location.' :
         'The local stock-history report could not be verified. Existing stock has not been changed.'};
@@ -64,6 +68,7 @@ function createStockHistoryReader({manager,session,terminal,branch,isPosSender,c
 function registerStockHistoryRead(options) {
   const handler = createStockHistoryReader(options);
   options.ipcMain.handle('business:stock-history',handler);
+  options.ipcMain.handle('business:stock-history-movements',createStockHistoryReader(options,true));
   return handler;
 }
 module.exports = {createStockHistoryReader,registerStockHistoryRead};

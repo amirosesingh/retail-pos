@@ -105,6 +105,7 @@ describe('actual accepted cloud stock effects, without claiming original author/
   expect((await rows('stock_history_accepted_effects'))[0]).toMatchObject({quantity_delta:'0',operation:'INSERT',store_id:'a'});
   await db.exec(`UPDATE products SET stock_by_store='{"a":-1,"b":2}' WHERE id='${product}';DELETE FROM products WHERE name='Zero';`);
   expect((await rows('stock_history_accepted_effects')).map(row=>[row.operation,row.quantity_delta])).toEqual([['INSERT','0'],['UPDATE','-4'],['DELETE','0']]);
+  expect(await rows('stock_history_capture_gaps')).toHaveLength(0);
  });
  it.each([['{"a":1.5,"b":2}','UNVERIFIED_STOCK_QUANTITY'],['[]','UNVERIFIED_STOCK_SHAPE']] as const)(
   'records unsupported stock as a coverage gap without rewriting or refusing the business value %s',async(map,reason)=>{
@@ -118,15 +119,45 @@ describe('actual accepted cloud stock effects, without claiming original author/
   expect((await rows('stock_history_capture_gaps'))[0]).toMatchObject({reason:'MISSING_SCOPED_COHORT',store_id:null});
   expect(await rows('stock_history_accepted_effects')).toHaveLength(0);
  });
- it('an older complete reader head cannot silently omit a newly accepted unvalidated effect',async()=>{
+ it('holds the known catalogue owner on zero birth and deletion when only another branch has a stock key',async()=>{
+  const item='33333333-3333-4333-8333-333333333333';
+  await db.exec(`INSERT INTO products VALUES('${item}','Zero scoped','003','00003','a','{"b":0}',0,1);`);
+  await db.exec(`UPDATE products SET name='Zero retired' WHERE id='${item}'; DELETE FROM products WHERE id='${item}';`);
+  expect((await rows('stock_history_capture_gaps')).map(row=>[row.product_id,row.store_id,row.operation,row.reason])).toEqual([
+   [item,'a','INSERT','MISSING_OWNER_STOCK_COHORT'],[item,'a','DELETE','MISSING_OWNER_STOCK_COHORT'],
+  ]);
+  expect((await rows('stock_history_accepted_effects')).map(row=>[row.store_id,row.operation,row.quantity_delta,row.product_snapshot])).toEqual([
+   ['b','INSERT','0',{name:'Zero scoped',sku:'003',barcode:'00003',ownerStoreId:'a'}],
+   ['b','DELETE','0',{name:'Zero retired',sku:'003',barcode:'00003',ownerStoreId:'a'}],
+  ]);
+  expect((await db.query("SELECT private.stock_history_capture_state('a') owner,private.stock_history_capture_state('b') stocked")).rows[0]).toEqual({
+   owner:{revision:'0:0:2',unvalidatedEffects:'0',captureGaps:'2'},stocked:{revision:'2:0:0',unvalidatedEffects:'2',captureGaps:'0'},
+  });
+  expect((await db.query('SELECT count(*)::int n FROM stock_history_movements')).rows[0]).toEqual({n:0});
+ });
+ it('does not fan an absent owner key out from a blank or unknown catalogue identity',async()=>{
+  await db.exec(`INSERT INTO products VALUES(gen_random_uuid(),'Unknown owner',NULL,NULL,'A','{"b":0}',0,1),
+   (gen_random_uuid(),'No owner',NULL,NULL,NULL,'{"b":0}',0,1);`);
+  expect(await rows('stock_history_capture_gaps')).toEqual([]);
+  expect((await rows('stock_history_accepted_effects')).map(row=>row.store_id)).toEqual(['b','b']);
+ });
+ it('rolls the missing-owner cohort hold back with the product write',async()=>{
+  await db.exec(`BEGIN; INSERT INTO products VALUES(gen_random_uuid(),'Cancelled',NULL,NULL,'a','{"b":0}',0,1); ROLLBACK;`);
+  expect(await rows('stock_history_capture_gaps')).toHaveLength(0);
+  expect(await rows('stock_history_accepted_effects')).toHaveLength(0);
+ });
+ it.each(['nonzero effect','zero catalogue birth without an owner map key'])('an older complete reader head cannot omit a %s',async kind=>{
   const baseline='55555555-5555-4555-8555-555555555555',start='2026-11-05T00:00:00.0000000Z',cutoff='2026-11-05T01:00:00.0000000Z';
   await db.exec(`INSERT INTO stock_history_baselines(id,store_id,cutoff_at_raw,cutoff_ticks,captured_at_raw,captured_ticks,source_cursor,opening_kind,verification_state,expected_pairs,terminal_watermarks,verified_by,evidence_hash)
    VALUES('${baseline}','a','${start}',private.stock_history_ticks('${start}'),'${start}',private.stock_history_ticks('${start}'),0,'system_snapshot','verified',1,'{}','fixture','${'a'.repeat(64)}');
    INSERT INTO stock_history_openings(id,baseline_id,product_id,store_id,quantity,product_name) VALUES(gen_random_uuid(),'${baseline}','${product}','a',3,'Existing');
    UPDATE stock_history_heads SET baseline_id='${baseline}',coverage_state='complete',coverage_from_ticks=private.stock_history_ticks('${start}'),coverage_through_ticks=private.stock_history_ticks('${cutoff}') WHERE store_id='a';`);
   const read=async()=>(await db.query<{page:Record<string,unknown>}>(`SELECT pos_stock_history_page('admin',NULL,'a','${cutoff}','Asia/Brunei',NULL,100,NULL,false,NULL) page`)).rows[0]!.page;
-  expect(await read()).toMatchObject({status:'complete',rows:[{quantity:'3'}]});await sourceAndChange();
-  expect(await read()).toMatchObject({status:'incomplete',reasons:['UNVALIDATED_STOCK_EFFECTS'],rows:[]});
+  expect(await read()).toMatchObject({status:'complete',rows:[{quantity:'3'}]});
+  if(kind==='nonzero effect')await sourceAndChange();
+  else await db.exec(`INSERT INTO products VALUES(gen_random_uuid(),'Zero',NULL,NULL,'a','{"b":0}',0,1);`);
+  const reason=kind==='nonzero effect'?'UNVALIDATED_STOCK_EFFECTS':'CAPTURE_GAPS';
+  expect(await read()).toMatchObject({status:'incomplete',reasons:[reason],rows:[],next:null});
   expect((await db.query("SELECT coverage_state FROM stock_history_heads WHERE store_id='a'")).rows[0]).toEqual({coverage_state:'complete'});
  });
  it('keeps private evidence immutable and denies every API role direct writes/reads/execution',async()=>{

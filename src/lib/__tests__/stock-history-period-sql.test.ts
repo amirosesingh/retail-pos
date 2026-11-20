@@ -25,12 +25,12 @@ afterAll(async()=>db?.close());
 beforeEach(async()=>{await db.exec(`RESET ROLE;TRUNCATE stock_history_movements,stock_history_openings,stock_history_baselines,stock_history_heads,app_users,terminal_tokens,stores,shifts CASCADE;
  INSERT INTO stores VALUES('a'),('b');INSERT INTO app_users VALUES('cashier','staff','cashier','a',true,'{"can_view_inventory":true}'),('admin','admin','admin',NULL,true,'{}');
  INSERT INTO terminal_tokens VALUES('${terminal}','a','active',NULL,'pc',true,false);`);});
-async function seed(){
+async function seed(extra:[string,string][]=[]){
  await db.query(`INSERT INTO stock_history_baselines(id,store_id,cutoff_at_raw,cutoff_ticks,captured_at_raw,captured_ticks,source_cursor,opening_kind,verification_state,expected_pairs,terminal_watermarks,verified_by,evidence_hash)
  VALUES($1,'a',$2,$3,$2,$3,0,'system_snapshot','verified',2,'{"fixture":"isolated"}','admin',$4)`,[baseline,opening,String(c.instant(opening)),'a'.repeat(64)]);
- await db.query(`INSERT INTO stock_history_heads(store_id,committed_cursor,coverage_generation,coverage_state,baseline_id,coverage_from_ticks,coverage_through_ticks) VALUES('a',4,0,'complete',$1,$2,$3)`,[baseline,String(c.instant(opening)),String(c.instant('2026-11-06T00:00:00Z'))]);
+ await db.query(`INSERT INTO stock_history_heads(store_id,committed_cursor,coverage_generation,coverage_state,baseline_id,coverage_from_ticks,coverage_through_ticks) VALUES('a',$4,0,'complete',$1,$2,$3)`,[baseline,String(c.instant(opening)),String(c.instant('2026-11-06T00:00:00Z')),4+extra.length]);
  await db.query(`INSERT INTO stock_history_openings(id,baseline_id,product_id,store_id,quantity,product_name,sku,barcode) VALUES(gen_random_uuid(),$1,$2,'a',9007199254740993,'Original archive','0001','0000001'),(gen_random_uuid(),$1,$3,'a',0,'Zero','0002','0000002')`,[baseline,product,zero]);
- const events:[string,string][]=[[c.utc(c.instant(start)-1n),'3'],[start,'2'],[cutoff,'-1'],[c.utc(c.instant(cutoff)+1n),'-4']];let sequence=0,current=9007199254740993n;
+ const events:[string,string][]=[[c.utc(c.instant(start)-1n),'3'],[start,'2'],[cutoff,'-1'],[c.utc(c.instant(cutoff)+1n),'-4'],...extra];let sequence=0,current=9007199254740993n;
  for(const[effective,delta]of events){sequence++;const operation=`44444444-4444-4444-8444-${String(sequence).padStart(12,'0')}`;
   const row=c.changes(c.normalizeContext({operationId:operation,branchId:'a',terminalId:terminal,actorId:'cashier',kind:'stock',effectiveAt:effective,clockState:'verified'},'2026-11-06T00:00:00.0000000Z'),
    [{id:product,name:'Original archive',stock_by_store:{a:String(current)}}],[{id:product,name:'Original archive',stock_by_store:{a:String(current+BigInt(delta))}}])[0];current+=BigInt(delta);
@@ -40,11 +40,16 @@ async function seed(){
 }
 const read=async({actor='cashier',branch='a',at=cutoff,periodStart=start,after=null,revision=null,exporting=false,shift=null}:
  {actor?:string;branch?:string;at?:string;periodStart?:string;after?:string|null;revision?:string|null;exporting?:boolean;shift?:string|null}={})=>scalar('SELECT public.pos_stock_history_period_page($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',[actor,terminal,branch,at,'UTC',after,1,revision,exporting,shift,periodStart]) as Promise<any>;
+const readMovements=async(revision:string,{branch='a',productId=product,after=null,limit=1}:
+ {branch?:string;productId?:string;after?:{effectiveAt:string;id:string}|null;limit?:number}={})=>
+ scalar('SELECT public.pos_stock_history_movements_v1($1,$2,$3,$4,$5,$6,$7,$8,NULL,$9,$10,$11)',
+  ['cashier',terminal,branch,productId,cutoff,'UTC',revision,start,after?.effectiveAt??null,after?.id??null,limit]) as Promise<any>;
 describe('one authorized source revision for selected-time stock and explanatory movements',()=>{
  it('preserves old reader identity/ACL/flags while sharing exact current authorization in a private core',async()=>{
   expect((await db.query("SELECT oid,proowner,proacl::text,proconfig,prosecdef,provolatile,prokind,proisstrict,proleakproof,proparallel FROM pg_proc WHERE oid='public.pos_stock_history_page(text,text,text,text,text,uuid,integer,text,boolean,uuid)'::regprocedure")).rows[0]).toEqual(before);
   for(const role of ['anon','authenticated'])expect(await scalar(`SELECT has_function_privilege('${role}','public.pos_stock_history_period_page(text,text,text,text,text,uuid,integer,text,boolean,uuid,text)','EXECUTE')`)).toBe(false);
-  expect(await scalar("SELECT has_function_privilege('service_role','private.stock_history_read_page_core(text,text,text,text,text,uuid,integer,text,boolean,uuid,text)','EXECUTE')")).toBe(false);
+  expect(await scalar("SELECT has_function_privilege('service_role','private.stock_history_read_page_core(text,text,text,text,text,uuid,integer,text,boolean,uuid,text,uuid,text,uuid)','EXECUTE')")).toBe(false);
+  for(const role of ['anon','authenticated','service_role'])expect(await scalar(`SELECT has_function_privilege('${role}','public.pos_stock_history_movements_v1(text,text,text,uuid,text,text,text,text,uuid,text,uuid,integer)','EXECUTE')`)).toBe(role==='service_role');
  });
  it('returns exact selected-time balance and same-revision signed inventory terms, excluding the next100ns',async()=>{
   await seed();const first=await read();expect(first).toMatchObject({status:'complete',cutoff,period:{start,through:cutoff,fullDay:false},rows:[{productId:product,openingQuantity:'9007199254740996',inQuantity:'2',outQuantity:'1',quantity:'9007199254740997'}],next:product});
@@ -52,6 +57,23 @@ describe('one authorized source revision for selected-time stock and explanatory
   const point=await scalar('SELECT public.pos_stock_history_page($1,$2,$3,$4,$5,NULL,100,NULL,false,NULL)',['cashier',terminal,'a',cutoff,'UTC']) as any;
   expect(point.rows[0].quantity).toBe(first.rows[0].quantity);expect(point.rows[0]).not.toHaveProperty('openingQuantity');
   await expect(read({revision:point.sourceRevision})).rejects.toThrow('STOCK_HISTORY_SOURCE_CHANGED');
+ });
+ it('pages verified product movements by exact tick and UUID without expanding the requested interval or scope',async()=>{
+  await seed([[cutoff,'5']]);const {sourceRevision}=await read();
+  const first=await readMovements(sourceRevision);
+  expect(first).toMatchObject({status:'complete',branchId:'a',productId:product,baselineAt:opening,cutoff,periodStart:start,sourceRevision,
+   rows:[{effectiveAt:start,delta:'2',kind:'stock'}],next:{effectiveAt:start,id:first.rows[0].id}});
+  expect(Object.keys(first.rows[0]).sort()).toEqual(['delta','effectiveAt','id','kind','recordedAt']);
+  const second=await readMovements(sourceRevision,{after:first.next});
+  const third=await readMovements(sourceRevision,{after:second.next});
+  expect([second.rows[0].delta,third.rows[0].delta].sort()).toEqual(['-1','5']);
+  expect(second.rows[0].effectiveAt).toBe(cutoff);expect(third.rows[0].effectiveAt).toBe(cutoff);
+  expect(second.rows[0].id<third.rows[0].id).toBe(true);expect(third.next).toBeNull();
+  await expect(readMovements(sourceRevision,{branch:'b'})).rejects.toThrow();
+  await expect(readMovements(sourceRevision,{productId:baseline})).rejects.toThrow('STOCK_HISTORY_PRODUCT_UNAVAILABLE');
+  await expect(readMovements(sourceRevision,{after:{effectiveAt:start,id:baseline}})).rejects.toThrow('STOCK_HISTORY_MOVEMENT_CURSOR_INVALID');
+  await db.exec("UPDATE stock_history_heads SET coverage_generation=coverage_generation+1 WHERE store_id='a'");
+  await expect(readMovements(sourceRevision)).rejects.toThrow('STOCK_HISTORY_SOURCE_CHANGED');
  });
  it.each(['permission','inactive','page','branch','revoked','export','shift'])('retains current %s denial',async mode=>{
   await seed();if(mode==='permission')await db.exec("UPDATE app_users SET permissions='{}' WHERE user_id='cashier'");if(mode==='inactive')await db.exec("UPDATE app_users SET is_active=false WHERE user_id='cashier'");

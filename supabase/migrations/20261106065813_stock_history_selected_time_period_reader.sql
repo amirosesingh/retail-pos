@@ -2,8 +2,12 @@
 -- No business writes, historical backfill, public grants or live activation.
 BEGIN;
 DO $preflight$ DECLARE current pg_proc%ROWTYPE;BEGIN
- IF to_regprocedure('private.stock_history_calendar_day(text,text)') IS NOT NULL OR to_regprocedure('private.stock_history_read_page_core(text,text,text,text,text,uuid,integer,text,boolean,uuid,text)') IS NOT NULL
-  OR to_regprocedure('public.pos_stock_history_period_page(text,text,text,text,text,uuid,integer,text,boolean,uuid,text)') IS NOT NULL THEN RAISE EXCEPTION 'STOCK_HISTORY_PERIOD_ALREADY_PRESENT';END IF;
+ IF to_regprocedure('private.stock_history_calendar_day(text,text)') IS NOT NULL
+  OR to_regprocedure('private.stock_history_read_page_core(text,text,text,text,text,uuid,integer,text,boolean,uuid,text)') IS NOT NULL
+  OR to_regprocedure('private.stock_history_read_page_core(text,text,text,text,text,uuid,integer,text,boolean,uuid,text,uuid,text,uuid)') IS NOT NULL
+  OR to_regprocedure('public.pos_stock_history_period_page(text,text,text,text,text,uuid,integer,text,boolean,uuid,text)') IS NOT NULL
+  OR to_regprocedure('public.pos_stock_history_movements_v1(text,text,text,uuid,text,text,text,text,uuid,text,uuid,integer)') IS NOT NULL
+  THEN RAISE EXCEPTION 'STOCK_HISTORY_PERIOD_ALREADY_PRESENT';END IF;
  SELECT * INTO current FROM pg_proc WHERE oid='public.pos_stock_history_page(text,text,text,text,text,uuid,integer,text,boolean,uuid)'::regprocedure;
  IF md5(replace(current.prosrc,E'\r\n',E'\n'))<>'76e033ba4ec3bbdac859792cc4b4d087' OR NOT current.prosecdef OR current.prokind<>'f' OR current.provolatile<>'v'
   OR current.prorettype<>'jsonb'::regtype OR current.proisstrict OR current.proleakproof OR current.proparallel<>'u'
@@ -72,16 +76,21 @@ END $calendar$;
 REVOKE ALL ON FUNCTION private.stock_history_calendar_day(text,text) FROM PUBLIC,anon,authenticated,service_role;
 
 CREATE OR REPLACE FUNCTION private.stock_history_read_page_core(p_actor text,p_terminal text,p_branch text,p_cutoff text,p_zone text,
- p_after uuid,p_limit integer,p_source_revision text,p_export boolean,p_closed_shift uuid,p_period_start text)
+ p_after uuid,p_limit integer,p_source_revision text,p_export boolean,p_closed_shift uuid,p_period_start text,
+ p_movement_product uuid DEFAULT NULL,p_after_effective text DEFAULT NULL,p_after_movement uuid DEFAULT NULL)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $fn$
 DECLARE period_start numeric;period_meta jsonb;period_range jsonb;opening numeric;incoming numeric;outgoing numeric;h public.stock_history_heads%ROWTYPE;b public.stock_history_baselines%ROWTYPE;
  cutoff numeric;read_raw text;revision text;reasons jsonb:='[]'::jsonb;actual_pairs bigint;page jsonb;next_id uuid;
  candidate record;wire jsonb;page_rows jsonb[]:=ARRAY[]::jsonb[];page_bytes integer:=2;last_id uuid;balance numeric;
- capture_state jsonb;capture_after jsonb;
+ capture_state jsonb;capture_after jsonb;requested_cutoff text:=p_cutoff;
+ movement_after numeric;movement_more boolean;movement_next jsonb;
 BEGIN
  PERFORM private.stock_history_authorize_read(p_actor,p_terminal,p_branch,COALESCE(p_export,false));
  IF p_limit NOT BETWEEN 1 AND 500 OR p_limit IS NULL OR p_zone IS NULL OR length(p_zone) NOT BETWEEN 1 AND 100
   OR length(COALESCE(p_source_revision,''))>512 THEN RAISE EXCEPTION 'STOCK_HISTORY_INVALID_REQUEST'; END IF;
+ IF p_movement_product IS NOT NULL AND (p_limit>100 OR p_after IS NOT NULL OR COALESCE(p_export,false)
+  OR btrim(COALESCE(p_source_revision,''))='' OR (p_after_effective IS NULL)<>(p_after_movement IS NULL))
+  THEN RAISE EXCEPTION 'STOCK_HISTORY_INVALID_REQUEST'; END IF;
  IF p_closed_shift IS NOT NULL THEN
   IF NOT EXISTS(SELECT 1 FROM public.app_users person WHERE person.user_id=p_actor AND person.is_active IS TRUE AND
    (COALESCE(person.role::text='admin' OR person.role_slug='admin',false) OR
@@ -92,6 +101,8 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'STOCK_HISTORY_SHIFT_UNAVAILABLE'; END IF;
  END IF;
  cutoff:=private.stock_history_ticks(p_cutoff);
+ IF p_movement_product IS NOT NULL AND cutoff IS DISTINCT FROM private.stock_history_ticks(requested_cutoff)
+  THEN RAISE EXCEPTION 'STOCK_HISTORY_SOURCE_CHANGED'; END IF;
  IF p_period_start IS NOT NULL THEN
   period_start:=private.stock_history_ticks(p_period_start);
   period_range:=private.stock_history_calendar_day(to_char(to_timestamp(floor(period_start/10000000)) AT TIME ZONE p_zone,'YYYY-MM-DD'),p_zone);
@@ -104,6 +115,7 @@ BEGIN
  IF cutoff>private.stock_history_ticks(read_raw) THEN reasons:=reasons||'"FUTURE_CUTOFF"'::jsonb; END IF;
  SELECT * INTO h FROM public.stock_history_heads WHERE store_id=p_branch FOR SHARE;
  IF NOT FOUND OR h.baseline_id IS NULL THEN
+  IF p_movement_product IS NOT NULL THEN RAISE EXCEPTION 'STOCK_HISTORY_SOURCE_CHANGED';END IF;
   RETURN jsonb_build_object('status','incomplete','reasons',reasons||'"NO_VERIFIED_OPENING"'::jsonb,
    'cutoff',p_cutoff,'timeZone',p_zone,'branchId',p_branch,'rows','[]'::jsonb,'next',NULL,'restatable',true)||CASE WHEN period_meta IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('period',period_meta) END;
  END IF;
@@ -131,13 +143,43 @@ BEGIN
   AND effective_ticks<=cutoff AND ingested_cursor<=h.committed_cursor AND clock_state<>'verified') THEN reasons:=reasons||'"CLOCK_UNVERIFIED"'::jsonb; END IF;
  IF EXISTS(SELECT 1 FROM public.stock_history_movements m WHERE m.store_id=p_branch AND m.effective_ticks<=cutoff AND m.ingested_cursor<=h.committed_cursor
   AND NOT EXISTS(SELECT 1 FROM public.stock_history_openings o WHERE o.baseline_id=b.id AND o.store_id=p_branch AND o.product_id=m.product_id)) THEN reasons:=reasons||'"MISSING_OPENING"'::jsonb; END IF;
- revision:='stock-history.v1:'||p_branch||':'||h.committed_cursor||':'||h.coverage_generation||':'||b.id||':'||COALESCE(capture_state->>'revision','capture-uninstalled')||CASE WHEN period_start IS NULL THEN '' ELSE ':period:'||(period_range->>'start')||':'||cutoff::text END;
+ revision:='stock-history.v1:'||p_branch||':'||h.committed_cursor||':'||h.coverage_generation||':'||b.id||':'||COALESCE(capture_state->>'revision','capture-uninstalled')
+  ||CASE WHEN period_start IS NULL THEN ':point:'||trunc(cutoff)::text ELSE ':period:'||(period_range->>'start')||':'||trunc(cutoff)::text END||':'||p_zone;
  IF p_source_revision IS NOT NULL AND p_source_revision IS DISTINCT FROM revision THEN RAISE EXCEPTION 'STOCK_HISTORY_SOURCE_CHANGED'; END IF;
  IF jsonb_array_length(reasons)>0 THEN
   RETURN jsonb_build_object('status',CASE WHEN reasons ? 'BEFORE_BASELINE' OR reasons ? 'FUTURE_CUTOFF' THEN 'unsupported' ELSE 'incomplete' END,
    'reasons',reasons,'cutoff',p_cutoff,'timeZone',p_zone,'branchId',p_branch,'baselineAt',b.cutoff_at_raw,'readAt',read_raw,
    'coverageThroughTicks',h.coverage_through_ticks::text,'sourceRevision',revision,'pendingCount','0','rows','[]'::jsonb,'next',NULL,'restatable',true)||CASE WHEN period_meta IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('period',period_meta) END;
  END IF;
+ IF p_movement_product IS NOT NULL THEN
+  IF NOT EXISTS(SELECT 1 FROM public.stock_history_openings o WHERE o.store_id=p_branch AND o.baseline_id=b.id
+   AND o.product_id=p_movement_product) THEN RAISE EXCEPTION 'STOCK_HISTORY_PRODUCT_UNAVAILABLE' USING ERRCODE='42501';END IF;
+  IF p_after_movement IS NOT NULL THEN
+   movement_after:=private.stock_history_ticks(p_after_effective);
+   IF NOT EXISTS(SELECT 1 FROM public.stock_history_movements m WHERE m.id=p_after_movement
+    AND m.store_id=p_branch AND m.product_id=p_movement_product AND m.effective_ticks=movement_after
+    AND m.effective_ticks>b.cutoff_ticks AND (period_start IS NULL OR m.effective_ticks>=period_start)
+    AND m.effective_ticks<=cutoff AND m.ingested_cursor<=h.committed_cursor)
+    THEN RAISE EXCEPTION 'STOCK_HISTORY_MOVEMENT_CURSOR_INVALID';END IF;
+  END IF;
+  WITH chosen AS (
+   SELECT m.id,m.effective_at_raw,m.recorded_at_raw,m.effective_ticks,m.source_kind,m.quantity_delta
+   FROM public.stock_history_movements m
+   WHERE m.store_id=p_branch AND m.product_id=p_movement_product AND m.effective_ticks>b.cutoff_ticks
+    AND (period_start IS NULL OR m.effective_ticks>=period_start)
+    AND m.effective_ticks<=cutoff AND m.ingested_cursor<=h.committed_cursor
+    AND (p_after_movement IS NULL OR (m.effective_ticks,m.id)>(movement_after,p_after_movement))
+   ORDER BY m.effective_ticks,m.id LIMIT p_limit+1
+  ), numbered AS (
+   SELECT chosen.*,row_number() OVER (ORDER BY effective_ticks,id) ordinal FROM chosen
+  )
+  SELECT count(*)>p_limit,COALESCE(jsonb_agg(jsonb_build_object('id',id,'effectiveAt',effective_at_raw,
+   'recordedAt',recorded_at_raw,'kind',source_kind,'delta',quantity_delta::text) ORDER BY ordinal)
+   FILTER (WHERE ordinal<=p_limit),'[]'::jsonb) INTO movement_more,page FROM numbered;
+  IF movement_more THEN
+   movement_next:=jsonb_build_object('effectiveAt',page->(p_limit-1)->>'effectiveAt','id',page->(p_limit-1)->>'id');
+  END IF;
+ ELSE
  -- Build one immutable keyset page, stopping before its byte budget. A large
  -- product is never skipped or truncated; an oversized first row fails clearly.
  FOR candidate IN SELECT o.* FROM public.stock_history_openings o WHERE o.store_id=p_branch AND o.baseline_id=b.id
@@ -165,14 +207,16 @@ BEGIN
   page_rows:=array_append(page_rows,wire);last_id:=candidate.product_id;
  END LOOP;
  page:=to_jsonb(page_rows);
+ END IF;
  IF capture_state IS NOT NULL THEN
   EXECUTE 'SELECT private.stock_history_capture_state($1,$2)' INTO capture_after USING p_branch,b.id;
   IF capture_state IS DISTINCT FROM capture_after THEN RAISE EXCEPTION 'STOCK_HISTORY_SOURCE_CHANGED';END IF;
  END IF;
  RETURN jsonb_build_object('status','complete','reasons','[]'::jsonb,'cutoff',p_cutoff,'timeZone',p_zone,'branchId',p_branch,
-  'baselineAt',b.cutoff_at_raw,'readAt',read_raw,'sourceRevision',revision,'pendingCount','0','restatable',true,'rows',page,'next',next_id)||CASE WHEN period_meta IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('period',period_meta) END;
+  'baselineAt',b.cutoff_at_raw,'readAt',read_raw,'sourceRevision',revision,'pendingCount','0','restatable',true,'rows',page,
+  'next',CASE WHEN p_movement_product IS NULL THEN to_jsonb(next_id) ELSE movement_next END)||CASE WHEN period_meta IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('period',period_meta) END;
 END $fn$;
-REVOKE ALL ON FUNCTION private.stock_history_read_page_core(text,text,text,text,text,uuid,integer,text,boolean,uuid,text) FROM PUBLIC,anon,authenticated,service_role;
+REVOKE ALL ON FUNCTION private.stock_history_read_page_core(text,text,text,text,text,uuid,integer,text,boolean,uuid,text,uuid,text,uuid) FROM PUBLIC,anon,authenticated,service_role;
 
 CREATE FUNCTION public.pos_stock_history_period_page(p_actor text,p_terminal text,p_branch text,p_cutoff text,p_zone text,
  p_after uuid DEFAULT NULL,p_limit integer DEFAULT 100,p_source_revision text DEFAULT NULL,p_export boolean DEFAULT false,p_closed_shift uuid DEFAULT NULL,p_period_start text DEFAULT NULL)
@@ -183,6 +227,27 @@ BEGIN
 END $period$;
 REVOKE ALL ON FUNCTION public.pos_stock_history_period_page(text,text,text,text,text,uuid,integer,text,boolean,uuid,text) FROM PUBLIC,anon,authenticated,service_role;
 GRANT EXECUTE ON FUNCTION public.pos_stock_history_period_page(text,text,text,text,text,uuid,integer,text,boolean,uuid,text) TO service_role;
+
+CREATE INDEX stock_history_movement_product_page ON public.stock_history_movements(store_id,product_id,effective_ticks,id)
+ WHERE ingested_cursor IS NOT NULL;
+
+CREATE FUNCTION public.pos_stock_history_movements_v1(p_actor text,p_terminal text,p_branch text,p_product uuid,
+ p_cutoff text,p_zone text,p_source_revision text,p_period_start text DEFAULT NULL,p_closed_shift uuid DEFAULT NULL,
+ p_after_effective text DEFAULT NULL,p_after_id uuid DEFAULT NULL,p_limit integer DEFAULT 50)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $movements$
+DECLARE result jsonb;
+BEGIN
+ IF p_product IS NULL THEN RAISE EXCEPTION 'STOCK_HISTORY_INVALID_REQUEST';END IF;
+ result:=private.stock_history_read_page_core(p_actor,p_terminal,p_branch,p_cutoff,p_zone,NULL,p_limit,p_source_revision,
+  false,p_closed_shift,p_period_start,p_product,p_after_effective,p_after_id);
+ RETURN jsonb_build_object('status',CASE WHEN result->>'status'='unsupported' THEN 'incomplete' ELSE result->>'status' END,
+  'reasons',result->'reasons','branchId',p_branch,'productId',p_product,'cutoff',p_cutoff,'timeZone',p_zone,
+  'sourceRevision',result->'sourceRevision','baselineAt',result->'baselineAt','rows',result->'rows','next',result->'next')
+  ||CASE WHEN p_period_start IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('periodStart',p_period_start) END
+  ||CASE WHEN p_closed_shift IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('closedShiftId',p_closed_shift) END;
+END $movements$;
+REVOKE ALL ON FUNCTION public.pos_stock_history_movements_v1(text,text,text,uuid,text,text,text,text,uuid,text,uuid,integer) FROM PUBLIC,anon,authenticated,service_role;
+GRANT EXECUTE ON FUNCTION public.pos_stock_history_movements_v1(text,text,text,uuid,text,text,text,text,uuid,text,uuid,integer) TO service_role;
 
 -- Preserve the original RPC identity, owner, ACL and flags. The shared core
 -- retains every original current-account, branch, export and source guard.

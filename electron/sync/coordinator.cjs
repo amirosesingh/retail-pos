@@ -19,11 +19,12 @@ class SyncCoordinator {
   #groupedSettingsPilotMode;
   #uploadStoreSettingsEdit;
   constructor({ pushWorker, pullWorker, publish = () => {}, recoverHeldStatuses = null, groupedSettingsPilot = null,
-    groupedSettingsPilotMode = null, uploadStoreSettingsEdit = null }) {
+    groupedSettingsPilotMode = null, uploadStoreSettingsEdit = null, observeStockFrontier = null }) {
     this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.recoverHeldStatuses=recoverHeldStatuses;
     this.#groupedSettingsPilot=pilotEnrollment(groupedSettingsPilot);
     this.#groupedSettingsPilotMode=["run", "handback"].includes(groupedSettingsPilotMode) ? groupedSettingsPilotMode : null;
     this.#uploadStoreSettingsEdit=uploadStoreSettingsEdit;
+    this.observeStockFrontier=observeStockFrontier;
     this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false;
     this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 };
   }
@@ -288,6 +289,11 @@ class SyncCoordinator {
       }
       this.status.pushed=Number(pushed.pushed??this.status.pushed); this.status.merged=Number(pulled.merged??this.status.merged);
       if (pushError) { failedDirection="push"; throw pushError; }
+      if (this.observeStockFrontier && options.branchId && !options.final && !options.pushOnly && !options.pullOnly && !this.paused) {
+        try {
+          await this.observeStockFrontier({branchId:options.branchId,assertLease:()=>this.ownsExclusive()&&!this.paused});
+        } catch { /* Optional observation cannot change the outcome of business sync. */ }
+      }
       this.status.phase="idle"; this.publishFailureStatus(options.branchId);
       result={ ok:true,...pushed,...pulled,historyHoldOnly:Boolean(this.status.historyUploadHeld&&![...this.unresolved().values()].some(failure=>failure.branchId===String(options.branchId??''))) };
     } catch(error) {

@@ -4,6 +4,7 @@ const shape=require('./stock-history-schema.json');
 const schemaObjects=require('./stock-history-schema-objects.json');
 const {catalogSql,physicalObjects}=require('./stock-history-schema-check.cjs');
 const {withStockHistoryReadSession,stockHistoryReadRequest}=require('./stock-history-read-session.cjs');
+const {movementRequest,movementPage,readVerifiedMovements}=require('./stock-history-movements.cjs');
 const CAPABILITIES=new WeakMap();
 const CAPTURES=new WeakMap();
 const readPageSql=require('node:fs').readFileSync(require('node:path').join(__dirname,'stock-history-page.sql'),'utf8');
@@ -34,8 +35,8 @@ function productsIn(operations){
   return {ids:[...ids].sort(),unbounded,...(refs.length?{refs}: {})};
 }
 class StockHistoryStore{
- constructor(manager,{assertCurrent=()=>{},authorizeRead=null,readContext=null}={}){
-  this.manager=manager;this.assertCurrent=assertCurrent;this.authorizeRead=authorizeRead;this.readContext=readContext;
+ constructor(manager,{assertCurrent=()=>{},authorizeRead=null,readContext=null,prepareWrite=null,expectedDatabaseGuid=null,canCapture=()=>true}={}){
+  this.manager=manager;this.assertCurrent=assertCurrent;this.authorizeRead=authorizeRead;this.readContext=readContext;this.prepareWrite=prepareWrite;this.expectedDatabaseGuid=expectedDatabaseGuid;this.canCapture=canCapture;
  }
  request(tx){return stockHistoryReadRequest(tx)??new(this.manager.sql().Request)(tx);}
  invalidateCapability(){if(this.manager.pool)CAPABILITIES.delete(this.manager.pool);}
@@ -50,6 +51,7 @@ class StockHistoryStore{
  }
  async capability(tx){
   const pool=this.manager.pool,identity=await this.identity(tx);this.assertCurrent();
+  if(this.expectedDatabaseGuid && identity.split(':',1)[0]!==this.expectedDatabaseGuid)return unavailable('DATABASE_SCOPE_CHANGED');
   const prior=CAPABILITIES.get(pool);
   if(prior?.identity===identity)return prior.value;
   const result=await this.request(tx).query(`SELECT t.name [table],c.name [column],ty.name [type],
@@ -83,20 +85,28 @@ class StockHistoryStore{
   return result;
  }
  async begin(tx,operations,input){
+  if(!this.canCapture())return null;
   const products=productsIn(operations);if(!products.ids.length&&!products.unbounded)return null;
   const capability=await this.capability(tx);if(!capability.available)return null;
-  const observed=this.readContext?.(),source=observed?Object.freeze({...observed}):null;
+  const observed=this.prepareWrite?await this.prepareWrite(tx,operations,input):this.readContext?.();
+  if(this.prepareWrite&&!observed)return null;
+  const source=observed?Object.freeze({...observed}):null;
   if(source&&(!source.key||source.branchId!==input.branchId||source.terminalId!==input.terminalId))contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
-  const writerKnown=contract.KINDS.has(input.kind)&&input.kind!=='general';
-  const captureInput=Object.freeze({...input,kind:writerKnown?input.kind:'general',...(source?{actorId:source.actorId,clockState:source.clockState}:{})});
+  const writerKnown=contract.KINDS.has(input.kind)&&input.kind!=='general'&&source?.writerKnown!==false;
+  const captureInput=Object.freeze({...input,kind:contract.KINDS.has(input.kind)?input.kind:'general',...(source?{actorId:source.actorId,clockState:source.clockState}:{})});
   contract.identifier(captureInput.operationId,true);contract.identifier(captureInput.branchId);contract.identifier(captureInput.terminalId);
   if(captureInput.effectiveAt)contract.instant(captureInput.effectiveAt);
   const before=await this.snapshot(tx,products.ids),beforeSources=await this.sources(tx,products.refs);this.assertCurrent();
-  if(source&&this.readContext?.()?.key!==source.key)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+  this.assertWriter(source);
   const sourceOperations=operations.map(op=>Object.freeze({kind:op.kind,table:op.table,
    rows:Object.freeze((op.rows??[op.values??{}]).map(row=>Object.freeze({id:row.id??op.match?.id})))}));
   const token=Object.freeze({});CAPTURES.set(token,{tx,pool:this.manager.pool,databaseKey:capability.databaseKey,input:captureInput,products,before,beforeSources,source,writerKnown,sourceOperations});
   return token;
+ }
+ assertWriter(source){
+  if(!source)return;
+  if(source.assertCurrent)source.assertCurrent();
+  else if(this.readContext?.()?.key!==source.key)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
  }
  async invalidateCoverage(tx,branch,reason){
   await this.ensureHead(tx,branch);
@@ -113,7 +123,7 @@ class StockHistoryStore{
   const saved=CAPTURES.get(token);
   if(!saved||saved.tx!==tx||saved.pool!==this.manager.pool)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
   this.assertCurrent();
-  if(saved.source&&this.readContext?.()?.key!==saved.source.key)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+  this.assertWriter(saved.source);
   const current=await this.identity(tx);if(current!==saved.databaseKey)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
   const after=await this.snapshot(tx,saved.products.ids),seen=new Set(saved.beforeSources.map(row=>row.table+':'+row.id));
   const claims=(await this.sources(tx,saved.products.refs)).filter(row=>!seen.has(row.table+':'+row.id));
@@ -136,7 +146,8 @@ class StockHistoryStore{
      action:saved.source.author.action,row,operations:saved.sourceOperations,before:saved.before,after,claims,request:()=>this.request(tx),
      ...(context.arrivalReason!==undefined?{arrivalReason:context.arrivalReason}:{})});
     sourceManifests.push(sourceManifestJson);
-    this.assertCurrent();if(saved.source&&this.readContext?.()?.key!==saved.source.key)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+    this.assertCurrent();this.assertWriter(saved.source);
+    if(saved.source.requireSourceManifests&&!sourceManifestJson){signed.push(row);continue;}
     signed.push(Object.freeze({...row,author_proof_json:JSON.stringify(saved.source.author.signMovement(row,sourceManifestJson??undefined))}));
    }
    catch(error){
@@ -148,7 +159,7 @@ class StockHistoryStore{
   let sourceCohort;
   try{
    sourceCohort=await require('./stock-history-cohort.cjs').persistSourceCohort(this,tx,{rows,manifests:sourceManifests,author:saved.source?.author,
-    databaseKey:saved.databaseKey,assertCurrent:()=>{this.assertCurrent();if(saved.source&&this.readContext?.()?.key!==saved.source.key)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');}});
+    databaseKey:saved.databaseKey,assertCurrent:()=>{this.assertCurrent();this.assertWriter(saved.source);}});
   }catch(error){
    if(!['ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING','ESYNC_SHIFT_AUTHOR_KEY_MISSING','ESYNC_SHIFT_AUTHOR_KEY_UNAVAILABLE','ESYNC_SHIFT_AUTHOR_VAULT_UNAVAILABLE',
     'ESTOCK_AUTHOR_PERMISSION_REVOKED','ESTOCK_SOURCE_OVERSIZED','ESTOCK_SOURCE_COHORT_OVERSIZED'].includes(error?.code))throw error;
@@ -166,7 +177,7 @@ class StockHistoryStore{
   const cohortChanged=previous.size!==currentProducts.size||[...previous].some(([id,product])=>!currentProducts.has(id)||
    (product.owner_store_id??null)!==(currentProducts.get(id).owner_store_id??null));
   if(cohortChanged)await this.invalidateCoverage(tx,context.branchId,'STOCK_PRODUCT_COHORT_CHANGED');
-  this.assertCurrent();if(saved.source&&this.readContext?.()?.key!==saved.source.key)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+  this.assertCurrent();this.assertWriter(saved.source);
   CAPTURES.delete(token);return {captured:rows.length,available:true,incomplete:saved.products.unbounded||!saved.writerKnown||cohortChanged};
  }
  async insertMovements(tx,branch,rows){
@@ -210,7 +221,12 @@ class StockHistoryStore{
    END;
   `);
  }
- async readPage(input={}){
+ async readMovements(input){
+  const request=movementRequest(input);
+  const {after:_after,productId:_productId,...reportInput}=request;
+  return movementPage(request,await this.readPage(reportInput,request));
+ }
+ async readPage(input={},movements=null){
   if(typeof this.authorizeRead!=='function')contract.fail('PERMISSION_DENIED');
   const observedScope=await this.authorizeRead(input.export===true),scope=observedScope?Object.freeze({...observedScope}):null;
   if(!scope?.canViewInventory||typeof scope.contextKey!=='string'||!scope.contextKey||(input.export===true&&!scope.canExportReports))contract.fail('PERMISSION_DENIED');
@@ -239,6 +255,7 @@ class StockHistoryStore{
        AND closed_at IS NOT NULL AND LOWER(status) IN(N'closed',N'completed');`)).recordset?.[0];
     if(!shift?.closed_at)contract.fail('ESTOCK_HISTORY_SHIFT_UNAVAILABLE');cutoff=contract.canonicalInstant(shift.closed_at);
    }
+   if(movements&&cutoff!==movements.cutoff)contract.fail('ESTOCK_HISTORY_SOURCE_CHANGED');
    const cutoffTicks=String(contract.instant(cutoff));
    const period=require('./stock-history-period.cjs').stockHistoryPeriod(input.periodStart,cutoff,zone);
    const baselineLimit=period?String(contract.instant(period.start)-1n):cutoffTicks;
@@ -280,12 +297,16 @@ class StockHistoryStore{
     if(BigInt(String(meta.baseline_changed_count??0))>0n)reasons.push('BASELINE_PREHISTORY_CHANGED');
     if(BigInt(String(meta.missing_opening_count??0))>0n)reasons.push('MISSING_OPENING');
    }
-   const revision=meta?`${cap.databaseKey}:${branch}:${meta.committed_cursor}:${meta.local_committed_cursor}:${meta.coverage_generation}:${meta.baseline_id??''}${period?`:period:${period.start}:${cutoff}`:''}`:null;
+   const interval=period?`period:${period.start}:${cutoff}`:`point:${cutoff}`;
+   const revision=meta?`${cap.databaseKey}:${branch}:${meta.committed_cursor}:${meta.local_committed_cursor}:${meta.coverage_generation}:${meta.baseline_id??''}:${interval}:${zone}`:null;
    if(input.sourceRevision!=null&&input.sourceRevision!==revision)contract.fail('ESTOCK_HISTORY_SOURCE_CHANGED');
    if(reasons.length){
     return{status:reasons.some(reason=>['BEFORE_BASELINE','FUTURE_CUTOFF'].includes(reason))?'unsupported':'incomplete',reasons,cutoff,timeZone:zone,branchId:branch,
      baselineAt:meta?.cutoff_at_raw??null,coverageThroughTicks:meta?.coverage_through_ticks==null?null:String(meta.coverage_through_ticks),
      pendingCount:String(meta?.pending_count??0),sourceRevision:revision,...(period?{period}:{}),rows:[],next:null};}
+   if(movements){
+    return {status:'complete',reasons:[],baselineAt:meta.cutoff_at_raw,...await readVerifiedMovements(this.request(tx),movements,meta)};
+   }
    request.input('history_baseline',meta.baseline_id).input('history_cursor',String(meta.committed_cursor)).input('history_baseline_ticks',String(meta.cutoff_ticks)).input('history_page_size',limit);
    const result=await request.query(readPageSql),wire=result.recordset?.[0];
    if(!wire||typeof wire.rows_json!=='string'||Buffer.byteLength(wire.rows_json,'utf8')>245760)contract.fail('ESTOCK_HISTORY_OVERSIZED');

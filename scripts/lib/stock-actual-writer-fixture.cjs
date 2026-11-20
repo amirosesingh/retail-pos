@@ -39,7 +39,7 @@ async function installSourceAdmission(f){
  await db.query('UPDATE app_users SET permissions=$2::jsonb WHERE id=$1',[author,JSON.stringify({can_adjust_stock:true,can_receive_purchase_order:true})]);
  await db.query(`INSERT INTO pos_sync_private.shift_author_keys(key_id,author_id,terminal_id,project_origin,subject,public_key) VALUES($1,$2,$3,$4,$5,$6)`,
   [key,author,terminal,project,author,pair.publicKey.export({type:'spki',format:'der'}).toString('base64url')]);
- async function sourceOperation({action='ADJUST',quantity=action==='ADJUST'?'-3':'2',arrivalReason}={}){
+ async function sourceOperation({action='ADJUST',quantity=action==='ADJUST'?'-3':'2',arrivalReason,sourceSequence='1',sourcePredecessorRoot=null}={}){
   const operationId=randomUUID(),batch=randomUUID(),document=randomUUID(),activity=randomUUID(),before=await f.stock(),after=String(BigInt(before)+BigInt(quantity)),at='2026-11-06T01:02:03.1234567Z';
   const refs=[{table:action==='ADJUST'?'stock_adjustments':'item_activity_logs',id:action==='ADJUST'?document:activity,productId:product,branchId:'A',delta:quantity}];
   const row=c.changes(c.normalizeContext({operationId,branchId:'A',terminalId:terminal,actorId:author,kind:action==='ADJUST'?'stock':'receiving'},at),
@@ -51,7 +51,7 @@ async function installSourceAdmission(f){
   const source={version:1,operationId,action,document:{type:action==='ADJUST'?'stock_adjustments':'receivings',id:document},authorId:author,terminalId:terminal,branchId:'A',productId:product,delta:quantity,
    effectiveAt:row.effective_at_raw,recordedAt:row.recorded_at_raw,sourceRefs:row.source_refs,...(arrivalReason!==undefined?{arrivalReason}:{})};
   const cohort=await buildStockSourceCohort([source]),common={version:1,algorithm:'Ed25519',keyId:key,projectOrigin:project,terminalId:terminal,authorId:author,subject:author,branchId:'A',operationId,action};
-  const headerFields={...common,sourceDatabaseId:database,sourceSequence:'1',sourcePredecessorRoot:null,sourceRoot:cohort.root,sourceCount:1};
+  const headerFields={...common,sourceDatabaseId:database,sourceSequence,sourcePredecessorRoot,sourceRoot:cohort.root,sourceCount:1};
   const header={...headerFields,signature:sign(null,Buffer.from(p.stockSourceCohortMessage(headerFields)),pair.privateKey).toString('base64url')};
   const proofFields={...common,movementId:row.id,payloadHash:row.payload_hash,sourceManifestJson:cohort.members[0].manifestJson};
   const proof={...proofFields,signature:sign(null,Buffer.from(p.stockEventMessage(proofFields)),pair.privateKey).toString('base64url')};

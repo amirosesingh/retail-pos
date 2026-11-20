@@ -16,8 +16,9 @@ function fixture() {
     return { recordset: sql.includes("database_guid") ? [{ database_guid: databaseGuid, schema_generation: "24:absent" }] : [] }; } }
   const manager = { pool, sql: () => ({ Request }) }, session = { hasPosAuthority: () => active, epoch: () => epoch,
     identity: () => ({ authorId: actorId, subject: "cashier", canonicalSubject: "cashier", source: "pos" }), touch: () => { touched++; } };
-  const read = createStockHistoryReader({ manager, session, terminal: () => terminal, branch: () => "a", isPosSender: (event: any) => event === "pos", context: () => ["https://fixture.invalid"] });
-  return { read, person, terminal, manager, events, revoke: () => { active = false; epoch++; }, after: (fn: () => void) => { afterRead = fn; }, counts: () => ({ reads,touched }) };
+  const options = { manager, session, terminal: () => terminal, branch: () => "a", isPosSender: (event: any) => event === "pos", context: () => ["https://fixture.invalid"] };
+  const read = createStockHistoryReader(options), readMovements = createStockHistoryReader(options,true);
+  return { read, readMovements, person, terminal, manager, events, revoke: () => { active = false; epoch++; }, after: (fn: () => void) => { afterRead = fn; }, counts: () => ({ reads,touched }) };
 }
 describe("Main-owned stock history read admission", () => {
   it("reports an absent optional schema truthfully without SQL or registration writes", async () => {
@@ -31,6 +32,14 @@ describe("Main-owned stock history read admission", () => {
   });
   it("rejects other renderers before account reads or idle extension", async () => {
     const f = fixture(); expect(await f.read("customer",request)).toMatchObject({ ok: false,code: "PERMISSION_DENIED" }); expect(f.counts()).toEqual({ reads: 0,touched: 0 });
+  });
+  it('keeps movement details in the dedicated stock-read authority and exact request scope',async()=>{
+    const f=fixture(),details={...request,productId:databaseGuid,sourceRevision:'last-verified-page'};
+    expect(await f.readMovements('customer',details)).toMatchObject({ok:false,code:'PERMISSION_DENIED'});
+    expect(await f.readMovements('pos',{...details,export:true})).toMatchObject({ok:false,code:'ESTOCK_HISTORY_INVALID'});
+    expect(f.counts().reads).toBe(0);
+    expect(await f.readMovements('pos',{...details,branchId:'b'})).toMatchObject({ok:false,code:'SYNC_BRANCH_FORBIDDEN'});
+    expect(await f.readMovements('pos',details)).toMatchObject({ok:true,page:{...details,status:'unavailable',reasons:['SCHEMA_NOT_INSTALLED'],rows:[],next:null}});
   });
   it.each(["branch", "inactive", "permission", "page", "export", "identity", "management", "extra field", "shift"])("denies current %s", async change => {
     const f = fixture(), input: any = { ...request };

@@ -36,6 +36,8 @@ module.exports=async({pool,sql,pass})=>{
  assert.equal(BigInt(row.openingQuantity)+BigInt(row.inQuantity)-BigInt(row.outQuantity),BigInt(row.quantity));
  assert.equal(page.rows.find(row=>row.productId===zero).quantity,'0');
  const point=await store.readPage({cutoff,timeZone:'UTC'});assert.equal(point.rows.find(row=>row.productId===product).quantity,row.quantity);assert.equal(point.rows[0].openingQuantity,undefined);
+ await assert.rejects(store.readMovements({cutoff:c.utc(c.instant(cutoff)-1n),timeZone:'UTC',branchId:branch,productId:product,
+  sourceRevision:point.sourceRevision}),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
  pass('one native snapshot explains exact selected-time stock using signed in/out, zero/archive identities and >2^53 strings; later100ns excluded');
  const first=await store.readPage({...request,limit:1});assert(first.next);const second=await store.readPage({...request,limit:1,after:first.next,sourceRevision:first.sourceRevision});assert.equal(second.next,null);
  await assert.rejects(store.readPage({...request,sourceRevision:point.sourceRevision}),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
@@ -52,4 +54,18 @@ module.exports=async({pool,sql,pass})=>{
  assert.equal((await store.readPage(request)).rows.find(row=>row.productId===product).quantity,String(initial+5n));
  await assert.rejects(store.readPage({...request,sourceRevision:page.sourceRevision}),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
  pass('a newer intraday opening cannot replace the daily opening; late backdated accepted movement restates exact stock and invalidates old pages');
+ await movement(5n,cutoff);
+ const current=await store.readPage(request),details={...request,branchId:branch,productId:product,sourceRevision:current.sourceRevision,limit:2};
+ const firstMovements=await store.readMovements(details),secondMovements=await store.readMovements({...details,after:firstMovements.next,limit:1});
+ const lastMovements=await store.readMovements({...details,after:secondMovements.next});
+ assert.deepEqual(firstMovements.rows.map(row=>row.delta),['2','1']);
+ assert.deepEqual([secondMovements.rows[0].delta,lastMovements.rows[0].delta].sort(),['-1','5']);
+ assert.equal(secondMovements.rows[0].effectiveAt,cutoff);assert.equal(lastMovements.rows[0].effectiveAt,cutoff);
+ assert(secondMovements.rows[0].id<lastMovements.rows[0].id);assert.equal(lastMovements.next,null);
+ assert.deepEqual(Object.keys(firstMovements.rows[0]).sort(),['delta','effectiveAt','id','kind','recordedAt']);
+ await assert.rejects(store.readMovements({...details,branchId:'Other-Branch'}),{code:'SYNC_BRANCH_FORBIDDEN'});
+ await assert.rejects(store.readMovements({...details,productId:baseline}),{code:'PERMISSION_DENIED'});
+ await assert.rejects(store.readMovements({...details,after:{effectiveAt:start,id:baseline}}),{code:'ESTOCK_HISTORY_MOVEMENT_CURSOR_INVALID'});
+ await assert.rejects(store.readMovements({...details,sourceRevision:page.sourceRevision}),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
+ pass('exact report-scoped native movement pages keep the inclusive last tick, UUID order, stable revision and authorized product');
 };

@@ -248,6 +248,7 @@ class AggregateRepository {
       const stockCapture=this.stockHistory?await this.stockHistory.begin(transaction,operations,{
         operationId,branchId:aggregate.branchId,terminalId:aggregate.terminalId,
         actorId:aggregate.activityOperator?.subject,kind,
+        groupedCashOrigin: Boolean(saleOutbox?.installedHandoff && cashAuthor),
         ...(stockArrival?{effectiveAt:stockArrival.effectiveAt,arrivalReason:stockArrival.reason}:{}),
       }):null;
       if(stockArrival&&stockCapture==null)throw Object.assign(new Error("The stock-history update is not available. The receiving invoice has not been saved."),{code:"ESTOCK_HISTORY_SCHEMA_REQUIRED"});
