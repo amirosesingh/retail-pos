@@ -281,6 +281,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261117052540_sale_item_parent_sync_scope.sql",
       "supabase/migrations/20261117233612_native_refund_exact_financial_receipt_probe.sql",
       "supabase/migrations/20261118060529_deterministic_financial_fact_key_order.sql",
+      "supabase/migrations/20261120082442_batched_scoped_feed.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -300,6 +301,14 @@ describe("canonical Supabase SQL", () => {
     const block = schema.split("-- PROTECTED_FEED_PAGE_BEGIN\n")[1]?.split("\n-- PROTECTED_FEED_PAGE_END")[0];
     expect(block).toBe(read("supabase/migrations/20261104040251_protected_byte_bounded_feed_download.sql").trim());
     expect(schema.split("-- PROTECTED_FEED_PAGE_BEGIN")).toHaveLength(2);
+  });
+
+  it("includes the exact additive scoped feed batch migration once", () => {
+    const schema = read("supabase/schema.sql");
+    const sections = schema.split("-- BATCHED_SCOPED_FEED_BEGIN\n");
+    expect(sections).toHaveLength(2);
+    const block = sections[1]?.split("\n-- BATCHED_SCOPED_FEED_END")[0];
+    expect(block).toBe(read("supabase/migrations/20261120082442_batched_scoped_feed.sql").trim());
   });
 
   it("syncs offline member profile details without exposing the Auth identity", () => {
