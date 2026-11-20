@@ -17,14 +17,14 @@ TypeScript, targeted lint and the actual loopback Worker checks passed.
 The loopback used a mocked upstream and the database benchmark used disposable
 PGlite. Hosted startup, database CPU, and billed Worker time remain unmeasured.
 
-When separately approved for the exact Beta project, apply the additive SQL
-first and verify the v2 prerequisite fingerprint and service-only v3 grants.
-Verify PostgREST discovery before switching the Worker and repeating the
-fresh/warm Electron measurement. The Worker can run before the migration
-through its exact missing-v3 fallback to protected v2. Other failures remain
-visible. Revert the Worker to v2 if needed. A future v2 definition update must
-carry its corresponding v3 prerequisite update. No hosted migration or
-deployment occurred for this source check.
+After owner approval, the additive SQL was applied only to Retail POS Beta.
+The v2 prerequisite fingerprint and service-only v3 grants passed readback.
+One scoped live v3 call returned the same 50 ordered rows as five v2 calls.
+The existing Worker returned a ten-row baseline on the synthetic terminal.
+Verify PostgREST discovery and the larger page through the Beta Worker after
+deployment, then measure fresh and warm Electron startup. Exact missing v3
+falls back to protected v2. Other failures remain visible. A future v2
+definition update must carry its corresponding v3 prerequisite update.
 
 ## 10 November — receipt report tender amounts
 

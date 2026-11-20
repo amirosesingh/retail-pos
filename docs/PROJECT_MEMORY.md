@@ -4,8 +4,9 @@ Use a separate Beta branch at 439a4c5a for the feed performance change.
 Benchmark and prepare the additive path using disposable fixtures. The live
 Beta read-only baseline had 293 fresh feed requests and two at warm reopen.
 Retain the protected shared download authority, pending SQL work, visible
-fields, byte bounds, and existing v2 compatibility. The owner has not
-authorized applying a hosted migration in this batch.
+fields, byte bounds, and existing v2 compatibility. The owner approved the
+additive migration for Retail POS Beta. The private v3 function is installed
+there with service-only access, and the protected v2 fingerprint is unchanged.
 
 ## 19 November — dependency advisory refresh and beta release continuation
 
