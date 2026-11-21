@@ -2,13 +2,80 @@
 
 ## Read-only preflight
 
-The checked target is Retail POS Beta `irjkmhgrjgcaoixcixut`, PostgreSQL 17.11. The
+The checked target is Retail POS Beta `irjkmhgrjgcaoixcixut`, PostgreSQL 17.11,
+physical system identifier `7703759698107299042`. The
 catalog check found the existing grouped cash, refund, transfer, stock and FIN62
 dependencies. It found no STOCK401 ledger, effect, author, frontier, opening,
 cutover or replica objects and no dedicated `CODEX-STOCK401-%` branch. The
 existing transfer writer fingerprints, catalogue visibility routine and product
 delete guard matched. The online deduction witness pins Beta's hardened
 `stock_apply_delta` replay comparison and its current document write grants.
+
+## Exact files for review
+
+From this checkout, run `node scripts/prepare-stock-report-beta-db.cjs --prepare`.
+It rebuilds the files in `.tmp/stock401-beta-approval` and checks every source and
+output against the [payload manifest](../../database/beta/prepared/stock-report-stocktake-v1.manifest.json).
+It preserves the underlying SQL bodies and uses explicit UTF-8/LF bytes with no BOM.
+Only the recorded outer `BEGIN;`/`COMMIT;` lines are removed on hosted inputs
+that supplied their own wrapper. The exact combined files are the reviewable
+payloads. Scope and transaction ownership belong to the prepared files and manifest.
+
+| Payload | Target for exact approval |
+| --- | --- |
+| `stock-report-beta-stocktake.supabase.sql` | Retail POS Beta `irjkmhgrjgcaoixcixut` and physical system identifier `7703759698107299042`. |
+| `stock-report-beta-stocktake.sqlserver.sql` | Disposable `POS_Stock401_Beta_Till_A` and `POS_Stock401_Beta_Till_B` only, each on its independently verified instance and physical database GUID. |
+
+The first package installs the Stock Report foundation, opening, cutover and
+replica schema. Its two accepted-effect hooks on `products` and
+`stock_delta_applied` capture private evidence across the Beta project as those
+business writers run. The install changes no existing business rows. Stocktake
+fences require later owner-only provisioning for the isolated branch and a
+separate lease. Product merge and the optional business witness modules remain
+separate from this package. Unscoped stock capture gaps keep the report held
+until the underlying evidence can be verified.
+
+### Hosted transaction and verification
+
+1. Run `stock-report-beta-preflight.readonly.sql` using the confirmed Retail POS
+   Beta project. Check the exact physical identity, no existing Stock Report
+   schema or prior ledger rows, and the expected empty pilot inventory.
+2. After exact-file approval, submit the unmodified hosted payload with the
+   Supabase `apply_migration` tool using the name
+   `retail_pos_beta_stock_report_stocktake_v1`. Its Management API owns the
+   migration transaction and ledger. The payload independently checks the
+   physical system identity, empty schema, capture fingerprints and grants.
+   [Supabase tool implementation](https://github.com/supabase/mcp/blob/main/packages/mcp-server-supabase/src/platform/api-platform.ts)
+   [Supabase transaction behavior](https://supabase.com/docs/guides/integrations/supabase-for-platforms#apply-a-database-migration)
+3. Run `stock-report-beta-postflight.readonly.sql` on the same project. Expect
+   one named migration row, capture fingerprints matching, service role access
+   to the replica RPC, authenticated-user direct access denied, and zero
+   enrolled branches, leases and baselines. Keep the manifest as the mapping
+   from the one provider-ledger row to all eleven sources. If the provider
+   returns an error or times out, inspect the actual source, grants and ledger
+   before any retry. A mismatch stays under review. A migration already committed
+   is verified with the postflight query.
+
+The isolated PostgreSQL test uses the Management API transaction shape and a
+simulated ledger write. It verifies that a late ledger collision rolls back
+schema, grants and triggers together. The hosted connector itself is exercised
+for read-only preflight. Applying and reading back the migration ledger through
+the hosted API requires approval for this exact payload.
+
+### Native transaction and verification
+
+Prepare two new owned, empty test databases with the current base POS schema,
+one for each of the reserved names. Verify the SQL instances, names and
+physical GUIDs before any write. Treat a name that already exists as requiring
+verification of ownership. Keep the saved POS database outside this procedure.
+
+Set `SESSION_CONTEXT(N'pos_stock401_database_guid')` with the approved value
+typed as SQL Server `uniqueidentifier` in the same authenticated connection.
+Run the reviewed batch there with its own transaction. Check exactly one
+`dbo.pos_schema_migrations` version `31`, the capture objects, the enabled
+stocktake trigger and its routine fingerprints, and no active fences. A late
+failure rolls back the newly installed native schema and ledger entry together.
+Local schema remains separate from till registration and installer publication.
 
 ## Prepare the candidate artifacts
 
@@ -28,10 +95,9 @@ delete guard matched. The online deduction witness pins Beta's hardened
    `stock-history-physical-stocktakes.sql`, `stock-history-stocktake-cutover.sql`,
    and `stock-history-replica-export.sql` against that foundation. The first
    three are transaction-body artifacts. The replica export and dated hosted
-   inputs contain their own transaction boundaries. Freeze the exact approved
-   payload for the selected execution tool and verify its migration-ledger
-   behavior, with one transaction owner per execution. Keep scoped guard
-   provisioning separate from routine creation.
+   inputs contain their own transaction boundaries, which the manifest records
+   for the combined payload. Keep scoped guard provisioning separate from routine
+   creation.
 3. Review any additional business witness modules used by the acceptance
    scenario at their exact deployed prerequisites. Grouped cash and grouped
    refund follow original-source membership. FIN62 refund follows grouped
@@ -68,6 +134,7 @@ profile.
 ```powershell
 $env:POSTGRES_TEST_BIN = '<owned PostgreSQL 18 bin directory>'
 $env:STOCK_HISTORY_NATIVE_REPLICA_TEST = '1'
+node scripts/test-stock-report-beta-db.cjs --run
 node scripts/test-stock-frontier-postgres.cjs --run
 node scripts/test-stocktake-fence-sqlserver.cjs --run
 node scripts/test-native-product-merge-sqlserver.cjs --run

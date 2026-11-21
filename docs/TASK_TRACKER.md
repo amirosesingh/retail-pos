@@ -10318,3 +10318,32 @@ scope mismatch and exact replay, including a read during an in-flight merge.
 The hosted Retail POS Beta preflight found the Stock Report schema and isolated
 stocktake branch still absent. Exact database preparation and hosted two-till
 acceptance remain pending before integration.
+
+## 21 November — Complete Stock Report Beta acceptance
+
+The owner asked to complete the remaining PR #401 work after the status review.
+Correct the browser-only import boundary and verify the packaged and Worker
+build paths. Prepare the exact hosted and native Stock Report schema for Beta
+review. Finish the isolated first-stocktake and two-till run once its reviewed
+artifacts and candidate environment are ready. Preserve the existing separate
+installer publication approval. Keep the merge pilot scoped while evaluating
+proof for all relevant writers. Production and saved operator data remain
+outside this work.
+
+The Beta source fix `9bde551a` keeps browser merge code out of the server
+bundle and allows the original accepted receipt to be recovered when the
+writer cohort changes. The real Worker and Windows/Android/iOS renderer or
+shell builds passed locally, along with 35 merge tests, four native merge
+groups, 25 mounted Stock Report UI groups and 20 isolated PostgreSQL groups.
+The two Windows SQL Server fixtures passed the verified download and offline
+restart check within the PostgreSQL run. The native OS and Worker CI checks
+remain separate evidence for the current PR head.
+
+Review the exact [Beta stocktake package](../database/beta/prepared/stock-report-stocktake-v1.manifest.json)
+and its [runbook](database/stock-report-beta-acceptance.md) before any database
+application. The disposable tests verified target guards, migration-ledger or
+fence failure rollback, successful schema and privilege checks, and that the
+schema alone creates no opening or pause. Hosted acceptance needs that exact
+approval, a candidate relay, two enrolled isolated tills and separate witness
+and reviewer accounts. Multi-till new merges remain disabled pending the
+owner's item-level reservation decision and corresponding verification.

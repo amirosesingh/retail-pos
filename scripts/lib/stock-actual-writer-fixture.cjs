@@ -7,7 +7,7 @@ const schema=()=>read('supabase/schema.sql').replaceAll('\r\n','\n');
 function stockFunction(name){const source=schema(),start=source.lastIndexOf('CREATE OR REPLACE FUNCTION public.'+name+'(');assert(start>=0,name);
  const tail=source.slice(start),tag=tail.match(/\bAS\s+(\$[\w]*\$)/i)?.[1];assert(tag,name);const end=tail.indexOf(tag+';',tail.indexOf(tag)+tag.length);assert(end>0,name);return tail.slice(0,end+tag.length+1);}
 function table(name){const source=schema(),start=source.indexOf('CREATE TABLE IF NOT EXISTS public.'+name+' (');assert(start>=0,name);return source.slice(start,source.indexOf('\n);',start)+3);}
-async function createActualStockWriter({capturedAdjustment=false,sourceAdmission=false,db:providedDb,preexistingZeroProduct}={}){
+async function createActualStockWriter({capturedAdjustment=false,sourceAdmission=false,db:providedDb,preexistingZeroProduct,installStockHistory}={}){
  const f=await createFullFinancialCloud({actualSaleDefinition:true,...(providedDb?{db:providedDb}:{})});
  try{
   const{db}=f;
@@ -23,7 +23,8 @@ async function createActualStockWriter({capturedAdjustment=false,sourceAdmission
   await db.exec('REVOKE ALL ON FUNCTION public.sync_apply_stock_adjustments(jsonb) FROM PUBLIC,anon,authenticated;GRANT EXECUTE ON FUNCTION public.sync_apply_stock_adjustments(jsonb) TO service_role;');
   if(preexistingZeroProduct)await db.query(`INSERT INTO public.products(id,name,barcode,owner_store_id,stock_by_store,stock_quantity)
    VALUES($1,'Zero quantity fixture','fixture-zero-barcode','A','{"A":0}'::jsonb,0)`,[preexistingZeroProduct]);
-  for(const path of ['20261105113916_stock_history_effective_ledger.sql','20261105172030_stock_history_accepted_effect_capture.sql'])await db.exec(read('supabase/migrations/'+path));
+  if(installStockHistory) await installStockHistory(db);
+  else for(const path of ['20261105113916_stock_history_effective_ledger.sql','20261105172030_stock_history_accepted_effect_capture.sql'])await db.exec(read('supabase/migrations/'+path));
   const scalar=async(sql,args=[])=>(Object.values((await db.query(sql,args)).rows[0]))[0];
   const push=(batch,operations,branch='A',terminal=f.terminal)=>scalar('SELECT public.pos_sync_push_aggregate($1,\'default\',$2,$3,$4::jsonb)',[batch,branch,terminal,JSON.stringify(operations)]);
   const productRow=async quantity=>({...await scalar('SELECT to_jsonb(p) FROM products p WHERE id=$1',[f.product]),stock_quantity:quantity,stock_by_store:{A:quantity},row_version:20});
