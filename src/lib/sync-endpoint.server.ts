@@ -9,6 +9,7 @@ import { canRetrieveHistoricalReceipt } from "./receipt-history-permission";
 import { alignVerifiedScopeIds } from "./verified-scope-ids";
 import { stockHistoryDownload, stockHistoryDownloadSchema } from "./stock-history-download.server";
 import { stocktakeCutover, stocktakeCutoverSchema } from "./stocktake-cutover.server";
+import { stockHistoryProductMergeRelaySchema } from "./stock-history-product-merge";
 import { extendedPayments, extendedTenderFields } from "../../electron/sync/sale-tender-evidence.mjs";
 /**
  * Shared handler for the POS sync relay.
@@ -100,6 +101,9 @@ const groupedRefundUploadRequestKeys = new Set([
 ]);
 const groupedRecoveryRequestKeys = new Set(["sqlServerGroupedRecovery", "terminalToken", "deviceBindingProof"]);
 const groupedCashCoverageRequestKeys = new Set(["sqlServerCashLegacyCoverage", "terminalToken", "deviceBindingProof"]);
+const stockHistoryProductMergeRequestKeys = new Set([
+  "sqlServerProductMerge", "sessionToken", "cashierToken", "terminalToken", "accessToken", "deviceBindingProof",
+]);
 const feedSequence = z.string().regex(/^(0|[1-9][0-9]{0,18})$/)
   .refine(value => value.length < 19 || value <= "9223372036854775807");
 const groupedSnapshotReadSchema = z.object({
@@ -675,6 +679,7 @@ const bodySchema = z.object({
   }).strict().optional(),
   sqlServerStockHistoryDownload: stockHistoryDownloadSchema.optional(),
   sqlServerStocktakeCutover: stocktakeCutoverSchema.optional(),
+  sqlServerProductMerge: stockHistoryProductMergeRelaySchema.optional(),
   sqlServerStockFrontier:z.discriminatedUnion('action',[
     z.object({version:z.literal(1),action:z.literal('challenge'),branchId:z.string().min(1).max(128),terminalId:z.string().min(1).max(128),
       challengeId:z.string().uuid(),authorId:z.string().uuid(),keyId:z.string().uuid()}).strict(),
@@ -828,6 +833,9 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       throw new Error("Grouped recovery requests are exclusive");
     if (Object.hasOwn(parsed ?? {}, "sqlServerCashLegacyCoverage") && Object.keys(parsed).some(key => !groupedCashCoverageRequestKeys.has(key)))
       throw new Error("Cash legacy coverage requests are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerProductMerge") &&
+        (raw.length > 100000 || Object.keys(parsed).some(key => !stockHistoryProductMergeRequestKeys.has(key))))
+      throw new Error("Product merge requests are exclusive");
     body = bodySchema.parse(parsed);
     if (body.sqlServerLegacyRecovery && request.headers.get("x-pos-legacy-recovery") !== "1")
       throw new Error("Missing bounded recovery transport");
@@ -934,6 +942,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     !body.sqlServerStockHistory &&
     !body.sqlServerStockHistoryDownload &&
     !body.sqlServerStocktakeCutover &&
+    !body.sqlServerProductMerge &&
     !body.sqlServerStockFrontier &&
     !body.sqlServerLegacyRecovery &&
     !body.sqlServerFinancialEvent &&
@@ -979,9 +988,10 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   try {
     const { managementReplicaScope } = await import("./management-replica.server");
     const replicaScope = await managementReplicaScope(body);
-    const strictAvailability = groupedRequest || body.sqlServerStockHistoryDownload || body.sqlServerStocktakeCutover
+    const strictAvailability = groupedRequest || body.sqlServerStockHistoryDownload || body.sqlServerStocktakeCutover || body.sqlServerProductMerge
       ? { strictAvailability: true } : undefined;
-    const caller = replicaScope ? null : await verifyRelayCaller(body, strictAvailability);
+    const caller = replicaScope ? null : await verifyRelayCaller(body,
+      body.sqlServerProductMerge ? { strictAvailability: true, rejectUnboundCashier: true } : strictAvailability);
     verifiedTerminal = caller?.terminal;
     if (caller?.storeId) {
       const { branchExists } = await import("./session-verify.server");
@@ -1104,6 +1114,12 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         (scope.role !== "admin" && scope.roleSlug !== "admin"))
       return Response.json({ ok: false, code: "STOCK_CUTOVER_SCOPE_DENIED" }, { status: 403 });
     return stocktakeCutover(body.sqlServerStocktakeCutover, verifiedTerminal, scope.staffUserId, request.signal);
+  }
+
+  if (body.sqlServerProductMerge) {
+    const { stockHistoryProductMerge } = await import("./stock-history-product-merge.server");
+    return stockHistoryProductMerge(body.sqlServerProductMerge, request, verifiedTerminal, scope,
+      Boolean(body.deviceBindingProof && body.terminalToken === verifiedTerminal?.id));
   }
 
   if(body.sqlServerStockHistory){

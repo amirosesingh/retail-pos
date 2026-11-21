@@ -2,6 +2,7 @@ import { productReadColumns, canUseEcommerceDevice } from "@/lib/ecommerce-devic
 import { readShiftSharing } from '@/lib/shift-sharing-policy';
 import { createProductProjectionReader } from "@/lib/product-projection";
 import { productClassification } from "@/lib/product-classification";
+import { productMergeRevision } from "@/lib/stock-history-product-merge";
 import { withoutWorkspacePurpose } from "@/lib/retired-workspace-settings";
 import { commitRowCount, runProgressBatch, yieldToUi } from "@/lib/commit-progress";
 import { readCataloguePages } from "@/lib/catalogue-read";
@@ -151,6 +152,7 @@ export async function productDeleteBlock(id: string): Promise<DeleteGuardVerdict
 
 export const rowToProduct = (r: Row): Product => normalizeUuidFields({
   id: r.id,
+  mergeRevision: productMergeRevision(r.sku, r.row_version),
   createdAt: r.created_at ?? undefined,
   name: r.name,
   sku: r.sku ?? r.barcode ?? "",

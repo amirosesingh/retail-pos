@@ -10296,3 +10296,25 @@ bypassed. Latest integrated401 full CI remains the stock writer's next gate.
 This integration is preservation only under the later owner deferral above.
 Stock401, all stock SQL/031 and activation/openings remain excluded from the
 current release. No new implementation or beta/production merge is authorized.
+
+## 21 November — Product merge retry and two-till verification
+
+The owner requested PR #401 recovery after a lost merge reply or app restart,
+focused Stock Report test results from two isolated Beta tills, and a draft PR
+update. Preserve the original operation even when sync already installed its
+accepted changes. Confirm the exact hosted receipt and avoid a second stock
+movement. Verify the already-applied path, ordinary retry and divergent local
+state. Keep disposable test evidence distinct from hosted Retail POS Beta
+evidence and apply the existing exact-artifact approval rule. Production and
+saved operator data are outside this work.
+
+The disposable two-till run passed 20 PostgreSQL groups and five Windows
+stocktake fence groups. Both tills installed one verified opening, restarted,
+and enforced branch and export permissions offline. A separate Windows SQL
+Server run passed four merge groups, including a lost reply followed by the
+normal cloud download and restart. The retry confirmed the original receipt
+without changing stock or adding an upload. SQL receipt tests covered absence,
+scope mismatch and exact replay, including a read during an in-flight merge.
+The hosted Retail POS Beta preflight found the Stock Report schema and isolated
+stocktake branch still absent. Exact database preparation and hosted two-till
+acceptance remain pending before integration.

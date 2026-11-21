@@ -9,7 +9,8 @@ const read = (path: string) => readFileSync(path, "utf8");
 const draft = read("scripts/preparation/stock-history-online-sponsorship-missed-bill.sql");
 const writers = `SELECT oid::regprocedure::text AS signature,pg_get_functiondef(oid) AS definition,proacl::text AS acl
  FROM pg_proc WHERE oid IN('public.issue_sponsorship(uuid,text,text)'::regprocedure,'public.pos_admin_add_missed_bill(jsonb,text,text)'::regprocedure,
-   'public.pos_live_financial_admin_add_missed_bill(uuid,jsonb,text)'::regprocedure) ORDER BY signature`;
+   'public.pos_live_financial_admin_add_missed_bill(uuid,jsonb,text)'::regprocedure,
+   'public.stock_apply_delta(uuid,uuid,text,integer)'::regprocedure) ORDER BY signature`;
 let f: Awaited<ReturnType<typeof createActualStockWriter>>;
 
 beforeAll(async () => {
@@ -28,6 +29,9 @@ beforeAll(async () => {
   await f.db.query(`UPDATE public.app_users SET full_name='Authorized synthetic actor',permissions=COALESCE(permissions,'{}')||
     '{"can_create_sponsorship":true,"can_issue_sponsorship":true}'::jsonb WHERE id=$1`, [f.author]);
   await f.db.query("UPDATE public.app_users SET permissions='{\"can_approve_sponsorship\":true}'::jsonb WHERE id=$1", [f.manager]);
+  await f.db.exec(read("scripts/preparation/pos-sync-stock-movement-proof-v1.sql").replaceAll("\r\n", "\n"));
+  await f.db.exec(`REVOKE ALL ON FUNCTION public.stock_apply_delta(uuid,uuid,text,integer) FROM PUBLIC,anon;
+    GRANT EXECUTE ON FUNCTION public.stock_apply_delta(uuid,uuid,text,integer) TO authenticated,service_role;`);
   const original = (await f.db.query(writers)).rows;
   await f.db.exec(draft);
   expect((await f.db.query(writers)).rows).toEqual(original);
@@ -117,6 +121,16 @@ describe("accepted online stock deductions", () => {
     await issue(doc, f.admin);
     expect(await f.stock()).toBe("8");
     expect(await prove(doc)).toEqual([]);
+  });
+
+  it("rejects conflicting Beta replay evidence without issuing stock or claiming it for the report", async () => {
+    const doc = randomUUID();
+    await prepare(doc, f.admin);
+    await f.db.query("SELECT public.stock_apply_delta(md5('sponsorship:'||$1::text||':'||$2::uuid::text)::uuid,$2::uuid,'A',-1)", [doc, f.product]);
+    await expect(issue(doc, f.admin)).rejects.toThrow("POS_STOCK_MOVEMENT_EVIDENCE_CONFLICT");
+    expect(await f.stock()).toBe("9");
+    expect(await prove(doc)).toEqual([]);
+    expect(await f.scalar("SELECT status FROM public.sponsorship_issues WHERE id=$1", [doc])).not.toBe("issued");
   });
 
   it("does not partially witness a missed bill with a second, unbound product effect", async () => {

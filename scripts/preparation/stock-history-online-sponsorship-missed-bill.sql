@@ -11,7 +11,7 @@ BEGIN
  FOR expected IN SELECT * FROM (VALUES
   ('public.issue_sponsorship(uuid,text,text)','7c6eafb68aaad812703bebe837c07211'),
   ('public.pos_admin_add_missed_bill(jsonb,text,text)','3c388a266c07d9b0517b83a75c0a8682'),
-  ('public.stock_apply_delta(uuid,uuid,text,integer)','c4161ea6a80eba458ceb1925d51139ad'),
+  ('public.stock_apply_delta(uuid,uuid,text,integer)','09aa9eea1317191e72abd7a75b7ed67d'),
   ('private.stock_history_capture_accepted_products()','095bc1c87665046222185af64538b6a1'),
   ('private.stock_history_capture_source_receipt()','d5ad038b43ac9040c3916d067f336e72')
  ) checks(signature,digest) LOOP
@@ -20,6 +20,14 @@ BEGIN
     AND md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))=expected.digest)
   THEN RAISE EXCEPTION 'STOCK_ONLINE_DEDUCTION_UNREVIEWED_SOURCE: %',expected.signature; END IF;
  END LOOP;
+ -- Retail POS Beta's writer verifies exact replay evidence before treating a
+ -- reused movement ID as accepted. The older idempotency body is insufficient.
+ IF NOT EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid='public.stock_apply_delta(uuid,uuid,text,integer)'::regprocedure
+  AND pg_get_userbyid(p.proowner)='postgres' AND p.prosecdef AND p.provolatile='v' AND p.proconfig=ARRAY['search_path=public']
+  AND NOT has_function_privilege('anon',p.oid,'EXECUTE')
+  AND has_function_privilege('authenticated',p.oid,'EXECUTE')
+  AND has_function_privilege('service_role',p.oid,'EXECUTE'))
+ THEN RAISE EXCEPTION 'STOCK_ONLINE_DEDUCTION_DELTA_AUTHORITY_UNREVIEWED'; END IF;
  IF EXISTS (
   SELECT 1 FROM pg_proc p CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) g
   WHERE p.oid IN ('public.issue_sponsorship(uuid,text,text)'::regprocedure,'public.pos_admin_add_missed_bill(jsonb,text,text)'::regprocedure)

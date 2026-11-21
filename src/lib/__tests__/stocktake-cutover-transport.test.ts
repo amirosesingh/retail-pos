@@ -34,6 +34,20 @@ describe("verified Stock Report cutover transport", () => {
     expect(serviceRest).not.toHaveBeenCalled();
   });
 
+  it("reads the sealed count for an authorized reviewer without sending a publication or trusting caller evidence", async () => {
+    const result = { stocktakeId, branchId: "A", witnessId: "44444444-4444-4444-8444-444444444444",
+      evidenceHash: "a".repeat(64), rosterHash: "b".repeat(64), cutoff: "2026-11-21T00:01:00.0000000Z",
+      roster: [], physicalCounts: [], correctionMovements: [] };
+    expect(stocktakeCutoverSchema.safeParse({ ...scope, action: "review", evidenceHash: result.evidenceHash }).success).toBe(false);
+    serviceRest.mockResolvedValue(Response.json(result));
+    const response = await stocktakeCutover({ ...scope, action: "review" }, terminal, "verified-reviewer", signal);
+    expect(await response.json()).toMatchObject({ ok: true, result });
+    const [route, init] = serviceRest.mock.calls[0];
+    expect(route).toBe("rpc/pos_stock_history_stocktake_for_review");
+    expect(JSON.parse(init.body)).toEqual({ p_subject: "verified-reviewer", p_terminal: terminalId,
+      p_branch: "A", p_id: stocktakeId });
+  });
+
   it("preserves a known stocktake hold without trusting a changed response", async () => {
     serviceRest.mockResolvedValueOnce(Response.json({ message: "STOCK_CUTOVER_RELEASE_UNCONFIRMED" }, { status: 400 }));
     const result = await stocktakeCutover({ ...scope, action: "release-status", databaseId }, terminal, "admin", signal);

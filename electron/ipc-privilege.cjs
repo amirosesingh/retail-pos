@@ -80,6 +80,8 @@ const CHANNEL_LEVELS = {
   "business:management-report": OPEN, // explicit report permissions below; handler additionally verifies sealed management registration and complete replica
   "business:stock-history": OPEN, // dedicated Main reader rechecks current SQL account and trusted branch
   "business:stock-history-movements": OPEN, // same dedicated stock report admission
+  "business:product-merge-capability": OPEN, // dedicated verified Operations PC protocol
+  "business:merge-products": OPEN, // Main derives paired scope and original actor
   "business:stocktake-control": ADMIN, // the handler requires an exact hosted pilot and a current POS administrator
   "business:stock-arrival-capability": OPEN, // dedicated Main reader rechecks receiving authority and original capture readiness
   "business:save-authorization-rule": OPEN,

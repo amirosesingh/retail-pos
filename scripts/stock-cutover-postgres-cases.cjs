@@ -12,7 +12,7 @@ module.exports = async function stockCutover({ control, one, two, f, bind, pass,
   const peer = { terminalId: randomUUID(), authorId: f.author, keyId: randomUUID(), pair: generateKeyPairSync("ed25519"),
     database: randomUUID(), sourceSequence: "0", sourceRoot: null };
   const witness = [f.admin, f.terminal, project, "A", id];
-  const reviewerArgs = [reviewer, f.terminal, project, "A", id];
+  const reviewerArgs = [reviewer, peer.terminalId, project, "A", id];
   const install = readFileSync("scripts/preparation/stock-history-stocktake-cutover.sql", "utf8");
   await control.query(`BEGIN;${install}COMMIT;`);
   const withReplica = process.env.STOCK_HISTORY_NATIVE_REPLICA_TEST === "1";
@@ -98,6 +98,11 @@ module.exports = async function stockCutover({ control, one, two, f, bind, pass,
     try {
       const sealed = await rpc("pos_stock_history_seal_stocktake($1,$2,$3,$4,$5,$6,$7::jsonb,'{}')", [f.admin, f.terminal, "A", id,
         armed.rosterHash, armed.cutoff, JSON.stringify([[f.product, "7"]])]);
+      const review = await rpc("pos_stock_history_stocktake_for_review($1,$2,'A',$3)", [reviewer, peer.terminalId, id]);
+      assert.equal(review.evidenceHash, sealed.evidenceHash);
+      assert.equal(review.rosterHash, armed.rosterHash);
+      assert.equal(review.cutoff, armed.cutoff);
+      assert.deepEqual(review.physicalCounts, [[f.product, "7"]]);
       const publish = (proofs, subject = reviewer) => rpc("pos_stock_history_publish_stocktake($1,$2,$3,$4,$5,$6,$7::jsonb)", [subject,
         ...reviewerArgs.slice(1), sealed.evidenceHash, JSON.stringify(proofs)]);
       const denied = async (work, pattern) => {
@@ -128,40 +133,71 @@ module.exports = async function stockCutover({ control, one, two, f, bind, pass,
         const { createLocal } = require("./lib/shift-protocol-integration-fixture.cjs");
         const { createStockHistoryDownloader } = require("../electron/sync/stock-history-download.cjs");
         const { createStockHistoryInstaller } = require("../electron/db/stock-history-download.cjs");
-        const { StockHistoryStore } = require("../electron/db/stock-history.cjs");
-        const local = await createLocal("A", { extraTables: ["products"] });
-        try {
-          const scope = { branchId: "A", projectOrigin: project, terminalId: f.terminal };
-          const envelope = { ok: true, version: 1, ...scope };
-          await local.manager.pool.request().batch(readFileSync("database/sqlserver/prepared/031_stock_history_effective_ledger.sql", "utf8"));
-          const databaseGuid = (await local.manager.pool.request().query(
-            "SELECT LOWER(CONVERT(varchar(36),database_guid)) guid FROM sys.database_recovery_status WHERE database_id=DB_ID();")).recordset[0].guid;
-          const installer = createStockHistoryInstaller(local.manager, databaseGuid);
-          const hash = text => createHash("sha256").update(text).digest("hex");
-          let downloadedPages = 0;
-          const download = createStockHistoryDownloader({ ...installer, request: async ({ action, index, snapshotId, revision }) => {
-            if (action === "manifest") {
-              const { manifest } = await rpc("pos_stock_history_replica_manifest('A',$1)", [f.terminal]);
-              const { headCursor, coverageGeneration, coverageState, coverageFrom, coverageThrough, baseline, pages } = manifest;
-              manifest.revision = hash(JSON.stringify([manifest.snapshotId, project, "A", f.terminal,
-                headCursor, coverageGeneration, coverageState, coverageFrom, coverageThrough, baseline, pages]));
-              return { ...envelope, manifest };
-            }
-            const { kind, rowsJson } = await rpc("pos_stock_history_replica_page('A',$1,$2,$3)", [f.terminal, snapshotId, index]);
-            downloadedPages++;
-            return { ...envelope, snapshotId, revision, index, kind, rowsJson };
-          } });
-          assert.equal(await download(scope, () => undefined), "installed");
-          assert.equal(downloadedPages, 1);
-          const native = new StockHistoryStore(local.manager, { authorizeRead: async () => ({
-            branchId: "A", contextKey: "disposable-cutover", canViewInventory: true,
-          }) });
-          const report = await native.readPage({ cutoff: armed.cutoff, timeZone: "UTC" });
-          assert.equal(report.status, "complete");
-          assert.deepEqual(report.rows.map(row => [row.productId, row.quantity]), exact.rows.map(row => [row.productId, row.quantity]));
-          assert.deepEqual(report.rows.map(row => row.quantity), ["7"]);
-          pass("a real verified PostgreSQL opening downloads through the native installer and produces the exact SQL Server report");
-        } finally { await local.close(); }
+        const { createStockHistoryReader } = require("../electron/stock-history-ipc.cjs");
+        const hash = text => createHash("sha256").update(text).digest("hex");
+        const replicas = new Map(), physicalDatabases = [];
+        const tills = [{ terminalId: f.terminal, authorId: reviewer, role: "admin" },
+          { terminalId: peer.terminalId, authorId: f.author, role: "staff" }];
+        for (const till of tills) {
+          const local = await createLocal("A", { extraTables: ["products", "app_users"] });
+          try {
+            const scope = { branchId: "A", projectOrigin: project, terminalId: till.terminalId };
+            const envelope = { ok: true, version: 1, ...scope };
+            await local.manager.pool.request().batch(readFileSync("database/sqlserver/prepared/031_stock_history_effective_ledger.sql", "utf8"));
+            await local.insert("app_users", { id: till.authorId, user_id: till.authorId, role: till.role, role_slug: till.role,
+              is_active: true, store_id: "A", permissions: { can_view_inventory: true, can_export_reports: false } });
+            const databaseGuid = (await local.manager.pool.request().query(
+              "SELECT LOWER(CONVERT(varchar(36),database_guid)) guid FROM sys.database_recovery_status WHERE database_id=DB_ID();")).recordset[0].guid;
+            physicalDatabases.push(databaseGuid);
+            const installer = createStockHistoryInstaller(local.manager, databaseGuid);
+            let downloadedPages = 0;
+            const download = createStockHistoryDownloader({ ...installer, request: async ({ action, index, snapshotId, revision }) => {
+              if (action === "manifest") {
+                const { manifest } = await rpc("pos_stock_history_replica_manifest('A',$1)", [till.terminalId]);
+                const { headCursor, coverageGeneration, coverageState, coverageFrom, coverageThrough, baseline, pages } = manifest;
+                manifest.revision = hash(JSON.stringify([manifest.snapshotId, project, "A", till.terminalId,
+                  headCursor, coverageGeneration, coverageState, coverageFrom, coverageThrough, baseline, pages]));
+                const binding = { id: manifest.snapshotId, revision: manifest.revision };
+                if (replicas.has(till.terminalId)) assert.deepEqual(replicas.get(till.terminalId), binding);
+                replicas.set(till.terminalId, binding);
+                return { ...envelope, manifest };
+              }
+              const { kind, rowsJson } = await rpc("pos_stock_history_replica_page('A',$1,$2,$3)", [till.terminalId, snapshotId, index]);
+              downloadedPages++;
+              return { ...envelope, snapshotId, revision, index, kind, rowsJson };
+            } });
+            assert.equal(await download(scope, () => undefined), "installed");
+            assert.equal(downloadedPages, 1);
+            const ownedFrame = {};
+            const readReport = createStockHistoryReader({ manager: local.manager, branch: () => "A",
+              terminal: () => ({ tokenId: till.terminalId, deviceUse: "operations" }), isPosSender: frame => frame === ownedFrame,
+              session: { hasPosAuthority: () => true, identity: () => ({ source: "pos", authorId: till.authorId, canonicalSubject: till.authorId }),
+                epoch: () => 1, touch: () => undefined } });
+            const request = { cutoff: armed.cutoff, timeZone: "UTC" };
+            const checkReport = async () => {
+              const result = await readReport(ownedFrame, request);
+              assert.equal(result.ok, true, result.error);
+              assert.equal(result.page.status, "complete");
+              assert.deepEqual(result.page.rows.map(row => [row.productId, row.quantity]), exact.rows.map(row => [row.productId, row.quantity]));
+            };
+            await checkReport();
+            assert.equal((await readReport({}, request)).code, "PERMISSION_DENIED");
+            assert.equal((await readReport(ownedFrame, { ...request, branchId: "B" })).ok, false);
+            if (till.role !== "admin") assert.equal((await readReport(ownedFrame, { ...request, export: true })).code, "PERMISSION_DENIED");
+            await local.restart();
+            await checkReport();
+            assert.equal(downloadedPages, 1, "restart reads the persisted SQL Server replica without another cloud page");
+            const existing = (await local.manager.pool.request().query(`SELECT (SELECT count(*) FROM dbo.products) products,
+              (SELECT count(*) FROM dbo.sync_change_journal) pending;`)).recordset[0];
+            assert.deepEqual(existing, { products: 0, pending: 0 });
+          } finally { await local.close(); }
+        }
+        assert.notEqual(physicalDatabases[0], physicalDatabases[1]);
+        const [replicaA, replicaB] = tills.map(till => replicas.get(till.terminalId));
+        assert.equal(replicaA.id, replicaB.id);
+        assert.notEqual(replicaA.revision, replicaB.revision);
+        await denied(() => rpc("pos_stock_history_replica_manifest('B',$1)", [peer.terminalId]), /SCOPE|FORBIDDEN/);
+        pass("two distinct SQL Server tills download the same verified opening and enforce authorized offline read and export after restart");
       }
       const after = await read(control, `SELECT ${utc}(clock_timestamp())`);
       const unsupportedAfter = await rpc("pos_stock_history_page($1,$2,'A',$3,'UTC',NULL,100,NULL,false,NULL)", [reviewer, f.terminal, after]);

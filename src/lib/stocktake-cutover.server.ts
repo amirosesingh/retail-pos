@@ -8,13 +8,14 @@ const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const instant = z.string().regex(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}Z$/);
 const identity = { version: z.literal(1), stocktakeId: uuid, terminalId: uuid, branchId: z.string().min(1).max(128) };
 const proofs = z.array(z.object({ terminalId: uuid, databaseId: uuid, challengeId: uuid, fenceGeneration: uuid,
-  localFencedAt: instant, localExpiresAt: instant }).strict()).min(1).max(32);
-const counts = z.array(z.tuple([uuid, z.string().regex(/^(?:0|[1-9][0-9]{0,37})$/)])).max(20000);
+  localFencedAt: instant, localExpiresAt: instant }).strict()).min(1).max(16);
+const counts = z.array(z.tuple([uuid, z.string().regex(/^(?:0|[1-9][0-9]{0,37})$/)])).max(10000);
 export const stocktakeCutoverSchema = z.discriminatedUnion("action", [
   z.object({ ...identity, action: z.literal("prepare") }).strict(),
   z.object({ ...identity, action: z.literal("lease"), databaseId: uuid, purpose: z.enum(["arm", "confirm", "release"]) }).strict(),
   z.object({ ...identity, action: z.literal("arm"), proofs }).strict(),
   z.object({ ...identity, action: z.literal("seal"), rosterHash: digest, cutoff: instant, counts }).strict(),
+  z.object({ ...identity, action: z.literal("review") }).strict(),
   z.object({ ...identity, action: z.literal("publish"), evidenceHash: digest, proofs }).strict(),
   z.object({ ...identity, action: z.literal("release") }).strict(),
   z.object({ ...identity, action: z.literal("release-status"), databaseId: uuid }).strict(),
@@ -32,6 +33,7 @@ export async function stocktakeCutover(input: z.infer<typeof stocktakeCutoverSch
     lease: "load_stocktake_lease",
     arm: "arm_stocktake_pause",
     seal: "seal_stocktake",
+    review: "stocktake_for_review",
     publish: "publish_stocktake",
     release: "release_stocktake_pause",
     "release-status": "load_stocktake_release",
@@ -45,6 +47,8 @@ export async function stocktakeCutover(input: z.infer<typeof stocktakeCutoverSch
     p_subject: subject, p_terminal: terminal.id, p_branch: input.branchId, p_id: input.stocktakeId,
     p_roster_hash: input.rosterHash, p_cutoff: input.cutoff, p_counts: input.counts, p_movements: [],
   };
+  if (input.action === "review")
+    parameters = { p_subject: subject, p_terminal: terminal.id, p_branch: input.branchId, p_id: input.stocktakeId };
   const requestBytes = JSON.stringify(parameters);
   if (Buffer.byteLength(requestBytes, "utf8") > 2_100_000)
     return Response.json({ ok: false, code: "STOCK_CUTOVER_TOO_LARGE" }, { status: 413 });
@@ -52,7 +56,11 @@ export async function stocktakeCutover(input: z.infer<typeof stocktakeCutoverSch
     const response = await serviceRest("rpc/pos_stock_history_" + names[input.action],
       { method: "POST", body: requestBytes, signal });
     const raw = await response.text();
-    if (Buffer.byteLength(raw, "utf8") > 262144) throw new Error("Unexpected stocktake response size");
+    // An armed count returns the frozen roster. Review also includes each
+    // recorded count, so both use the bounded full-stocktake response limit.
+    const responseLimit = input.action === "arm" || input.action === "review" ? 8 * 1024 * 1024 : 262144;
+    if (Buffer.byteLength(raw, "utf8") > responseLimit)
+      throw new Error("Unexpected stocktake response size");
     const result: unknown = JSON.parse(raw);
     if (!response.ok) {
       const error = z.object({ message: z.string() }).safeParse(result);

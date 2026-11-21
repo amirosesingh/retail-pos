@@ -21,7 +21,7 @@ const { orderSelfReferencingRows } = require("./self-reference-order.cjs");
 const groupedSettings = require("./grouped-store-settings.cjs");
 
 function governanceRequest(payload) {
-  if (payload?.sqlServerHeldSaleReview || payload?.sqlServerSettingsEdit || payload?.sqlServerStocktakeCutover) return true;
+  if (payload?.sqlServerHeldSaleReview || payload?.sqlServerSettingsEdit || payload?.sqlServerStocktakeCutover || payload?.sqlServerProductMerge) return true;
   const tables = new Set(["pos_settings", "pos_store_settings", "authorization_actions", "authorization_action_history"]);
   const field = row => String(row?.scope ?? "").toLowerCase() === "global" &&
     String(row?.scope_id ?? "") === "" && String(row?.key ?? "").startsWith("pos_field:");
@@ -248,7 +248,8 @@ class CloudClient {
       if (!operation && captured?.managementSyncBranches === true && Object.keys(captured).length === 1) return work();
       const upload = captured?.sqlServerBatch || captured?.sqlServerAggregate || captured?.sqlServerFinancialEvent ||
         captured?.sqlServerFinancialObservation || captured?.sqlServerLegacyRecovery || captured?.sqlServerSettingsEdit ||
-        captured?.sqlServerCashCheckout || captured?.sqlServerStockHistory || captured?.sqlServerStockFrontier;
+        captured?.sqlServerCashCheckout || captured?.sqlServerStockHistory || captured?.sqlServerStockFrontier ||
+        captured?.sqlServerProductMerge?.action === "merge";
       return this.requestLane.run(upload ? "upload" : "download", Buffer.byteLength(capturedJson, "utf8"), work);
     } catch (error) { return Promise.reject(error); }
   }
@@ -290,6 +291,7 @@ class CloudClient {
     if(payload?.sqlServerFinancialEvent)outbound.sqlServerFinancialEvent={...outbound.sqlServerFinancialEvent,operationJson:payload.sqlServerFinancialEvent.operationJson,proof:payload.sqlServerFinancialEvent.proof,...(payload.sqlServerFinancialEvent.refundApproval!==undefined?{refundApproval:payload.sqlServerFinancialEvent.refundApproval}:{})};
     if (payload?.sqlServerCashCheckout) outbound.sqlServerCashCheckout = payload.sqlServerCashCheckout;
     if (payload?.sqlServerRefund) outbound.sqlServerRefund = payload.sqlServerRefund;
+    if (payload?.sqlServerProductMerge) outbound.sqlServerProductMerge = payload.sqlServerProductMerge;
     if (payload?.sqlServerLegacyRecovery) outbound.sqlServerLegacyRecovery = {
       ...payload.sqlServerLegacyRecovery,
       payloadJson: payload.sqlServerLegacyRecovery.payloadJson,
@@ -312,6 +314,7 @@ class CloudClient {
       payload?.sqlServerGroupedRecovery || payload?.sqlServerCashLegacyCoverage;
     const stockDownload = payload?.sqlServerStockHistoryDownload;
     const stocktakeCutover = payload?.sqlServerStocktakeCutover;
+    const productMerge = payload?.sqlServerProductMerge;
     const historyRead=HISTORY_INDEX_ACTIONS.has(scopedRead?.action)?scopedRead:payload?.sqlServerHistoryReconcile;
     const historyBegin=historyRead?.action==='begin'?historyRead:null;
     const historyAuthority=historyBegin?this.requestContext(true):null;
@@ -322,10 +325,10 @@ class CloudClient {
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
       ...(groupedRead || payload?.sqlServerSettingsEdit || payload?.sqlServerCashCheckout || payload?.sqlServerRefund ||
-        payload?.sqlServerStockHistory || payload?.sqlServerStockFrontier || stockDownload || stocktakeCutover || financialAggregate?.stockSourceCohorts ? { redirect: "error" } : {}),
+        payload?.sqlServerStockHistory || payload?.sqlServerStockFrontier || stockDownload || stocktakeCutover || productMerge || financialAggregate?.stockSourceCohorts ? { redirect: "error" } : {}),
       headers: { "content-type": "application/json", ...(payload?.sqlServerLegacyRecovery ? { "x-pos-legacy-recovery": "1" } : {}) },
       body: requestBody,
-      signal: AbortSignal.timeout(stockDownload ? 4_000 : payload?.sqlServerStockFrontier || stocktakeCutover ? 5_000
+      signal: AbortSignal.timeout(stockDownload ? 4_000 : payload?.sqlServerStockFrontier || stocktakeCutover ? 5_000 : productMerge ? 8_000
         : historyRead || payload?.sqlServerHeldSaleReview ? 12_000 : 30_000),
     });
       transportStage = "body";
@@ -343,6 +346,8 @@ class CloudClient {
         } else if (stockDownload) {
           const { MAX_RESPONSE_BYTES } = require("./stock-history-download.cjs");
           data = JSON.parse(await boundedText(response, response.ok ? MAX_RESPONSE_BYTES : 4096));
+        } else if (productMerge) {
+          data = JSON.parse(await boundedText(response, response.ok ? 262144 : 4096));
         } else if(payload?.sqlServerHeldStatus || payload?.sqlServerHeldSaleReview){
           data=JSON.parse(await boundedText(response,2*1024*1024));
         }else if(historyBegin&&response.status===409&&response.headers.get('X-POS-History-Reconcile-Version')==='2'&&
@@ -409,7 +414,7 @@ class CloudClient {
     this.assertRequestContext(source, governance, payload);
     // Versioned history rows already contain exact JSON/decimal text. Generic
     // entity-key JSON parsing would round its evidence before validation.
-    const normalized=groupedRead || historyRead || payload?.sqlServerHeldSaleReview
+    const normalized=groupedRead || historyRead || payload?.sqlServerHeldSaleReview || payload?.sqlServerProductMerge
       ? data : normalizeSyncPayload(data);
     if (legacyRecoveryBody !== undefined && normalized && typeof normalized === "object")
       legacyRecoveryResponses.set(normalized, legacyRecoveryBody);
@@ -550,6 +555,13 @@ class CloudClient {
         response.result.branchId !== branchId || response.result.terminalId !== terminalId ||
         response.result.databaseId !== databaseId) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
     return response.result;
+  }
+  productMerge(action, command) {
+    const terminal = require("../verified-activation.cjs").binding(this.terminalStore.read() ?? {});
+    if (terminal?.mode !== "operations" || terminal.platform !== "pc" || command?.version !== 1 ||
+        command.branchId !== terminal.branchId || command.terminalId !== terminal.id || !["capability", "merge", "receipt"].includes(action))
+      throw require("./product-merge-command.cjs").fail();
+    return this.request({ sqlServerProductMerge: { ...command, action } });
   }
   pushStockHistory(batch){
     const {identifier,fail}=require('../db/stock-history-contract.cjs');

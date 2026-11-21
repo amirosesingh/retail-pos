@@ -33,13 +33,17 @@ function setup() {
     async begin(isolation: string) {
       expect(isolation).toBe("SERIALIZABLE");
       expect(transaction).toBeNull();
-      transaction = this;
+      setTransaction(this);
     }
     async commit() {
       expect(transaction).toBe(this);
       transaction = null;
     }
     async rollback() { transaction = null; }
+  }
+
+  function setTransaction(next: Transaction) {
+    transaction = next;
   }
   class Request {
     values: Record<string, string> = {};

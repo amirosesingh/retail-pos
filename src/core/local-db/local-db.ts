@@ -1,6 +1,8 @@
 import { effectiveDatabaseMode } from "./db-mode";
 import type {StockHistoryRequest,StockHistoryPage} from '@/lib/stock-history-report';
 import type { StockHistoryMovementPage, StockHistoryMovementRequest } from "@/lib/stock-history-movements";
+import type { StockHistoryProductMergeCapability, StockHistoryProductMergeFailure, StockHistoryProductMergeReceipt,
+  StockHistoryProductMergeRequest } from "@/lib/stock-history-product-merge";
 import { isManagementDevice } from "@/lib/management-device";
 /**
  * Bridge to the Windows desktop shell's local Microsoft SQL Server database.
@@ -747,6 +749,8 @@ export type PosBridge = {
   }>;
   stockHistory?: (request:StockHistoryRequest)=>Promise<{ok:boolean;page?:StockHistoryPage;code?:string;error?:string}>;
   stockHistoryMovements?: (request: StockHistoryMovementRequest) => Promise<{ ok: boolean; page?: StockHistoryMovementPage; code?: string; error?: string }>;
+  productMergeCapability?: (request: { branchId: string }) => Promise<StockHistoryProductMergeCapability | StockHistoryProductMergeFailure>;
+  mergeProducts?: (request: StockHistoryProductMergeRequest) => Promise<StockHistoryProductMergeReceipt | StockHistoryProductMergeFailure>;
   stocktakeControl?: (request: { stocktakeId: string } & ({ action: "arm" } |
     { action: "prove"; phase: "arm" | "confirm" } | { action: "release"; fenceGeneration: string })) =>
     Promise<{ ok: boolean; result?: unknown; code?: string; error?: string }>;

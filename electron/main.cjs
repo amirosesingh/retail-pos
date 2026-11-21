@@ -2663,6 +2663,18 @@ function registerIpc() {
     ipcMain, session: adminSession, coordinator: syncCoordinator, run: stockHistory.stocktake,
     isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
   });
+  const nativeProductMerge = require("./product-merge-ipc.cjs");
+  nativeProductMerge.registerProductMerge({
+    ipcMain, isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
+    runWrite: work => closeWriteBarrier.run(work), publish: publishBusinessChange,
+    runtime: nativeProductMerge.createProductMergeRuntime({
+      enrollment: /^\d+\.\d+\.\d+-beta\.\d+$/.test(app.getVersion()) || (!app.isPackaged && process.env.POS_RELEASE_CHANNEL === 'beta')
+        ? nativeProductMerge.installedProductMergeEnrollment(process.env) : null,
+      manager: databaseManager, session: adminSession, cloud: syncCloud, coordinator: syncCoordinator,
+      ready: () => databaseService.snapshot().tradingReady && !isManagementDevice() && !safeMode && !quitting &&
+        !jobManager.running && !localDataPreparePromise,
+    }),
+  });
   require("./stock-arrival-ipc.cjs").registerStockArrivalCapability({
     ipcMain,manager:databaseManager,session:adminSession,terminal:()=>terminalStore.read(),branch:()=>authorizedLocalBranch(),
     context:()=>[authorizationServerUrl(),cloudCredentials.read()?.url],captureReady:stockHistory.captureReady,
