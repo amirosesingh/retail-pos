@@ -10347,3 +10347,15 @@ schema alone creates no opening or pause. Hosted acceptance needs that exact
 approval, a candidate relay, two enrolled isolated tills and separate witness
 and reviewer accounts. Multi-till new merges remain disabled pending the
 owner's item-level reservation decision and corresponding verification.
+
+The owner's continuation after the exact package review authorized the same
+Beta targets and unchanged schema files. Supabase applied the hosted artifact
+to Retail POS Beta `irjkmhgrjgcaoixcixut` as migration `20261121101413`.
+Postflight matched the prior physical database ID and capture fingerprints,
+confirmed service-only replica access and found zero cutover scopes, leases
+and opening balances. No pause or new merge path was activated.
+
+The only failing required check on `c0b41601` was the role/permission suite
+failing to collect a test whose mock lacked TanStack's `createClientOnlyFn`.
+The partial mock preserves the tested permission behavior and corrects the
+missing export. The 37 targeted assertions, scoped lint and TypeScript passed.
