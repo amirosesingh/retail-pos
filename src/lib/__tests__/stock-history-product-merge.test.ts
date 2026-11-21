@@ -84,7 +84,7 @@ describe("authoritative product merge", () => {
     await expect(readReceipt(operation, chosen, { author: fixture.admin })).rejects.toThrow(/PRODUCT_MERGE_REPLAY_MISMATCH/);
     await expect(readReceipt(operation, chosen, { author: fixture.manager })).rejects.toThrow(/PRODUCT_MERGE_AUTHOR_DENIED/);
     await expect(readReceipt(operation, chosen, { branch: "B" })).rejects.toThrow(/PRODUCT_MERGE_WRITER_SCOPE_UNPROVEN/);
-    await expect(readReceipt(operation, chosen, { terminal: randomUUID() })).rejects.toThrow(/PRODUCT_MERGE_WRITER_SCOPE_UNPROVEN/);
+    await expect(readReceipt(operation, chosen, { terminal: randomUUID() })).rejects.toThrow(/PRODUCT_MERGE_SCOPE_DENIED/);
     await fixture.db.exec("SET ROLE authenticated");
     try { await expect(readReceipt(operation, chosen)).rejects.toThrow(/permission denied/); }
     finally { await fixture.db.exec("RESET ROLE"); }
@@ -97,6 +97,28 @@ describe("authoritative product merge", () => {
     try { await expect(readReceipt(randomUUID())).rejects.toThrow(/PRODUCT_MERGE_RECEIPT_UNVERIFIED/); }
     finally { await fixture.db.exec("ROLLBACK"); }
     expect(await receiptCount()).toBe(0);
+  });
+
+  it("recovers the original receipt after adding a till without enabling a new merge or exposing the receipt", async () => {
+    const operation = randomUUID(), chosen = roster([0, 1]);
+    const accepted = await send(operation, chosen), master = await row(0), other = await row(2);
+    const second = randomUUID();
+    await fixture.db.query("INSERT INTO terminal_tokens(id,location_id,platform,status,is_claimed) VALUES($1,'A','pc','active',true)", [second]);
+
+    const capability = () => fixture.scalar("SELECT public.pos_stock_history_product_merge_capability($1,$2,$3)",
+      [branch, fixture.terminal, fixture.author]);
+    await expect(capability()).rejects.toThrow(/PRODUCT_MERGE_WRITER_SCOPE_UNPROVEN/);
+    await expect(readReceipt(randomUUID(), roster([0, 2]))).rejects.toThrow(/PRODUCT_MERGE_WRITER_SCOPE_UNPROVEN/);
+    await expect(send(randomUUID(), roster([0, 2]))).rejects.toThrow(/PRODUCT_MERGE_WRITER_SCOPE_UNPROVEN/);
+    await expect(readReceipt(operation, chosen, { terminal: second })).rejects.toThrow(/PRODUCT_MERGE_REPLAY_MISMATCH/);
+    expect(await readReceipt(operation, chosen)).toEqual({ ok: true, receipt: accepted });
+    expect(await send(operation, chosen)).toEqual(accepted);
+
+    await fixture.db.query("UPDATE terminal_tokens SET revoked_at=now() WHERE id=$1", [fixture.terminal]);
+    await expect(readReceipt(operation, chosen)).rejects.toThrow(/PRODUCT_MERGE_SCOPE_DENIED/);
+    expect(await row(0)).toEqual(master);
+    expect(await row(2)).toEqual(other);
+    expect(await receiptCount()).toBe(1);
   });
 
   it("conserves accepted stock, preserves a blocked loser, and replays the exact outcome", async () => {

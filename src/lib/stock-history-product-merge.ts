@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Product } from "@/core/types/pos-types";
 
 const uuid = z.string().regex(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
 const branchId = z.string().min(1).max(128).refine(value => value.trim() === value && Array.from(value).every(character => {
@@ -85,6 +86,21 @@ export function validateProductMergeReceipt(input: unknown, request: StockHistor
 
 export const explainHeldProduct = (product: StockHistoryProductMergeReceipt["held"][number]) =>
   ({ id: product.id, name: product.name, reason: heldReason[product.code] });
+
+export function applyProductMergeReceipt(products: Product[], receipt: StockHistoryProductMergeReceipt) {
+  const removed = new Set(receipt.removed.map(product => product.id));
+  const changesQuantity = receipt.removed.reduce((sum, product) => sum + Number(product.quantity), 0) !== 0;
+  return products.flatMap(product => {
+    if (removed.has(product.id)) return [];
+    if (product.id !== receipt.master.id || !receipt.removed.length ||
+        Number(product.mergeRevision?.rowVersion ?? 0) > Number(receipt.master.rowVersion)) return [product];
+    return [{ ...product,
+      stockByStore: changesQuantity ? { ...product.stockByStore, [receipt.branchId]: Number(receipt.master.quantity) } : product.stockByStore,
+      barcodes: receipt.master.aliases ?? [],
+      mergeRevision: { sku: receipt.master.sku, rowVersion: receipt.master.rowVersion },
+    }];
+  });
+}
 
 export function productMergeRevision(rawSku: unknown, rawVersion: unknown) {
   const parsedSku = sku.safeParse(rawSku);

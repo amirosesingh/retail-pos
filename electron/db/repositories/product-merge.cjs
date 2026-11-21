@@ -178,7 +178,7 @@ class ProductMergeRepository {
     if (recordset?.[0]?.proven !== true) throw fail("ESYNC_PRODUCT_MERGE_LOCAL_CONFLICT");
   }
 
-  async prepare(input, scope, guard) {
+  async prepare(input, scope, guard, admitNew = guard) {
     return this.transaction(guard, async tx => {
       const prior = await this.receipt(tx, input, scope);
       if (prior) return { request: input, outcome: prior.outcome ? acceptance(input, prior.outcome) : null };
@@ -207,6 +207,8 @@ class ProductMergeRepository {
       const trackingVersion = await exactCheckpoint(tx, input.branchId);
       const original = await this.readProducts(tx, input);
       this.preimage(original, input);
+      await admitNew();
+      guard();
       const note = JSON.stringify({ request: input, scope, original, trackingVersion });
       await tx.request().input("operation", input.operationId).input("entity", input.masterId).input("branch", input.branchId)
         .input("note", this.manager.sql().NVarChar(this.manager.sql().MAX), note).query(`

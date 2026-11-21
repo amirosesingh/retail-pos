@@ -160,7 +160,8 @@ async function test() {
     await acceptFixtureChanges();
     const pulled = inputFor([acceptedByPullMaster, acceptedByPullLoser, retained]);
     const acceptedByPull = receiptFor(pulled, acceptedByPullMaster, [acceptedByPullLoser], [retained], 6);
-    let cloudEnabled = false, cloudRequests = 0, mutationRequests = 0, exclusive = false, permission = true, savedReceipt = null;
+    let cloudEnabled = false, capabilityRequests = 0, cloudRequests = 0, mutationRequests = 0;
+    let exclusive = false, permission = true, savedReceipt = null;
     const published = [];
     const backendOrigin = 'https://pos.beta.fixture';
     const makeRuntime = () => createProductMergeRuntime({ enrollment: { branchId: branch, terminalId: scope.terminalId, databaseGuid, projectOrigin, backendOrigin },
@@ -171,7 +172,10 @@ async function test() {
         project: { branchId: branch, projectOrigin }, base: backendOrigin, pool: local.manager.pool }),
         assertRequestContext: () => {}, productMerge: async (action, command) => {
           cloudRequests++;
-          if (action === 'capability') return { ok: true, enabled: cloudEnabled };
+          if (action === 'capability') {
+            capabilityRequests++;
+            return { ok: true, enabled: cloudEnabled };
+          }
           assert.equal(command.operationId, pulled.operationId, 'a fresh renderer proposal must reuse the saved operation ID');
           if (action === 'receipt') return { ok: true, receipt: savedReceipt };
           assert.equal(action, 'merge');
@@ -195,10 +199,13 @@ async function test() {
     permission = true;
     assert.equal((await capability('POS', { branchId: branch })).code, 'ESYNC_PRODUCT_MERGE_UNVERIFIED');
     assert.equal(cloudRequests, 1);
+    assert.equal((await merge(pulled)).code, 'ESYNC_PRODUCT_MERGE_UNVERIFIED');
+    assert.equal((await sql().input('id', pulled.operationId).query(`SELECT COUNT(*) total
+      FROM dbo.stock_history_product_merge_intents WHERE operation_id=@id;`)).recordset[0].total, 0);
     cloudEnabled = true;
     assert.deepEqual(await capability('POS', { branchId: branch }), { ok: true, enabled: true });
     assert.equal((await merge(pulled)).code, 'ESYNC_PRODUCT_MERGE_UNVERIFIED');
-    assert.equal(cloudRequests, 5);
+    assert.equal(cloudRequests, 6);
     assert.equal(mutationRequests, 1);
 
     const cloud = new CloudClient({ connectionManager: local.manager });
@@ -220,6 +227,10 @@ async function test() {
     const recovered = inputFor([acceptedByPullMaster, acceptedByPullLoser, retained]);
     const pulledStock = await readStock(), pulledHead = await head();
     assert.equal((await merge(recovered)).code, 'ESYNC_PRODUCT_MERGE_LOCAL_CONFLICT');
+    // An added till closes new-merge admission, but the original acceptance is still recoverable.
+    cloudEnabled = false;
+    assert.equal((await ipc.get('business:product-merge-capability')('POS', { branchId: branch })).code, 'ESYNC_PRODUCT_MERGE_UNVERIFIED');
+    const probesBeforeRecovery = capabilityRequests;
     savedReceipt = { ...acceptedByPull, operationId: randomUUID() };
     assert.equal((await merge(recovered)).code, 'ESYNC_PRODUCT_MERGE_UNVERIFIED');
     savedReceipt = acceptedByPull;
@@ -235,6 +246,7 @@ async function test() {
     const syncedRows = await readStock();
     const syncedVersion = (await sql().query('SELECT CONVERT(varchar(30),CHANGE_TRACKING_CURRENT_VERSION()) version;')).recordset[0].version;
     assert.deepEqual(await merge(recovered), acceptedByPull);
+    assert.equal(capabilityRequests, probesBeforeRecovery);
     assert.equal(mutationRequests, 1);
     assert.deepEqual(await readStock(), syncedRows);
     assert.equal(published.length, 1);

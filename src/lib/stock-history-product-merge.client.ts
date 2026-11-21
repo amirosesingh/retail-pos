@@ -96,15 +96,14 @@ export async function tryPilotProductMerge(input: {
       if (previous) throw unverified();
       return null;
     }
-    const capability = bridge?.productMergeCapability
-      ? await bridge.productMergeCapability({ branchId })
-      : await relayProductMerge({ version: 1, action: "capability", branchId, terminalId: scope.terminalId });
-    assertCurrent();
-    const checked = stockHistoryProductMergeCapabilitySchema.safeParse(capability);
-    if (!checked.success) throw unverified();
-    if (!checked.data.enabled) {
-      if (previous) throw unverified();
-      return null;
+    if (!previous) {
+      const capability = bridge?.productMergeCapability
+        ? await bridge.productMergeCapability({ branchId })
+        : await relayProductMerge({ version: 1, action: "capability", branchId, terminalId: scope.terminalId });
+      assertCurrent();
+      const checked = stockHistoryProductMergeCapabilitySchema.safeParse(capability);
+      if (!checked.success) throw unverified();
+      if (!checked.data.enabled) return null;
     }
     if (!actorId) throw unverified();
     const ids = [...new Set([masterId, ...input.duplicateIds])].sort();
@@ -145,19 +144,4 @@ export async function tryPilotProductMerge(input: {
   } finally {
     pending.delete(key);
   }
-}
-
-export function applyProductMergeReceipt(products: Product[], receipt: ReturnType<typeof validateProductMergeReceipt>) {
-  const removed = new Set(receipt.removed.map(product => product.id));
-  const changesQuantity = receipt.removed.reduce((sum, product) => sum + Number(product.quantity), 0) !== 0;
-  return products.flatMap(product => {
-    if (removed.has(product.id)) return [];
-    if (product.id !== receipt.master.id || !receipt.removed.length ||
-        Number(product.mergeRevision?.rowVersion ?? 0) > Number(receipt.master.rowVersion)) return [product];
-    return [{ ...product,
-      stockByStore: changesQuantity ? { ...product.stockByStore, [receipt.branchId]: Number(receipt.master.quantity) } : product.stockByStore,
-      barcodes: receipt.master.aliases ?? [],
-      mergeRevision: { sku: receipt.master.sku, rowVersion: receipt.master.rowVersion },
-    }];
-  });
 }

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Product } from "@/core/types/pos-types";
 import type { RelayScope } from "@/core/api/relay-policy.server";
 import type { VerifiedTerminalDescriptor } from "../terminal-binding.server";
-import { stockHistoryProductMergeRelaySchema, type StockHistoryProductMergeRequest } from "../stock-history-product-merge";
+import { applyProductMergeReceipt, stockHistoryProductMergeRelaySchema, type StockHistoryProductMergeRequest } from "../stock-history-product-merge";
 
 const mocks = vi.hoisted(() => ({
   getChannel: "beta", config: { url: "https://merge-fixture.supabase.test" }, enrollment: "",
@@ -23,7 +23,7 @@ vi.mock("../device-secrets", () => ({
 }));
 
 const { stockHistoryProductMerge } = await import("../stock-history-product-merge.server");
-const { applyProductMergeReceipt, readPendingProductMerge, tryPilotProductMerge } = await import("../stock-history-product-merge.client");
+const { readPendingProductMerge, tryPilotProductMerge } = await import("../stock-history-product-merge.client");
 const master = "00000000-0000-4000-8000-000000000001";
 const source = "00000000-0000-4000-8000-000000000002";
 const held = "00000000-0000-4000-8000-000000000003";
@@ -148,11 +148,14 @@ describe("atomic selection and retry", () => {
     expect(catalogue[1]).toBe(items[2]);
     expect(mocks.key.size).toBe(0);
     expect(mocks.relay.mock.calls.filter(([input]) => input.action === "merge")).toHaveLength(1);
+    expect(mocks.relay.mock.calls.filter(([input]) => input.action === "capability")).toHaveLength(1);
     await expect(act(items, saved?.operationId)).rejects.toMatchObject({ code: "ESYNC_PRODUCT_MERGE_UNVERIFIED" });
   });
 
   it("retains native attempts after a refusal and resumes from the saved selection even without catalogue rows", async () => {
-    mocks.bridge = { productMergeCapability: vi.fn(async () => ({ ok: true, enabled: true })), mergeProducts: vi.fn() };
+    const productMergeCapability = vi.fn().mockResolvedValueOnce({ ok: true, enabled: true })
+      .mockRejectedValue(Error("New merges are no longer available"));
+    mocks.bridge = { productMergeCapability, mergeProducts: vi.fn() };
     mocks.bridge.mergeProducts.mockResolvedValueOnce({ ok: false, code: "PRODUCT_MERGE_ROSTER_CHANGED" })
       .mockImplementationOnce(async input => receipt(input.operationId));
     await expect(act()).rejects.toMatchObject({ code: "PRODUCT_MERGE_ROSTER_CHANGED" });
@@ -165,6 +168,7 @@ describe("atomic selection and retry", () => {
     mocks.bridge = capableBridge;
     expect((await act([], saved?.operationId))?.operationId).toBe(saved?.operationId);
     expect(mocks.bridge.mergeProducts.mock.calls).toEqual([[saved], [saved]]);
+    expect(productMergeCapability).toHaveBeenCalledTimes(1);
   });
 
   it("retries the same write after verified absence and never treats a failed lookup as absence", async () => {

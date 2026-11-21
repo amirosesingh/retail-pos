@@ -57,7 +57,7 @@ import { TablePagination, usePagination } from "@/platforms/web/components/pos/T
 import { Switch } from "@/components/ui/switch";
 import { BulkImportDialog } from "@/platforms/web/components/pos/BulkImportDialog";
 import { MergeProductsDialog } from "@/platforms/web/components/pos/MergeProductsDialog";
-import { readPendingProductMerge } from "@/lib/stock-history-product-merge.client";
+import { loadProductMergeClient } from "@/lib/stock-history-product-merge-browser";
 import type { StockHistoryProductMergeRequest } from "@/lib/stock-history-product-merge";
 import { commitLabel } from "@/core/api/pos-db";
 import { notifyError } from "@/lib/notify";
@@ -195,11 +195,13 @@ function Inventory() {
     const branchId = state.currentStoreId;
     if (!canMerge || !mergeActor) return;
     let live = true;
-    void readPendingProductMerge(branchId, mergeActor).then(request => {
-      if (live) setSavedMerge(request ? { actorId: mergeActor, request } : null);
-    }).catch(error => {
-      if (live) notifyError(error, "Reading saved product merge");
-    });
+    void loadProductMergeClient()
+      .then(({ readPendingProductMerge }) => live ? readPendingProductMerge(branchId, mergeActor) : null)
+      .then(request => {
+        if (live) setSavedMerge(request ? { actorId: mergeActor, request } : null);
+      }).catch(error => {
+        if (live) notifyError(error, "Reading saved product merge");
+      });
     return () => { live = false; };
   }, [canMerge, mergeActor, mergeOpen, state.currentStoreId]);
   const [exportOpen, setExportOpen] = useState(false);

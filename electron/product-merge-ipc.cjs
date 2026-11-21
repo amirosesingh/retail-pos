@@ -35,12 +35,13 @@ function createProductMergeRuntime({ enrollment, manager, session, cloud, coordi
     };
     return { scope, guard, source };
   }
-  async function checkCapability(branch, bound) {
-    const { guard, source, scope } = bound;
+  async function checkStorage({ guard, source }) {
     const local = new StockHistoryStore(manager, { assertCurrent: guard, expectedDatabaseGuid: active.databaseGuid });
     if (!(await local.capability(source.pool)).available) throw fail();
     if (!(await repository.intentStorageReady(source.pool))) throw fail();
     guard();
+  }
+  async function checkCapability(branch, { guard, scope }) {
     const reply = await cloud.productMerge("capability", { version: 1, branchId: branch, terminalId: scope.terminalId });
     guard();
     if (reply?.ok !== true || reply.enabled !== true || Object.keys(reply).length !== 2) throw fail();
@@ -49,18 +50,20 @@ function createProductMergeRuntime({ enrollment, manager, session, cloud, coordi
   return {
     async capability(branch) {
       if (!active || branch !== active.branchId) return { ok: true, enabled: false };
-      return checkCapability(branch, context(branch));
+      const bound = context(branch);
+      await checkStorage(bound);
+      return checkCapability(branch, bound);
     },
     async merge(input) {
       const branch = input?.branchId, normalized = request(input, branch);
       const bound = context(branch), { guard, scope } = bound;
-      await checkCapability(branch, bound);
+      await checkStorage(bound);
       return coordinator.withExclusive(async () => {
         const checked = () => {
           guard();
           if (!coordinator.ownsExclusive() || coordinator.paused) throw fail();
         };
-        const prepared = await repository.prepare(normalized, scope, checked);
+        const prepared = await repository.prepare(normalized, scope, checked, () => checkCapability(branch, bound));
         if (prepared.outcome) return prepared.outcome;
         const command = { ...prepared.request, terminalId: scope.terminalId };
         return repository.finish(prepared.request, scope, checked,

@@ -54,22 +54,17 @@ BEGIN
  IF auth.role() IS DISTINCT FROM 'service_role' OR p_terminal IS NULL OR p_author IS NULL
    OR p_branch IS NULL OR length(p_branch) NOT BETWEEN 1 AND 128 OR p_branch<>btrim(p_branch)
  THEN RAISE EXCEPTION 'PRODUCT_MERGE_SCOPE_DENIED' USING ERRCODE='42501'; END IF;
- -- A fixture branch must have been enrolled fresh. Retained past registrations
- -- and terminal tombstones count as possible offline document writers.
  LOCK TABLE public.stores,public.terminal_tokens IN SHARE MODE NOWAIT;
  IF NOT EXISTS(SELECT FROM public.stores s WHERE s.id=p_branch
    AND s.code~'^CODEX-STOCK401-MERGE-[A-Z0-9]{6,64}$' AND s.parent_id IS NULL AND s.private_catalogue IS TRUE
    AND s.is_active IS TRUE AND s.archived_at IS NULL AND s.group_id IS NOT NULL
    AND NOT EXISTS(SELECT FROM public.stores other WHERE other.id<>s.id AND (other.group_id=s.group_id OR other.parent_id=s.id)))
-  OR EXISTS(SELECT FROM public.terminal_tokens t WHERE t.location_id=p_branch AND t.id::text<>p_terminal::text)
-  OR EXISTS(SELECT FROM public.sync_change_feed f WHERE f.branch_id=p_branch AND f.table_name='terminal_tokens'
-    AND (f.entity_id::jsonb->>'id') IS DISTINCT FROM p_terminal::text)
  THEN RAISE EXCEPTION 'PRODUCT_MERGE_WRITER_SCOPE_UNPROVEN' USING ERRCODE='42501'; END IF;
- PERFORM public.pos_sync_validate_scope('default',p_branch,p_terminal::text);
  PERFORM 1 FROM public.terminal_tokens WHERE id::text=p_terminal::text AND location_id=p_branch AND platform='pc'
   AND status IN('active','used') AND revoked_at IS NULL AND (is_claimed OR claimed_at IS NOT NULL)
   AND NOT COALESCE(management_sync_enabled,false) FOR SHARE;
  IF NOT FOUND THEN RAISE EXCEPTION 'PRODUCT_MERGE_SCOPE_DENIED' USING ERRCODE='42501'; END IF;
+ PERFORM public.pos_sync_validate_scope('default',p_branch,p_terminal::text);
  SELECT * INTO actor FROM public.app_users WHERE id=p_author AND is_active FOR SHARE;
  IF NOT FOUND OR (actor.store_id IS NOT NULL AND actor.store_id<>p_branch)
   OR NOT private.stock_history_action_flag(actor.role::text,actor.role_slug,actor.permissions,'PRODUCT_MERGE')
@@ -80,10 +75,24 @@ BEGIN
 END $scope$;
 REVOKE ALL ON FUNCTION private.stock_history_product_merge_actor(text,uuid,uuid) FROM PUBLIC,anon,authenticated,service_role;
 
+CREATE FUNCTION private.stock_history_product_merge_require_writer_scope(p_branch text,p_terminal uuid) RETURNS void
+LANGUAGE plpgsql SET search_path='' AS $scope$
+BEGIN
+ -- The caller holds both registration tables after checking the current actor.
+ -- Retained registrations and terminal tombstones also count as possible writers.
+ IF current_setting('transaction_isolation')<>'read committed'
+  OR EXISTS(SELECT FROM public.terminal_tokens t WHERE t.location_id=p_branch AND t.id::text<>p_terminal::text)
+  OR EXISTS(SELECT FROM public.sync_change_feed f WHERE f.branch_id=p_branch AND f.table_name='terminal_tokens'
+    AND (f.entity_id::jsonb->>'id') IS DISTINCT FROM p_terminal::text)
+ THEN RAISE EXCEPTION 'PRODUCT_MERGE_WRITER_SCOPE_UNPROVEN' USING ERRCODE='42501'; END IF;
+END $scope$;
+REVOKE ALL ON FUNCTION private.stock_history_product_merge_require_writer_scope(text,uuid) FROM PUBLIC,anon,authenticated,service_role;
+
 CREATE FUNCTION public.pos_stock_history_product_merge_capability(p_branch text,p_terminal uuid,p_author uuid) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $capability$
 BEGIN
  PERFORM private.stock_history_product_merge_actor(p_branch,p_terminal,p_author);
+ PERFORM private.stock_history_product_merge_require_writer_scope(p_branch,p_terminal);
  RETURN true;
 END $capability$;
 REVOKE ALL ON FUNCTION public.pos_stock_history_product_merge_capability(text,uuid,uuid) FROM PUBLIC,anon,authenticated,service_role;
@@ -133,8 +142,11 @@ BEGIN
  SELECT request.outcome INTO STRICT accepted
  FROM private.stock_history_product_merge_request(p_operation,p_branch,p_terminal,p_author,p_master,p_roster) request;
  -- After the operation lock, a new statement snapshot is required to confirm absence.
- IF accepted IS NULL AND current_setting('transaction_isolation')<>'read committed' THEN
-  RAISE EXCEPTION 'PRODUCT_MERGE_RECEIPT_UNVERIFIED' USING ERRCODE='40001';
+ IF accepted IS NULL THEN
+  IF current_setting('transaction_isolation')<>'read committed' THEN
+   RAISE EXCEPTION 'PRODUCT_MERGE_RECEIPT_UNVERIFIED' USING ERRCODE='40001';
+  END IF;
+  PERFORM private.stock_history_product_merge_require_writer_scope(p_branch,p_terminal);
  END IF;
  RETURN jsonb_build_object('ok',true,'receipt',accepted);
 END $receipt$;
@@ -158,6 +170,7 @@ BEGIN
  SELECT request.ordered,request.wanted,request.request_hash,request.outcome INTO STRICT ordered,wanted,request_hash,prior
  FROM private.stock_history_product_merge_request(p_operation,p_branch,p_terminal,p_author,p_master,p_roster) request;
  IF prior IS NOT NULL THEN RETURN prior; END IF;
+ PERFORM private.stock_history_product_merge_require_writer_scope(p_branch,p_terminal);
 
  -- These existing document links are JSON, so they do not participate in the
  -- product FK row lock. Yield immediately to a concurrent document writer.
