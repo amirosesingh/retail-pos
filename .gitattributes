@@ -12,6 +12,12 @@
 /supabase/migrations/20261106065813_stock_history_selected_time_period_reader.sql text eol=lf
 /supabase/migrations/20261106073851_stock_history_coverage_frontiers.sql text eol=lf
 /scripts/preparation/stock-history-recorded-openings.sql text eol=lf
+/scripts/preparation/stock-history-physical-stocktakes.sql text eol=lf
+/scripts/preparation/stock-history-product-membership.sql text eol=lf
+/scripts/preparation/stock-history-transfer-legs.sql text eol=lf
+/scripts/preparation/stock-history-online-sponsorship-missed-bill.sql text eol=lf
+/scripts/preparation/pos-stock-history-grouped-refund-origin-v1.sql text eol=lf
+/scripts/preparation/pos-stock-history-fin62-refund-origin-v1.sql text eol=lf
 /database/sqlserver/prepared/031_stock_history_effective_ledger.sql text eol=lf
 /database/sqlserver/retail-pos-existing-upgrade-1.4.82.sql text eol=lf
 /database/sqlserver/prepared/existing-upgrade-1.4.82.manifest.json text eol=lf

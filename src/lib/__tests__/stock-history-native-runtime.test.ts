@@ -44,13 +44,13 @@ function fixture(configured: typeof enrollment | null = enrollment) {
   return { runtime, manager, source, person, terminal, tx, query, cloud, prepareKey, signStockEvent, switchActor: () => { epoch++; } };
 }
 
-function exactCapture(f: ReturnType<typeof fixture>) {
+function exactCapture(f: ReturnType<typeof fixture>, before = 4, after = 2) {
   const databaseKey = enrollment.databaseGuid + ":31:exact";
   vi.spyOn(f.runtime.capture, "capability").mockResolvedValue({ available: true, databaseKey });
   vi.spyOn(f.runtime.capture, "identity").mockResolvedValue(databaseKey);
   vi.spyOn(f.runtime.capture, "snapshot")
-    .mockResolvedValueOnce([{ id: product, name: "Fixture", stock_by_store: { [enrollment.branchId]: 4 } }])
-    .mockResolvedValueOnce([{ id: product, name: "Fixture", stock_by_store: { [enrollment.branchId]: 2 } }]);
+    .mockResolvedValueOnce([{ id: product, name: "Fixture", stock_by_store: { [enrollment.branchId]: before } }])
+    .mockResolvedValueOnce([{ id: product, name: "Fixture", stock_by_store: { [enrollment.branchId]: after } }]);
   vi.spyOn(f.runtime.capture, "sources").mockResolvedValue([]);
   vi.spyOn(f.runtime.capture, "ensureHead").mockResolvedValue(undefined);
   f.query.mockResolvedValue({ recordset: [{ recorded_at: "2026-11-20T00:00:00.0000000Z" }] });
@@ -146,6 +146,40 @@ describe("Main stock history pilot scope", () => {
     const token = await f.runtime.capture.begin(f.tx, operations, movement);
     f.switchActor();
     await expect(f.runtime.capture.finish(f.tx, token)).rejects.toMatchObject({ code: "ESTOCK_HISTORY_CONTEXT_CHANGED" });
+  });
+
+  it.each(["original", "other-key", "legacy"])("requires the original enrolled refund signer (%s)", async mode => {
+    const f = fixture();
+    exactCapture(f, 2, 4);
+    const movementId = "77777777-7777-4777-8777-777777777777";
+    vi.mocked(f.runtime.capture.sources).mockResolvedValueOnce([]).mockResolvedValueOnce([{
+      table: "stock_delta_applied", id: movementId, productId: product, branchId: enrollment.branchId, delta: "2",
+    }]);
+    const keyId = "66666666-6666-4666-8666-666666666666", publicKey = "fixture-key";
+    f.prepareKey.mockReturnValue({ enrolled: true, keyId, publicKey });
+    f.query.mockImplementation(async (sql: string) => ({ recordset: sql.includes("pos_sync_shift_author_keys")
+      ? [{ project_origin: enrollment.projectOrigin, terminal_id: enrollment.terminalId, author_id: actor, key_id: keyId, public_key: publicKey }]
+      : [{ recorded_at: "2026-11-20T00:00:00.0000000Z" }] }));
+    const insert = vi.spyOn(f.runtime.capture, "insertMovements").mockResolvedValue(undefined);
+    vi.spyOn(f.runtime.capture, "invalidateCoverage").mockResolvedValue(undefined);
+    const refundStockAuthor = mode === "legacy" ? null : { action: "REFUND", operationId: operation, branchId: enrollment.branchId,
+      projectOrigin: enrollment.projectOrigin, terminalId: enrollment.terminalId, authorId: actor, subject: f.person.canonicalSubject,
+      keyId: mode === "original" ? keyId : product };
+    const token = await f.runtime.capture.begin(f.tx, operations, { ...movement, kind: "refund", refundStockAuthor });
+    expect(await f.runtime.capture.finish(f.tx, token)).toMatchObject({ captured: 1, incomplete: mode !== "original" });
+    const rows = insert.mock.calls[0]?.[2];
+    const row = Array.isArray(rows) ? rows[0] : undefined;
+    expect(row).toMatchObject({ source_kind: "refund", quantity_delta: "2", clock_state: "unverified",
+      effective_at_raw: "2026-11-20T00:00:00.0000000Z", recorded_at_raw: "2026-11-20T00:00:00.0000000Z",
+      source_refs: [["stock_delta_applied", movementId, "2"]], });
+    if (mode === "original") {
+      expect(f.signStockEvent).toHaveBeenCalledWith(expect.objectContaining({ authorId: actor }),
+        expect.objectContaining({ action: "REFUND", expectedKeyId: keyId, operationId: operation }));
+      expect(row).toHaveProperty("author_proof_json");
+    } else {
+      expect(f.signStockEvent).not.toHaveBeenCalled();
+      expect(row).not.toHaveProperty("author_proof_json");
+    }
   });
 });
 

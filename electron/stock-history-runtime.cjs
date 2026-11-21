@@ -84,11 +84,18 @@ function createStockHistoryRuntime({ enrollment, manager, cloud, keys, session, 
         if (session.epoch() !== epoch || current?.authorId !== actor?.authorId || current?.canonicalSubject !== actor?.canonicalSubject)
           fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
       };
-      const action = input.kind === "sale" && input.groupedCashOrigin === true ? "SALE" : supportedAction(input.kind, operations);
-      const author = authorId ? await prepareAuthor(action, tx) : null;
+      const refundAuthor = input.kind === "refund" ? input.refundStockAuthor : null;
+      const protectedRefund = refundAuthor?.action === "REFUND" && refundAuthor.operationId === input.operationId &&
+        refundAuthor.projectOrigin === active.projectOrigin && refundAuthor.terminalId === active.terminalId &&
+        refundAuthor.branchId === active.branchId && refundAuthor.authorId === authorId && refundAuthor.subject === actor?.canonicalSubject;
+      const directAction = input.kind === "sale" && input.groupedCashOrigin === true ? "SALE" : protectedRefund ? "REFUND" : null;
+      const action = directAction ?? supportedAction(input.kind, operations);
+      const prepared = authorId ? await prepareAuthor(action, tx) : null;
+      const author = !protectedRefund || prepared?.keyId === refundAuthor.keyId ? prepared : null;
       assertCurrent();
       return { key: source.fingerprint, branchId: active.branchId, terminalId: active.terminalId, actorId: authorId,
-        clockState: "unverified", assertCurrent, author, writerKnown: Boolean(action), requireSourceManifests: action !== "SALE" };
+        clockState: "unverified", assertCurrent, author, writerKnown: Boolean(action) && (!protectedRefund || Boolean(author)),
+        requireSourceManifests: directAction === null };
     },
   }) : null;
   let currentUploader;

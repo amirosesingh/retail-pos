@@ -69,6 +69,13 @@ class ReceiptRepository{
      .query(`${declaration} WITH CHANGE_TRACKING_CONTEXT (@refundContext) ${statement}`);
    };
    const stockScope=this.stockHistory?.readContext?.();
+   const financialAuthor=financialToken&&financialContext?.author;
+   // The existing Register refund key can be derived from the signed FIN62
+   // sale transition. Alternate caller keys have no such accepted source proof.
+   const standardRefund=[saleId.toLowerCase(),saleId.toUpperCase()].some(id=>refundId===`refund:${id}`);
+   const refundStockAuthor=saved?.author??(financialAuthor&&standardRefund?{
+    ...financialAuthor.binding,keyId:financialAuthor.keyId,subject:financialAuthor.subject,branchId,operationId,action:'REFUND',
+   }:null);
    const stockCapture=this.stockHistory?await this.stockHistory.begin(tx,(items.recordset??[]).filter(item=>item.product_id).flatMap(item=>[
     {kind:'update',table:'products',match:{id:item.product_id},values:{stock_quantity:0}},
     // These are evidence references only. The existing refund loop below still
@@ -76,6 +83,7 @@ class ReceiptRepository{
     {kind:'insert',table:'stock_delta_applied',rows:[{movement_id:stableUuid({refundId,itemId:item.id}),product_id:item.product_id,store_id:branchId}]},
    ]),{
     operationId,branchId,terminalId:stockScope?.terminalId??financialContext?.terminalId,actorId:stockScope?.actorId,kind:'refund',
+    refundStockAuthor,
    }):null;
    const journal=async(table,key,operation="update")=>new sql.Request(tx).input("entity",table).input("entity_id",JSON.stringify(key)).input("operation",operation).input("branch",branchId).input("aggregate",operationId).query("INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id) VALUES(@entity,@entity_id,@operation,@branch,1,@aggregate);");
    for(const item of items.recordset??[]){const qty=Math.max(0,Number(item.quantity)-Number(item.refunded_qty));if(!qty)continue;

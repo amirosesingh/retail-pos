@@ -6,17 +6,20 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 const require = createRequire(import.meta.url);
 const { createActualStockWriter } = require("../../../scripts/lib/stock-actual-writer-fixture.cjs");
 const observationSql = readFileSync("scripts/preparation/stock-history-recorded-openings.sql", "utf8");
+const stocktakeSql = readFileSync("scripts/preparation/stock-history-physical-stocktakes.sql", "utf8");
+const zeroProduct = randomUUID();
 let fixture: Awaited<ReturnType<typeof createActualStockWriter>>;
 
 type Plan = { candidateHash: string; pairsHash: string; ready: boolean };
 type Receipt = { baselineId: string; observationStartedAt: string; observedAt: string };
 
 beforeAll(async () => {
-  fixture = await createActualStockWriter({ sourceAdmission: true, capturedAdjustment: true });
+  fixture = await createActualStockWriter({ sourceAdmission: true, capturedAdjustment: true, preexistingZeroProduct: zeroProduct });
   for (const migration of ["20261106065813_stock_history_selected_time_period_reader.sql", "20261106073851_stock_history_coverage_frontiers.sql"]) {
     await fixture.db.exec(readFileSync(`supabase/migrations/${migration}`, "utf8"));
   }
   await fixture.db.exec(observationSql);
+  await fixture.db.exec(stocktakeSql);
 }, 30_000);
 afterAll(async () => fixture?.db.close());
 beforeEach(async () => fixture.db.exec("BEGIN"));
@@ -55,7 +58,7 @@ describe("isolated recorded stock openings", () => {
     const stored = await scalar("SELECT jsonb_build_object('opening',b.verification_state,'cursor',b.source_cursor::text," +
       "'verifiedBy',b.verified_by,'snapshot',p.source_revision->>'snapshotHash','qty',o.quantity::text) " +
       "FROM public.stock_history_baselines b JOIN private.stock_history_opening_publications p ON b.id=p.baseline_id " +
-      "JOIN public.stock_history_openings o ON b.id=o.baseline_id WHERE b.id=$1", [receipt.baselineId]);
+      "JOIN public.stock_history_openings o ON b.id=o.baseline_id WHERE b.id=$1 AND o.product_id=$2", [receipt.baselineId, fixture.product]);
     expect(stored).toEqual({ opening: "unverified", cursor: "0", verifiedBy: null, snapshot: expect.stringMatching(/^[a-f0-9]{64}$/), qty: "10" });
     expect(await scalar("SELECT count(*) FROM public.stock_history_heads")).toBe(0);
     const midnight = `${receipt.observedAt.slice(0, 10)}T00:00:00.0000000Z`;
@@ -75,7 +78,7 @@ describe("isolated recorded stock openings", () => {
     expect(await observe(plan, receipt.baselineId)).toEqual(receipt);
     await denied(() => observe(plan, receipt.baselineId, "Changed review reason"), "STOCK_OPENING_REPLAY_CONFLICT");
     await denied(() => fixture.db.query("UPDATE public.stock_history_baselines SET verification_state='verified' WHERE id=$1", [receipt.baselineId]), "STOCK_HISTORY_IMMUTABLE");
-    expect(await counts()).toEqual([1, 1, 1]);
+    expect(await counts()).toEqual([1, 2, 1]);
   });
 
   it("requires the bound Administrator and denies a foreign branch", async () => {
@@ -108,5 +111,44 @@ describe("isolated recorded stock openings", () => {
     await denied(() => observe(plan), "OWNED_OBSERVATION_FAILURE");
     expect(await counts()).toEqual([0, 0, 0]);
     expect(await fixture.stock()).toBe("10");
+  });
+});
+
+describe("full-branch physical stocktake preparation", () => {
+  it("requires an explicit canonical count for every frozen product including physical zero", async () => {
+    const id = randomUUID();
+    const start = () => scalar<{ rosterHash: string; roster: { id: string }[] }>(
+      "SELECT public.pos_stock_history_start_stocktake($1,$2,$3,'A',$4)",
+      [fixture.admin, fixture.terminal, fixture.stockSourceFixture.project, id]);
+    const opened = await start();
+    expect(opened.roster.map(row => row.id).sort()).toEqual([fixture.product, zeroProduct].sort());
+    await fixture.db.exec("SET LOCAL TIME ZONE 'Asia/Brunei'");
+    expect(await start()).toEqual(opened);
+    const at = await scalar<string>(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US')||'0Z'`);
+    const seal = (lines: unknown, cutoff = at) => scalar("SELECT public.pos_stock_history_seal_stocktake($1,$2,'A',$3,$4,$5,$6::jsonb,'{}')",
+      [fixture.admin, fixture.terminal, id, opened.rosterHash, cutoff, JSON.stringify(lines)]);
+    await denied(() => seal([[fixture.product, "10"]]), "STOCKTAKE_ROSTER_INCOMPLETE");
+    await denied(() => seal([[fixture.product, "10"], [zeroProduct, 0]]), "STOCKTAKE_INVALID");
+    await denied(() => seal([[fixture.product, "10"], [zeroProduct, "-0"]]), "STOCKTAKE_INVALID");
+    await denied(() => seal([[fixture.product, "10"], [fixture.product, "10"]]), "STOCKTAKE_DUPLICATE_INPUT");
+    await denied(() => seal([[fixture.product, "10"], [zeroProduct, "0"]], "2099-01-01T00:00:00.0000000Z"), "STOCKTAKE_CUTOFF_OUTSIDE_OBSERVATION");
+    await denied(() => seal([[fixture.product, "10"], [zeroProduct, "1"]]), "STOCKTAKE_QUANTITIES_UNRECONCILED");
+    const count = await seal([[fixture.product, "10"], [zeroProduct, "0"]]);
+    expect(count).toMatchObject({ countedPairs: 2, corrections: 0, state: "awaiting_independent_review" });
+    expect(await seal([[zeroProduct, "0"], [fixture.product, "10"]])).toEqual(count);
+    expect(await scalar("SELECT count(*) FROM public.stock_history_baselines")).toBe(0);
+  });
+
+  it("keeps stocktake evidence branch-bound, append-only and confined to the service RPCs", async () => {
+    const id = randomUUID(), args = [fixture.admin, fixture.terminal, fixture.stockSourceFixture.project, id];
+    await denied(() => scalar("SELECT public.pos_stock_history_start_stocktake($1,$2,$3,'B',$4)", args), "STOCK_HISTORY_BRANCH_DENIED");
+    await denied(() => scalar("SELECT public.pos_stock_history_start_stocktake($1,$2,$3,'A',$4)", [fixture.author, ...args.slice(1)]),
+      /STOCK_(?:OPENING_ADMIN_REQUIRED|HISTORY_ACTOR_DENIED|HISTORY_PERMISSION_DENIED)/);
+    await scalar("SELECT public.pos_stock_history_start_stocktake($1,$2,$3,'A',$4)", args);
+    expect(await scalar("SELECT has_function_privilege('authenticated','public.pos_stock_history_stocktake_for_review(text,text,text,uuid)','EXECUTE')")).toBe(false);
+    expect(await scalar("SELECT has_table_privilege('service_role','private.stock_history_stocktakes','INSERT')")).toBe(false);
+    await denied(() => fixture.db.query("DELETE FROM private.stock_history_stocktakes WHERE id=$1", [id]), "STOCK_HISTORY_IMMUTABLE");
+    await denied(() => scalar("SELECT public.pos_stock_history_stocktake_for_review($1,$2,'A',$3)", [fixture.admin, fixture.terminal, id]),
+      "STOCKTAKE_COUNT_REQUIRED");
   });
 });

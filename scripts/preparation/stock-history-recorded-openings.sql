@@ -179,6 +179,30 @@ GRANT EXECUTE ON FUNCTION public.pos_stock_history_publish_opening(text,text,tex
 -- Compare stored stock evidence for one explicit effective-time request. A
 -- signed source prefix authenticates the witnessed movements of a PC. It
 -- supplies neither an independent opening quantity nor non-PC writer coverage.
+CREATE FUNCTION private.stock_history_opening_latest_frontiers(p_project text,p_branch text,p_roster jsonb,
+ p_after timestamptz,p_receipts uuid[]) RETURNS TABLE(terminal_id text,database_guid uuid,source_sequence bigint,source_root text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $fn$
+ WITH roster AS MATERIALIZED(SELECT jsonb_array_elements(p_roster) member)
+ SELECT r.terminal_id,r.database_guid,r.source_sequence,r.source_root
+ FROM private.stock_history_frontier_receipts r
+ JOIN private.stock_history_frontier_challenges c ON (c.id,c.project_origin,c.store_id,c.terminal_id,c.author_id,c.key_id)
+   =(r.challenge_id,r.project_origin,r.store_id,r.terminal_id,r.author_id,r.key_id)
+ JOIN roster w ON w.member->>0=r.terminal_id
+ JOIN pos_sync_private.shift_author_keys k ON (k.key_id,k.project_origin,k.terminal_id,k.author_id)
+   =(r.key_id,r.project_origin,r.terminal_id,r.author_id) AND k.revoked_at IS NULL
+ JOIN public.app_users a ON a.id=r.author_id AND a.is_active IS TRUE AND a.user_id=k.subject
+   AND (a.store_id IS NULL OR (CASE WHEN a.store_id~*'^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
+     THEN lower(a.store_id) ELSE a.store_id END)=p_branch)
+ WHERE r.challenge_id=ANY(p_receipts) AND (r.project_origin,r.store_id)=(p_project,p_branch)
+  AND r.prefix_state='accepted' AND cardinality(r.reasons)=0 AND c.issued_at>=p_after AND r.accepted_at>=p_after
+  AND c.cohort=(SELECT jsonb_agg(jsonb_build_array(member->>0,member->>1,member->>2,
+    COALESCE((member->>4)::boolean,false)) ORDER BY member->>0) FROM roster)
+  AND NOT EXISTS(SELECT 1 FROM private.stock_history_frontier_receipts later
+   WHERE (later.project_origin,later.store_id,later.terminal_id)=(r.project_origin,r.store_id,r.terminal_id)
+    AND (later.accepted_at>r.accepted_at OR (later.accepted_at=r.accepted_at AND later.challenge_id<>r.challenge_id)))
+$fn$;
+REVOKE ALL ON FUNCTION private.stock_history_opening_latest_frontiers(text,text,jsonb,timestamptz,uuid[]) FROM PUBLIC,anon,authenticated,service_role;
+
 CREATE FUNCTION private.stock_history_opening_eligibility(p_actor text,p_terminal text,p_project text,p_branch text,
  p_observation uuid,p_cutoff text,p_frontier_receipts uuid[]) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $fn$
@@ -204,29 +228,12 @@ BEGIN
  THEN RAISE EXCEPTION 'STOCK_OPENING_EVIDENCE_BOUND';END IF;
 
  WITH roster AS MATERIALIZED(SELECT jsonb_array_elements(observed.cohort) member),
- challenge_roster AS MATERIALIZED(SELECT jsonb_agg(jsonb_build_array(member->>0,member->>1,member->>2,
-  COALESCE((member->>4)::boolean,false)) ORDER BY member->>0) members FROM roster),
- frontiers AS MATERIALIZED(
-  SELECT r.terminal_id,r.database_guid,r.source_sequence,r.source_root
-  FROM private.stock_history_frontier_receipts r
-  JOIN private.stock_history_frontier_challenges c ON (c.id,c.project_origin,c.store_id,c.terminal_id,c.author_id,c.key_id)
-    =(r.challenge_id,r.project_origin,r.store_id,r.terminal_id,r.author_id,r.key_id)
-  JOIN roster w ON w.member->>0=r.terminal_id
-  JOIN pos_sync_private.shift_author_keys k ON (k.key_id,k.project_origin,k.terminal_id,k.author_id)
-    =(r.key_id,r.project_origin,r.terminal_id,r.author_id) AND k.revoked_at IS NULL
-  JOIN public.app_users a ON a.id=r.author_id AND a.is_active IS TRUE AND a.user_id=k.subject
-    AND (a.store_id IS NULL OR (CASE WHEN a.store_id~*'^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
-      THEN lower(a.store_id) ELSE a.store_id END)=p_branch)
-  WHERE r.challenge_id=ANY(p_frontier_receipts) AND (r.project_origin,r.store_id)=(p_project,p_branch)
-   AND r.prefix_state='accepted' AND cardinality(r.reasons)=0 AND r.accepted_at>=observed.observation_started_at
-   AND c.cohort=(SELECT members FROM challenge_roster)
-   AND NOT EXISTS(SELECT 1 FROM private.stock_history_frontier_receipts later
-    WHERE (later.project_origin,later.store_id,later.terminal_id)=(r.project_origin,r.store_id,r.terminal_id)
-     AND (later.accepted_at>r.accepted_at OR (later.accepted_at=r.accepted_at AND later.challenge_id<>r.challenge_id)))
- ), roster_result AS MATERIALIZED(SELECT expected BETWEEN 1 AND 1024
+ frontiers AS MATERIALIZED(SELECT * FROM private.stock_history_opening_latest_frontiers(p_project,p_branch,
+   observed.cohort,observed.observation_started_at,p_frontier_receipts)),
+ roster_result AS MATERIALIZED(SELECT expected BETWEEN 1 AND 1024
     AND observed.cohort=private.stock_history_opening_claimed_roster(p_branch)
     AND NOT EXISTS(SELECT 1 FROM roster WHERE member->>1 IS DISTINCT FROM 'pc'
-     OR member->>2 NOT IN('active','used') OR member->>3 IS NOT NULL)
+     OR (member->>2 IN('active','used')) IS NOT TRUE OR member->>3 IS NOT NULL)
     AND cardinality(p_frontier_receipts)=expected
     AND (SELECT count(*)=expected AND count(DISTINCT terminal_id)=expected FROM frontiers) matched),
  movements AS MATERIALIZED(SELECT id,operation_id,product_id,terminal_id,actor_id,quantity_delta,effective_ticks,

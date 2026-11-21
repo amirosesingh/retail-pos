@@ -1,10 +1,7 @@
 const assert = require("node:assert/strict");
 const { randomUUID } = require("node:crypto");
-const { readFileSync } = require("node:fs");
 
 module.exports = async function openingObservations({ control, one, two, f, bind, pass, pause, header, acceptOpeningFrontier }) {
-  const observationSql = readFileSync("scripts/preparation/stock-history-recorded-openings.sql", "utf8");
-  await control.query(`BEGIN;${observationSql}COMMIT;`);
   const read = (session, sql) => session.query(sql).then(rows => Object.values(rows[0])[0]);
   const plan = async () => JSON.parse(await read(control, bind(
     "SELECT public.pos_stock_history_opening_plan($1,$2,'A')", [f.admin, f.terminal])));
