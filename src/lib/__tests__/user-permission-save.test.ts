@@ -1,6 +1,13 @@
 import { beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ rest: vi.fn(), scope: vi.fn(), verify: vi.fn(), audit: vi.fn() }));
-vi.mock("@tanstack/react-start", () => ({ createServerFn: () => ({ validator: (parse: (value: unknown) => unknown) => ({ handler: (fn: (value: { data: unknown }) => unknown) => (input: { data: unknown }) => fn({ data: parse(input.data) }) }) }) }));
+vi.mock("@tanstack/react-start", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@tanstack/react-start")>(),
+  createServerFn: () => ({
+    validator: (parse: (value: unknown) => unknown) => ({
+      handler: (fn: (value: { data: unknown }) => unknown) => (input: { data: unknown }) => fn({ data: parse(input.data) }),
+    }),
+  }),
+}));
 vi.mock("../privileged-caller.server", () => ({ requireCallerScope: mocks.scope }));
 vi.mock("@/core/api/pos-relay.server", () => ({ serviceRest: mocks.rest, verifyRelayCaller: mocks.verify }));
 vi.mock("../system-audit.server", () => ({ writeSystemAudit: mocks.audit }));

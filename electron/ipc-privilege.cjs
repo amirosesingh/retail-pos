@@ -78,6 +78,12 @@ const CHANNEL_LEVELS = {
   "business:snapshot": OPEN,
   "business:query": OPEN,
   "business:management-report": OPEN, // explicit report permissions below; handler additionally verifies sealed management registration and complete replica
+  "business:stock-history": OPEN, // dedicated Main reader rechecks current SQL account and trusted branch
+  "business:stock-history-movements": OPEN, // same dedicated stock report admission
+  "business:product-merge-capability": OPEN, // dedicated verified Operations PC protocol
+  "business:merge-products": OPEN, // Main derives paired scope and original actor
+  "business:stocktake-control": ADMIN, // the handler requires an exact hosted pilot and a current POS administrator
+  "business:stock-arrival-capability": OPEN, // dedicated Main reader rechecks receiving authority and original capture readiness
   "business:save-authorization-rule": OPEN,
   "business:queue-store-settings-edit": OPEN,
   "business:review-store-settings-edit": OPEN,
@@ -466,6 +472,16 @@ function allowed(channel, args = []) {
   if (["receipts:refund-approval-status", "receipts:recover-refund-approval"].includes(channel))
     return adminSession.hasPosAuthority() && adminSession.hasPermission("can_process_refund");
   if (channel === "approval:authorize-refund") return adminSession.hasPosAuthority() && adminSession.hasPermission("can_process_refund");
+  if (channel === "business:stock-arrival-capability") {
+    return adminSession.hasPosAuthority() && (adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_receive_purchase_order"));
+  }
+  if (channel === "business:stock-history" || channel === "business:stock-history-movements") {
+    if (!adminSession.hasPosAuthority() || !(adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_view_inventory"))) return false;
+    if (args[0]?.export === true && !(adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_export_reports"))) return false;
+    return true; // Only the admitted POS frame may touch the session in its handler.
+  }
+  if (channel === "business:stocktake-control")
+    return adminSession.hasPosAuthority() && adminSession.hasLevel(ADMIN);
   if (channel === "approval:authorize-offline-discount") {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_process_sale")) return false;
     // Sender admission belongs to the fixed handler; another window must not

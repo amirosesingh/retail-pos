@@ -17,6 +17,11 @@ const read = file => readFile(new URL("../" + file, import.meta.url), "utf8");
 const preparation = name => read("scripts/preparation/" + name + ".sql");
 const db = new PGlite();
 const one = async (query, args = []) => Object.values((await db.query(query, args)).rows[0])[0];
+const stockWitness = process.argv.includes("--stock-history");
+const stockLegs = async transfer => (await db.query(`
+  SELECT w.phase,w.store_id,w.actor_id,w.product_id,e.previous_quantity::text AS before,e.next_quantity::text AS after
+  FROM private.stock_history_transfer_legs w JOIN private.stock_history_accepted_effects e ON e.id=w.effect_id
+  WHERE w.transfer_id=$1 AND w.transaction_id=e.transaction_id ORDER BY w.phase,w.store_id`, [transfer])).rows;
 const epochA = randomUUID(), epochB = randomUUID(), terminalA = randomUUID(), terminalB = randomUUID();
 const proofA = "a".repeat(64), proofB = "b".repeat(64);
 const pull = (branch, terminal, proof, epoch, after = "0") => one(
@@ -202,6 +207,26 @@ try {
   await db.exec(correction.slice(correction.indexOf("CREATE FUNCTION pos_sync_feed_v1.correction_receipt_row("),
     correction.indexOf("CREATE FUNCTION pos_sync_feed_v1.capture_correction_receipt_graph()")));
   await db.exec(await preparation("pos-sync-transfer-dispatch-feed-v1"));
+  const warehouse = await read("supabase/migrations/20261007111500_harden_warehouse_transfer_lifecycle.sql");
+  const beforeWarehouseGuard = source.slice(0, source.indexOf("DROP FUNCTION IF EXISTS public.stock_transfer_receive(uuid, text, boolean);"));
+  assert(beforeWarehouseGuard.length > 1);
+  for (const name of ["stock_transfer_receive", "stock_transfer_verify"]) {
+    await db.exec(sourceFunction("public." + name, beforeWarehouseGuard).replace("FUNCTION public.", "FUNCTION private."));
+    await db.exec(sourceFunction("public." + name, warehouse));
+  }
+  await db.exec(await preparation("pos-sync-native-transfer-receive-v1"));
+  await db.exec(await preparation("pos-sync-native-transfer-receive-v1"));
+  await db.exec(await preparation("pos-sync-transfer-receipt-feed-v1"));
+  await db.exec(await preparation("pos-sync-transfer-receipt-feed-v1"));
+  if (stockWitness) {
+    await db.exec(`REVOKE ALL ON FUNCTION private.stock_transfer_verify(uuid,text,jsonb,text),public.current_app_user() FROM PUBLIC;
+      GRANT EXECUTE ON FUNCTION private.stock_transfer_verify(uuid,text,jsonb,text) TO service_role;
+      GRANT EXECUTE ON FUNCTION public.current_app_user() TO authenticated,service_role;`);
+    await db.exec("CREATE TABLE public.shifts(id uuid PRIMARY KEY,store_id text,status text,closed_at timestamptz);");
+    await db.exec(await read("supabase/migrations/20261105113916_stock_history_effective_ledger.sql"));
+    await db.exec(await read("supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql"));
+    await db.exec(await preparation("stock-history-transfer-legs"));
+  }
   await db.exec(seedSql({ extra: `UPDATE public.stock_transfers SET row_version=2 WHERE id='${ids.child}';` }));
   for (const [branch, epoch, terminal, proof] of [["A", epochA, terminalA, proofA], ["B", epochB, terminalB, proofB]]) {
     await db.query("INSERT INTO public.terminal_tokens VALUES($1,$2,'pc','active',NULL,true,NULL,'electron',$3,NULL)", [terminal, branch, proof]);
@@ -213,6 +238,10 @@ try {
   }
   assert.equal((await one(dispatchSql())).replayed, false);
   assert.equal((await one(dispatchSql())).replayed, true);
+  const dispatchLegs = stockWitness ? await stockLegs(ids.child) : [];
+  if (stockWitness) assert.deepEqual(dispatchLegs, [
+    { phase: "dispatch", store_id: "A", actor_id: ids.actor, product_id: ids.product, before: "10", after: "8" },
+  ]);
   await db.exec("SELECT set_config('test.role','service_role',false);");
   await assert.rejects(pull("B", terminalA, proofA, epochB), /SCOPE_FORBIDDEN/);
   const a = await pull("A", terminalA, proofA, epochA), b = await pull("B", terminalB, proofB, epochB);
@@ -242,17 +271,6 @@ try {
     FROM pos_sync_feed_v1.extended_publications published WHERE scope_id='A' AND seq=1`);
   assert.deepEqual(recovery, sourceGroup);
   console.log("PASS atomic dispatch publishes once to both scopes, retires to a recovery archive, and keeps stock and audit in the sending scope.");
-  const warehouse = await read("supabase/migrations/20261007111500_harden_warehouse_transfer_lifecycle.sql");
-  const beforeWarehouseGuard = source.slice(0, source.indexOf("DROP FUNCTION IF EXISTS public.stock_transfer_receive(uuid, text, boolean);"));
-  assert(beforeWarehouseGuard.length > 1);
-  for (const name of ["stock_transfer_receive", "stock_transfer_verify"]) {
-    await db.exec(sourceFunction("public." + name, beforeWarehouseGuard).replace("FUNCTION public.", "FUNCTION private."));
-    await db.exec(sourceFunction("public." + name, warehouse));
-  }
-  await db.exec(await preparation("pos-sync-native-transfer-receive-v1"));
-  await db.exec(await preparation("pos-sync-native-transfer-receive-v1"));
-  await db.exec(await preparation("pos-sync-transfer-receipt-feed-v1"));
-  await db.exec(await preparation("pos-sync-transfer-receipt-feed-v1"));
   const receiver = randomUUID();
   await db.query(`INSERT INTO public.app_users(id,user_id,full_name,email,role,role_slug,store_id,is_active,auth_user_id,permissions)
     VALUES($1,'fixture-receiver','Verified Receiver','receiver@example.test','staff','warehouse','B',true,$1,'{"can_receive_transfer":true}')`, [receiver]);
@@ -277,6 +295,7 @@ try {
   assert.deepEqual(await lifecycle(), { status: "received", received_by: "Verified Receiver", verified_by: null });
   assert.deepEqual(await balance(), { A: 8, B: 0, C: 0 });
   await assert.rejects(receipt("verify", "fixture-receiver", "B", 1), /discrepancy needs a reason/);
+  if (stockWitness) assert.deepEqual(await stockLegs(ids.child), dispatchLegs);
   assert.equal((await lifecycle()).status, "received");
   assert.deepEqual(await balance(), { A: 8, B: 0, C: 0 });
   await receipt("verify");
@@ -285,6 +304,10 @@ try {
   await assert.rejects(receipt("verify"), /ALREADY_POSTED/);
   assert.deepEqual(await balance(), { A: 8, B: 2, C: 0 });
   assert.equal(await one("SELECT coalesce(current_setting('pos.native_receiver_transfer',true),'')"), "");
+  if (stockWitness) assert.deepEqual(await stockLegs(ids.child), [
+    ...dispatchLegs,
+    { phase: "verify", store_id: "B", actor_id: receiver, product_id: ids.product, before: "0", after: "2" },
+  ]);
   console.log("PASS native scoped arrival and verification preserve actor attribution, rollback and exactly-once destination stock.");
 
   const receiptA = (await pull("A", terminalA, proofA, epochA, "1")).groups.filter(group => group.financial?.kind === "transfer_v1");
@@ -331,7 +354,7 @@ try {
   await db.exec(webIdentity);
   await one(`SELECT public.stock_transfer_dispatch_atomic($1,'Authorized Dispatcher',$2)`,
     [ownedTransfer, JSON.stringify([{ product_id: ids.product2, qty: 2 }])]);
-  await db.query("SELECT set_config('test.uid',$1,false)", [receiver]);
+  await db.query("SELECT set_config('test.uid',$1,false),set_config('test.email','receiver@example.test',false)", [receiver]);
   await one("SELECT public.stock_transfer_receive($1,'Verified Receiver',false,NULL)", [ownedTransfer]);
   const forged = randomUUID();
   await db.exec("BEGIN");
@@ -350,6 +373,13 @@ try {
   assert.equal(ownedFacts[1].headers[0].discrepancy_reason, "One item short");
   assert.equal(ownedFacts[1].logs.length, 1);
   assert.notEqual(ownedFacts[1].logs[0].id, forged);
+  if (stockWitness) {
+    assert.deepEqual(await stockLegs(ownedTransfer), [
+      { phase: "dispatch", store_id: "A", actor_id: ids.actor, product_id: ids.product2, before: "40", after: "38" },
+      { phase: "verify", store_id: "B", actor_id: receiver, product_id: ids.product2, before: "0", after: "1" },
+    ]);
+    console.log("PASS stock-history witnesses bind both real transfer legs and preserve grouped replay, denial and rollback.");
+  }
   assert.deepEqual(ownedFacts[1].stock.map(row => [row.product_id, row.branch_balance]), [[ids.product2, 1]]);
   assert.equal(await one(`SELECT seq::text FROM pos_sync_feed_v1.stock_revision_coverage WHERE scope_id='B'
     AND product_id=$1 AND product_version=$2`, [ids.product2, ownedFacts[1].stock[0].row_version]), ownedGroups[1].seq);

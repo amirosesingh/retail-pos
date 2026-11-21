@@ -4,6 +4,27 @@
 /database/sqlserver/prepared/025_shift_financial_bases.sql text eol=lf
 /database/sqlserver/prepared/026_shift_financial_operations.sql text eol=lf
 /docs/database/shift-financial-upgrade-manifest.json text eol=lf
+/supabase/migrations/20261105113916_stock_history_effective_ledger.sql text eol=lf
+/supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql text eol=lf
+/supabase/migrations/20261105232647_stock_history_author_claim_admission.sql text eol=lf
+/supabase/migrations/20261106035442_stock_history_original_source_receipts.sql text eol=lf
+/supabase/migrations/20261106042742_stock_history_verified_source_membership.sql text eol=lf
+/supabase/migrations/20261106065813_stock_history_selected_time_period_reader.sql text eol=lf
+/supabase/migrations/20261106073851_stock_history_coverage_frontiers.sql text eol=lf
+/scripts/preparation/stock-history-recorded-openings.sql text eol=lf
+/scripts/preparation/stock-history-physical-stocktakes.sql text eol=lf
+/scripts/preparation/stock-history-replica-export.sql text eol=lf
+/scripts/preparation/stock-history-product-merge.sql text eol=lf
+/scripts/preparation/stock-history-product-merge-evidence.sql text eol=lf
+/database/sqlserver/prepared/stock-history-product-merge-intents.sql text eol=lf
+/database/sqlserver/prepared/stock-history-stocktake-fence.sql text eol=lf
+/scripts/preparation/stock-history-stocktake-cutover.sql text eol=lf
+/scripts/preparation/stock-history-product-membership.sql text eol=lf
+/scripts/preparation/stock-history-transfer-legs.sql text eol=lf
+/scripts/preparation/stock-history-online-sponsorship-missed-bill.sql text eol=lf
+/scripts/preparation/pos-stock-history-grouped-refund-origin-v1.sql text eol=lf
+/scripts/preparation/pos-stock-history-fin62-refund-origin-v1.sql text eol=lf
+/database/sqlserver/prepared/031_stock_history_effective_ledger.sql text eol=lf
 /database/sqlserver/retail-pos-existing-upgrade-1.4.82.sql text eol=lf
 /database/sqlserver/prepared/existing-upgrade-1.4.82.manifest.json text eol=lf
 # Exact source provenance for that artifact. These entries do not change blobs.

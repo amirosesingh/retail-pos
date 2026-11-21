@@ -95,6 +95,25 @@ const shiftAuthority = new (require("./shift-authority.cjs").ShiftAuthorAuthorit
   terminal:()=>terminalStore.read(),project:()=>cloudCredentials.read({strict:true})?.url,
   branch:()=>localBranchId(),isManagementDevice:()=>isManagementDevice(),backendUrl:()=>authorizationServerUrl(),
 });
+const { installedStockHistoryEnrollment, createStockHistoryRuntime } = require("./stock-history-runtime.cjs");
+const stockHistory = createStockHistoryRuntime({
+  enrollment: installedStockHistoryEnrollment(process.env),
+  manager: databaseManager, cloud: syncCloud, keys: shiftAuthorKeys, session: adminSession,
+  terminal:()=>terminalStore.read(), branch:localBranchId, project:()=>cloudCredentials.read({strict:true})?.url,
+  stocktakeBackend: {
+    drain: options => syncCoordinator.runFinal(options),
+    loadLease: ({ branchId, terminalId, databaseId, stocktakeId }, purpose) =>
+      syncCloud.loadStocktakeLease({ branchId, terminalId, databaseId, stocktakeId, purpose }),
+    loadRelease: ({ branchId, terminalId, databaseId, stocktakeId }) =>
+      syncCloud.loadStocktakeRelease({ branchId, terminalId, databaseId, stocktakeId }),
+  },
+  ready:()=>{
+    const state=databaseService.snapshot();
+    return process.platform==="win32" && app.hasSingleInstanceLock() && !safeMode &&
+      (!quitting || closeWriteBarrier.sealed) && !jobManager.running && !localDataPreparePromise &&
+      state.enabled && state.configured && state.connected && state.tradingReady && !isManagementDevice();
+  },
+});
 const changeReader = new ChangeReader(databaseManager, syncRegistry, {reviewedShiftRecovery:{
   prepare:graph=>legacyShiftRecovery?.prepareCoverage(graph),
   verify:(tx,token,graph,branch)=>legacyShiftRecovery.verifyCoverage(tx,token,graph,branch),
@@ -102,7 +121,7 @@ const changeReader = new ChangeReader(databaseManager, syncRegistry, {reviewedSh
 const conflictRepository = new ConflictRepository(databaseManager);
 const uploadCashCheckout = wire => cashCheckoutRuntime.upload(wire);
 const uploadGroupedRefund = wire => groupedRefundRuntime.upload(wire);
-const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof),uploadCashCheckout,uploadGroupedRefund });
+const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof),uploadCashCheckout,uploadGroupedRefund,stockHistory:stockHistory.uploader });
 let legacyShiftRecovery;
 const legacyRecoveryRuntime = require("./sync/legacy-shift-recovery-runtime.cjs").createLegacyShiftRecoveryRuntime({
   reader:changeReader,recovery:()=>legacyShiftRecovery,enabled:supportsLegacyShiftRecovery,activeBranch:localBranchId,
@@ -116,12 +135,15 @@ const legacyRecoveryRuntime = require("./sync/legacy-shift-recovery-runtime.cjs"
 const groupedSettingsPilot = installedGroupedSettingsPilot(process.env);
 const pullWorker = new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange });
 const syncCoordinator = new SyncCoordinator({
-  pushWorker: {reader:legacyRecoveryRuntime.reader,run:options=>legacyRecoveryRuntime.run(options,value=>shiftFinancialRuntime.runPush(value))},
+  pushWorker: {reader:legacyRecoveryRuntime.reader,cloud:syncCloud,stockHistory:stockHistory.uploader,
+    run:options=>legacyRecoveryRuntime.run(options,value=>shiftFinancialRuntime.runPush(value))},
   pullWorker,
   recoverHeldStatuses:recoverLocalHeldStatuses,
   groupedSettingsPilot: groupedSettingsPilot?.enrollment,
   groupedSettingsPilotMode: groupedSettingsPilot?.mode,
   uploadStoreSettingsEdit: () => storeSettingsEdits.upload(),
+  observeStockFrontier: options => stockHistory.observe(options),
+  downloadStockHistory: options => stockHistory.download(options),
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",legacyRecoveryRuntime.status(state)); },
 });
 const { cashSenderEnrollment, createCashCheckoutRuntime } = require("./sync/cash-checkout-runtime.cjs");
@@ -178,13 +200,13 @@ async function ownsHistoryRecoveryExecution({jobId,source,requestParent=null}={}
 const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader,publish:publishBusinessChange,historyExecutionProof:ownsHistoryRecoveryExecution,recoverHeldStatuses:recoverLocalHeldStatuses });
 const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({ cloud:syncCloud, databaseService, connectionManager:databaseManager, lifecycle:localDataLifecycle, jobs:jobRepository, coordinator:syncCoordinator });
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
-const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
+const operationsRepository = new OperationsRepository(databaseManager, syncRegistry, { stockHistory:stockHistory.capture });
 const heldStatusRecovery = new HeldStatusRecovery({manager:databaseManager,registry:syncRegistry,cloud:syncCloud,publish:publishBusinessChange});
 const shiftSyncJournal = new ShiftSyncJournal(operationsRepository,{authorRequired:true});
 // Main-private FIN62 seam. No renderer/IPC configuration and no activation.
 const shiftFinancialDraftProvider = null;
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
-const receiptRepository = new ReceiptRepository(databaseManager, syncCloud);
+const receiptRepository = new ReceiptRepository(databaseManager, syncCloud, { stockHistory:stockHistory.capture });
 const groupedRefundRuntime = require("./sync/grouped-refund-runtime.cjs").createGroupedRefundRuntime({
   configured: configuredCashSender, cash: cashCheckoutRuntime, cloud: syncCloud, coordinator: syncCoordinator, connectionManager: databaseManager,
   authority: shiftAuthority, legacyRepository: () => receiptRepository,
@@ -192,7 +214,7 @@ const groupedRefundRuntime = require("./sync/grouped-refund-runtime.cjs").create
 const shiftFinancialRuntime = new (require('./db/shift-financial-runtime.cjs').ShiftFinancialRuntime)({
   manager:databaseManager,cloud:syncCloud,terminal:()=>terminalStore.read(),authority:shiftAuthority,
   vault:require('./security/financial-capability-vault.cjs').createFinancialCapabilityVault({safeStorage,directory:()=>app.getPath('userData')}),
-  operationsRepository,registry:syncRegistry,checkpoints:syncCheckpoints,uploadCashCheckout,uploadGroupedRefund,
+  operationsRepository,registry:syncRegistry,checkpoints:syncCheckpoints,uploadCashCheckout,uploadGroupedRefund,stockHistory:stockHistory.uploader,
   legacy:{aggregate:aggregateRepository,receipts:receiptRepository,journal:shiftSyncJournal,push:legacyPushWorker},
 });
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
@@ -2632,6 +2654,32 @@ function registerIpc() {
     const snapshot = await operationsRepository.snapshot(authorizedLocalBranch(), terminalStore.read()?.tokenId ?? null, { salesOnly: options?.salesOnly === true, onProgress: (progress) => { if (!_e.sender.isDestroyed()) _e.sender.send("business:read-progress", progress); } });
     return require("./read-snapshot-policy.cjs").filterSnapshot({ ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) }, adminSession);
   }));
+  require("./stock-history-ipc.cjs").registerStockHistoryRead({
+    ipcMain, manager:databaseManager, session:adminSession, terminal:()=>terminalStore.read(),
+    branch:()=>authorizedLocalBranch(), context:()=>[authorizationServerUrl(),cloudCredentials.read()?.url],
+    isPosSender:event=>event.sender===mainWindow?.webContents&&event.senderFrame===event.sender.mainFrame,
+  });
+  require("./stock-history-ipc.cjs").registerStocktakeControl({
+    ipcMain, session: adminSession, coordinator: syncCoordinator, run: stockHistory.stocktake,
+    isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
+  });
+  const nativeProductMerge = require("./product-merge-ipc.cjs");
+  nativeProductMerge.registerProductMerge({
+    ipcMain, isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
+    runWrite: work => closeWriteBarrier.run(work), publish: publishBusinessChange,
+    runtime: nativeProductMerge.createProductMergeRuntime({
+      enrollment: /^\d+\.\d+\.\d+-beta\.\d+$/.test(app.getVersion()) || (!app.isPackaged && process.env.POS_RELEASE_CHANNEL === 'beta')
+        ? nativeProductMerge.installedProductMergeEnrollment(process.env) : null,
+      manager: databaseManager, session: adminSession, cloud: syncCloud, coordinator: syncCoordinator,
+      ready: () => databaseService.snapshot().tradingReady && !isManagementDevice() && !safeMode && !quitting &&
+        !jobManager.running && !localDataPreparePromise,
+    }),
+  });
+  require("./stock-arrival-ipc.cjs").registerStockArrivalCapability({
+    ipcMain,manager:databaseManager,session:adminSession,terminal:()=>terminalStore.read(),branch:()=>authorizedLocalBranch(),
+    context:()=>[authorizationServerUrl(),cloudCredentials.read()?.url],captureReady:stockHistory.captureReady,
+    isPosSender:event=>event.sender===mainWindow?.webContents&&event.senderFrame===event.sender.mainFrame,
+  });
   ipcMain.handle("business:management-report", (_e, options) => guard.guarded(async () => {
     try {
       const safe = guard.options(options, { name: "management report", max: 10 });

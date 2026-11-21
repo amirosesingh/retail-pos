@@ -1,0 +1,14 @@
+export type StockEventAction='SALE'|'REFUND'|'RECEIVE'|'ADJUST'|'PRODUCT_CREATE'|'PRODUCT_MERGE'|'TRANSFER_DISPATCH'|'TRANSFER_RECEIVE'|'SPONSORSHIP_ISSUE'|'MISSED_BILL';
+export type StockEventProof={version:1;algorithm:'Ed25519';keyId:string;projectOrigin:string;terminalId:string;authorId:string;subject:string;branchId:string;operationId:string;movementId:string;action:StockEventAction;payloadHash:string;sourceManifestJson?:string;signature:string};
+export const ACTIONS:Readonly<Record<StockEventAction,{readonly kind:string;readonly permissions:readonly string[];readonly adminOnly?:boolean}>>;
+export function unsignedStockEvent(input:unknown):Omit<StockEventProof,'signature'>;
+export function stockEventMessage(input:unknown):string;
+export function normalizeStockEvent(input:unknown):StockEventProof;
+export type StockSourceCohortProof={version:1;algorithm:'Ed25519';keyId:string;projectOrigin:string;terminalId:string;authorId:string;subject:string;branchId:string;operationId:string;sourceDatabaseId:string;sourceSequence:string;sourcePredecessorRoot:string|null;action:Exclude<StockEventAction,'SALE'|'REFUND'>;sourceRoot:string;sourceCount:number;signature:string};
+export function unsignedStockSourceCohort(input:unknown):Omit<StockSourceCohortProof,'signature'>;
+export function stockSourceCohortMessage(input:unknown):string;
+export function normalizeStockSourceCohortProof(input:unknown):StockSourceCohortProof;
+export type StockCoverageFrontierProof={version:1;algorithm:'Ed25519';keyId:string;projectOrigin:string;terminalId:string;authorId:string;subject:string;branchId:string;challengeId:string;frontierHash:string;signature:string};
+export function unsignedStockCoverageFrontier(input:unknown):Omit<StockCoverageFrontierProof,'signature'>;
+export function stockCoverageFrontierMessage(input:unknown):string;
+export function normalizeStockCoverageFrontierProof(input:unknown):StockCoverageFrontierProof;

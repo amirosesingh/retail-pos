@@ -57,6 +57,8 @@ import { TablePagination, usePagination } from "@/platforms/web/components/pos/T
 import { Switch } from "@/components/ui/switch";
 import { BulkImportDialog } from "@/platforms/web/components/pos/BulkImportDialog";
 import { MergeProductsDialog } from "@/platforms/web/components/pos/MergeProductsDialog";
+import { loadProductMergeClient } from "@/lib/stock-history-product-merge-browser";
+import type { StockHistoryProductMergeRequest } from "@/lib/stock-history-product-merge";
 import { commitLabel } from "@/core/api/pos-db";
 import { notifyError } from "@/lib/notify";
 import { ProductDeleteBlockedDialog } from "@/platforms/web/components/pos/ProductDeleteBlockedDialog";
@@ -90,6 +92,7 @@ import { InventorySummaryCards } from "@/platforms/web/components/pos/InventoryS
 import { InventoryCatalogueStatus } from "@/platforms/web/components/pos/InventoryCatalogueStatus";
 import { totalUnitCost } from "@/lib/total-unit-cost";
 import { TotalUnitCostDialog } from "@/platforms/web/components/pos/TotalUnitCostDialog";
+import { StockHistoryDialog } from "@/platforms/web/components/pos/StockHistoryDialog";
 
 export const Route = createFileRoute("/inventory")({
   head: () => ({
@@ -145,9 +148,10 @@ function Inventory() {
     patchProducts,
     archiveProducts,
     restoreProducts,
+    mergeProducts,
   } = usePos();
   const [branchPriceOnly, setBranchPriceOnly] = useState(false);
-  const { can, isAdmin, user, terminalStoreId, canSwitchStores } = useAuth();
+  const { can, isAdmin, user, terminalUser, terminalStoreId, canSwitchStores } = useAuth();
   const { visible } = useVisibility();
   // Money columns need the reporting permission *and* the administrator's
   // "show cost & margin" switch for this role.
@@ -184,7 +188,24 @@ function Inventory() {
   const [expandedProducts, setExpandedProducts] = useState<string[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
+  const [savedMerge, setSavedMerge] = useState<{ actorId: string; request: StockHistoryProductMergeRequest } | null>(null);
+  const [checkingSavedMerge, setCheckingSavedMerge] = useState(false);
+  const mergeActor = user?.staffId ?? terminalUser?.userCode ?? null;
+  useEffect(() => {
+    const branchId = state.currentStoreId;
+    if (!canMerge || !mergeActor) return;
+    let live = true;
+    void loadProductMergeClient()
+      .then(({ readPendingProductMerge }) => live ? readPendingProductMerge(branchId, mergeActor) : null)
+      .then(request => {
+        if (live) setSavedMerge(request ? { actorId: mergeActor, request } : null);
+      }).catch(error => {
+        if (live) notifyError(error, "Reading saved product merge");
+      });
+    return () => { live = false; };
+  }, [canMerge, mergeActor, mergeOpen, state.currentStoreId]);
   const [exportOpen, setExportOpen] = useState(false);
+  const [stockHistoryOpen, setStockHistoryOpen] = useState(false);
   const [unitCostEdit, setUnitCostEdit] = useState<{ ids: string[]; initialTarget: "default" | "selected"; productName?: string } | null>(null);
   const [blocked, setBlocked] = useState<BlockedDelete[]>([]);
   const [deleting, setDeleting] = useState<string[]>([]);
@@ -429,6 +450,24 @@ function Inventory() {
               <Archive className="size-4" /> {currentStockColumnQuantity !== null ? "Active + Archive" : showArchived ? "Show active" : "Show archived"}
             </Button>
             <div ref={setColumnControlsTarget} className="flex items-center [&>button]:w-full sm:[&>button]:w-auto" />
+            {can("can_view_inventory") && <Button variant="outline" size="sm" onClick={() => setStockHistoryOpen(true)}><History className="size-4" />Stock at time</Button>}
+            {canMerge && savedMerge && savedMerge.actorId === mergeActor && savedMerge.request.branchId === state.currentStoreId && (
+              <Button variant="outline" size="sm" disabled={checkingSavedMerge} onClick={async () => {
+                const { masterId, operationId, roster } = savedMerge.request;
+                setCheckingSavedMerge(true);
+                try {
+                  const held = await mergeProducts(masterId, roster.filter(row => row.id !== masterId).map(row => row.id), operationId);
+                  setSavedMerge(current => current?.request.operationId === operationId ? null : current);
+                  setSelected([]);
+                  if (held.length) setBlocked(held);
+                  toast.success("Saved merge confirmed");
+                } catch (error) {
+                  notifyError(error, "Checking saved product merge");
+                } finally {
+                  setCheckingSavedMerge(false);
+                }
+              }}>{checkingSavedMerge ? "Checking saved merge…" : "Check saved merge"}</Button>
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="outline" size="sm" aria-label="Inventory actions"><MoreHorizontal className="size-4" />Actions</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
@@ -449,6 +488,7 @@ function Inventory() {
             </DropdownMenu>
 
             {unitCostEdit && <TotalUnitCostDialog open onOpenChange={open => { if (!open) setUnitCostEdit(null); }} selected={unitCostEdit.ids} initialTarget={unitCostEdit.initialTarget} productName={unitCostEdit.productName} />}
+            <StockHistoryDialog open={stockHistoryOpen} onOpenChange={setStockHistoryOpen} branchId={currentStore.id} branchName={currentStore.name} />
             <Dialog open={exportOpen} onOpenChange={setExportOpen}>
               <DialogContent className="max-w-sm">
                 <DialogHeader><DialogTitle>Export products to Excel</DialogTitle></DialogHeader>
