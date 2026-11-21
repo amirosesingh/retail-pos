@@ -10258,6 +10258,21 @@ window. Also prepare/test ONE transaction owner for the actual migration tool/
 ledger path before final hash review; current draft BEGIN/COMMIT wrappers must
 not be submitted blindly. No approved bytes may be stripped after approval.
 No data, stock, sales, permissions, queues, checkpoints or real keys changed.
+
+## 21 November — Stock Report Beta continuation and rules
+
+The owner resumed PR #401 on Beta only and approved a brief stock-changing
+work pause for the first stocktake on the isolated Retail POS Beta test
+branch. This supersedes the 6 November source-work deferral for PR #401.
+Preserve production and saved operator data. The owner also approved backing
+up and reconciling the local rules while preserving their existing edits.
+
+Review baseline `2f227966` on Beta base `b8cbaea3`. Finish the protected
+product-merge route and its matching native acceptance, preserve held products
+and prove stock conservation, then verify the first opening and Electron report
+download with the agreed scoped two-till workflow. Record disposable and live
+evidence separately. Apply only separately reviewed exact Beta artifacts, and
+keep installer publication under the existing release approval rule.
 ## 6 November — Stock PR401 exact-head CI correction
 
 Root delegated only the confirmed0a973684 CI failures after stock writer granted

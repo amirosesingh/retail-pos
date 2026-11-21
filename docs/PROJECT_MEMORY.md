@@ -2334,3 +2334,13 @@ scoped legacy item count0→6 and foreign feed items3→0. Its migration ledger 
 is20261117052540. Preserve original NULL fields; no financial backfill or cursor
 reset occurred. Native comparison/guard code still requires a new approved beta
 installer before installed-client acceptance; publication is a separate action.
+
+## 21 November — approved Stock Report and project rules
+
+Use the owner-approved brief stock pause only for the first isolated Retail
+POS Beta stocktake. Require each writer's checked cutoff, a full product count
+including zeros, independent review, and exact local/hosted proof. Continue
+approved source work and relevant tests in PR #401 without repeating routine
+approval. Preserve separate authorization for protected database actions,
+installer publication and production. The local rules reconciliation preserves
+the owner's existing sections and has a byte-verified prior copy.
