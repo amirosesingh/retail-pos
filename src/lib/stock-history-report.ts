@@ -42,7 +42,7 @@ export function stockHistoryExplanation(reason:string):string{
  switch(reason){
   case 'SCHEMA_NOT_INSTALLED':return 'This database needs the reviewed stock-history upgrade.';
   case 'PARTIAL_SCHEMA':case 'UNKNOWN_SCHEMA':return 'The stock-history database structure needs review; existing stock has not been changed.';
-  case 'NO_VERIFIED_OPENING':return 'Historical quantities are unavailable until an opening balance and movement coverage have been verified.';
+  case 'NO_VERIFIED_OPENING':return 'This location needs a verified opening stocktake. Historical quantities can be shown from that opening when movement coverage is verified.';
   case 'UNVERIFIED_OPENING':return 'The opening balance is not fully verified.';
   case 'MISSING_OPENING':return 'An item has no verified opening or creation evidence in this historical scope.';
   case 'BEFORE_BASELINE':return 'This date is earlier than the verified opening balance.';

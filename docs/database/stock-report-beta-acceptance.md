@@ -156,6 +156,20 @@ verifies the matching result already brought down by sync. The latter leaves
 stock untouched and records completion without another upload. Divergent or
 unverifiable local facts keep the original attempt available for review.
 
+## Stock Report on an existing database
+
+The Stock Report page opens with the branch's current inventory and business-zone
+date and time. It uses the same authorized inventory data as the Inventory
+page, including local SQL when a terminal is operating offline. Current
+stock remains available on an existing database before its first opening
+stocktake. The date and time controls show historical quantities on the same
+page when the selected cutoff has verified coverage.
+
+An authorized opening stocktake establishes the first verified cutoff, including
+explicit zero counts. Earlier dates require their own independently verified
+opening and complete movements. Dates after the opening require verified
+movement coverage through the selected time.
+
 ## Run the approved synthetic-branch acceptance
 
 1. Confirm the exact candidate artifact hashes and Retail POS Beta project.

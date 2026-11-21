@@ -1,6 +1,6 @@
 import {readFileSync} from 'node:fs';
 import {describe,expect,it} from 'vitest';
-import {stockReportDisplayGrade} from '@/platforms/web/components/pos/StockHistoryDialog';
+import {stockReportDisplayGrade} from '@/platforms/web/components/pos/StockReport';
 import type {StockHistoryPage} from '../stock-history-report';
 
 const page=():StockHistoryPage=>({status:'complete',reasons:[],cutoff:'2026-11-06T00:00:00.1234567Z',timeZone:'Asia/Brunei',branchId:'a',
@@ -35,7 +35,7 @@ describe('Stock report presentation follows supplied accepted-ledger evidence',(
   expect(stockReportDisplayGrade(record)).toBe('provisional');
  });
  it('uses the same authorized request and supplied row strings, with no client sums or extra reader',()=>{
-  const source=readFileSync('src/platforms/web/components/pos/StockHistoryDialog.tsx','utf8');
+  const source=readFileSync('src/platforms/web/components/pos/StockReport.tsx','utf8');
   expect(source).toContain('stockReportDay(value.slice(0, 10), timeZone).start');
   expect(source).toContain('Object.freeze({ ...selected })');expect(source).toContain('cutoff, timeZone, branchId');
   expect(source).toContain('pageIdentity === identity');expect(source).toContain('!mounted.current');

@@ -1,5 +1,5 @@
 import { canUseEcommerceDevice } from "@/lib/ecommerce-device";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useDebounced } from "@/hooks/use-debounced";
 
@@ -92,7 +92,6 @@ import { InventorySummaryCards } from "@/platforms/web/components/pos/InventoryS
 import { InventoryCatalogueStatus } from "@/platforms/web/components/pos/InventoryCatalogueStatus";
 import { totalUnitCost } from "@/lib/total-unit-cost";
 import { TotalUnitCostDialog } from "@/platforms/web/components/pos/TotalUnitCostDialog";
-import { StockHistoryDialog } from "@/platforms/web/components/pos/StockHistoryDialog";
 
 export const Route = createFileRoute("/inventory")({
   head: () => ({
@@ -205,7 +204,6 @@ function Inventory() {
     return () => { live = false; };
   }, [canMerge, mergeActor, mergeOpen, state.currentStoreId]);
   const [exportOpen, setExportOpen] = useState(false);
-  const [stockHistoryOpen, setStockHistoryOpen] = useState(false);
   const [unitCostEdit, setUnitCostEdit] = useState<{ ids: string[]; initialTarget: "default" | "selected"; productName?: string } | null>(null);
   const [blocked, setBlocked] = useState<BlockedDelete[]>([]);
   const [deleting, setDeleting] = useState<string[]>([]);
@@ -450,7 +448,7 @@ function Inventory() {
               <Archive className="size-4" /> {currentStockColumnQuantity !== null ? "Active + Archive" : showArchived ? "Show active" : "Show archived"}
             </Button>
             <div ref={setColumnControlsTarget} className="flex items-center [&>button]:w-full sm:[&>button]:w-auto" />
-            {can("can_view_inventory") && <Button variant="outline" size="sm" onClick={() => setStockHistoryOpen(true)}><History className="size-4" />Stock at time</Button>}
+            {can("can_view_inventory") && <Button variant="outline" size="sm" asChild><Link to="/reports/inventory"><History className="size-4" />Stock report</Link></Button>}
             {canMerge && savedMerge && savedMerge.actorId === mergeActor && savedMerge.request.branchId === state.currentStoreId && (
               <Button variant="outline" size="sm" disabled={checkingSavedMerge} onClick={async () => {
                 const { masterId, operationId, roster } = savedMerge.request;
@@ -488,7 +486,6 @@ function Inventory() {
             </DropdownMenu>
 
             {unitCostEdit && <TotalUnitCostDialog open onOpenChange={open => { if (!open) setUnitCostEdit(null); }} selected={unitCostEdit.ids} initialTarget={unitCostEdit.initialTarget} productName={unitCostEdit.productName} />}
-            <StockHistoryDialog open={stockHistoryOpen} onOpenChange={setStockHistoryOpen} branchId={currentStore.id} branchName={currentStore.name} />
             <Dialog open={exportOpen} onOpenChange={setExportOpen}>
               <DialogContent className="max-w-sm">
                 <DialogHeader><DialogTitle>Export products to Excel</DialogTitle></DialogHeader>
