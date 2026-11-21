@@ -21,7 +21,7 @@ const { orderSelfReferencingRows } = require("./self-reference-order.cjs");
 const groupedSettings = require("./grouped-store-settings.cjs");
 
 function governanceRequest(payload) {
-  if (payload?.sqlServerHeldSaleReview || payload?.sqlServerSettingsEdit) return true;
+  if (payload?.sqlServerHeldSaleReview || payload?.sqlServerSettingsEdit || payload?.sqlServerStocktakeCutover) return true;
   const tables = new Set(["pos_settings", "pos_store_settings", "authorization_actions", "authorization_action_history"]);
   const field = row => String(row?.scope ?? "").toLowerCase() === "global" &&
     String(row?.scope_id ?? "") === "" && String(row?.key ?? "").startsWith("pos_field:");
@@ -310,6 +310,8 @@ class CloudClient {
     const scopedRead=payload?.sqlServerScopedHistory;
     const groupedRead = payload?.sqlServerGroupedFeed || payload?.sqlServerGroupedSnapshot ||
       payload?.sqlServerGroupedRecovery || payload?.sqlServerCashLegacyCoverage;
+    const stockDownload = payload?.sqlServerStockHistoryDownload;
+    const stocktakeCutover = payload?.sqlServerStocktakeCutover;
     const historyRead=HISTORY_INDEX_ACTIONS.has(scopedRead?.action)?scopedRead:payload?.sqlServerHistoryReconcile;
     const historyBegin=historyRead?.action==='begin'?historyRead:null;
     const historyAuthority=historyBegin?this.requestContext(true):null;
@@ -320,10 +322,11 @@ class CloudClient {
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
       ...(groupedRead || payload?.sqlServerSettingsEdit || payload?.sqlServerCashCheckout || payload?.sqlServerRefund ||
-        payload?.sqlServerStockHistory || payload?.sqlServerStockFrontier || financialAggregate?.stockSourceCohorts ? { redirect: "error" } : {}),
+        payload?.sqlServerStockHistory || payload?.sqlServerStockFrontier || stockDownload || stocktakeCutover || financialAggregate?.stockSourceCohorts ? { redirect: "error" } : {}),
       headers: { "content-type": "application/json", ...(payload?.sqlServerLegacyRecovery ? { "x-pos-legacy-recovery": "1" } : {}) },
       body: requestBody,
-      signal: AbortSignal.timeout(payload?.sqlServerStockFrontier ? 5_000 : historyRead || payload?.sqlServerHeldSaleReview ? 12_000 : 30_000),
+      signal: AbortSignal.timeout(stockDownload ? 4_000 : payload?.sqlServerStockFrontier || stocktakeCutover ? 5_000
+        : historyRead || payload?.sqlServerHeldSaleReview ? 12_000 : 30_000),
     });
       transportStage = "body";
       try {
@@ -337,6 +340,9 @@ class CloudClient {
           data = JSON.parse(await boundedText(response, response.ok ? 65536 : 4096));
         } else if (groupedRead) {
           data = JSON.parse(await boundedText(response, response.ok ? groupedSettings.MAX_RESPONSE_BYTES : 4096));
+        } else if (stockDownload) {
+          const { MAX_RESPONSE_BYTES } = require("./stock-history-download.cjs");
+          data = JSON.parse(await boundedText(response, response.ok ? MAX_RESPONSE_BYTES : 4096));
         } else if(payload?.sqlServerHeldStatus || payload?.sqlServerHeldSaleReview){
           data=JSON.parse(await boundedText(response,2*1024*1024));
         }else if(historyBegin&&response.status===409&&response.headers.get('X-POS-History-Reconcile-Version')==='2'&&
@@ -512,6 +518,38 @@ class CloudClient {
       Object.assign(payload,{frontierJson:batch.frontierJson,proofJson:batch.proofJson});
     }
     return this.request({sqlServerStockFrontier:payload});
+  }
+  downloadStockHistory(batch) {
+    const terminal = this.terminalStore.read() ?? {};
+    const scope = require("../verified-activation.cjs").binding(terminal);
+    if (scope?.mode !== "operations" || scope.platform !== "pc" ||
+      batch?.version !== 1 || batch.branchId !== scope.branchId || batch.terminalId !== scope.id ||
+      !["manifest", "page"].includes(batch.action))
+      require("../db/stock-history-contract.cjs").fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
+    return this.request({ sqlServerStockHistoryDownload: batch });
+  }
+  loadStocktakeLease(batch) { return this.loadStocktakeCutover("lease", batch); }
+  loadStocktakeRelease(batch) { return this.loadStocktakeCutover("release-status", batch); }
+  async loadStocktakeCutover(action, batch) {
+    const { identifier, fail } = require("../db/stock-history-contract.cjs");
+    const { branchId, terminalId, databaseId, stocktakeId, purpose } = batch ?? {};
+    const terminal = require("../verified-activation.cjs").binding(this.terminalStore.read() ?? {});
+    if (terminal?.mode !== "operations" || terminal.platform !== "pc" ||
+        terminal.branchId !== branchId || terminal.id !== terminalId ||
+        (action === "lease" && !["arm", "confirm", "release"].includes(purpose)) ||
+        (action !== "lease" && action !== "release-status")) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
+    const source = this.requestContext(true);
+    const response = await this.request({ sqlServerStocktakeCutover: {
+      version: 1, action, branchId, terminalId, databaseId: identifier(databaseId, true),
+      stocktakeId: identifier(stocktakeId, true), ...(action === "lease" ? { purpose } : {}),
+    } });
+    this.assertRequestContext(source, true);
+    if (response?.ok !== true || response.version !== 1 || response.branchId !== branchId ||
+        response.terminalId !== terminalId || response.projectOrigin !== source.project.projectOrigin ||
+        response.result?.stocktakeId !== stocktakeId || response.result.projectOrigin !== response.projectOrigin ||
+        response.result.branchId !== branchId || response.result.terminalId !== terminalId ||
+        response.result.databaseId !== databaseId) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
+    return response.result;
   }
   pushStockHistory(batch){
     const {identifier,fail}=require('../db/stock-history-contract.cjs');

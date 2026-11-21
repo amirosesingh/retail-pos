@@ -454,6 +454,67 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
  pass('an owner-only catalogue change is captured for cohort invalidation while original historical identity remains');
  await require('./stock-history-period-sqlserver-cases.cjs')({pool,sql,pass});
  await require('./stock-history-read-session-sqlserver-cases.cjs')({pool,sql,connect,database,pass});
+ await require('./stock-history-download-sqlserver-cases.cjs')({pool,sql,inTx,pass});
+
+ const masterProduct=randomUUID(),removedProduct=randomUUID(),blockedProduct=randomUUID();
+ await pool.request().input('master',masterProduct).input('removed',removedProduct).input('blocked',blockedProduct).batch(`
+  INSERT dbo.products(id,name,owner_store_id,stock_by_store) VALUES
+   (@master,N'Master',N'a',N'{"a":6,"b":4}'),
+   (@removed,N'Removed duplicate',N'a',N'{"a":2,"b":1}'),
+   (@blocked,N'Referenced duplicate',N'a',N'{"a":3,"b":2}');
+  CREATE TABLE dbo.fixture_product_reference(id uniqueidentifier NOT NULL REFERENCES dbo.products(id));
+  INSERT dbo.fixture_product_reference(id) VALUES(@blocked);
+  UPDATE dbo.stock_history_heads SET coverage_state=N'complete',baseline_id=NEWID(),
+   coverage_from_ticks=0,coverage_through_ticks=0 WHERE store_id IN(N'a',N'b');
+ `);
+ context.author={action:'PRODUCT_CREATE',signMovement:()=>assert.fail('An existing product is not a signed product creation')};
+ context.requireSourceManifests=true;
+ const catalogueWrite=(operationId,op,write)=>inTx(async tx=>{
+  const token=await store.begin(tx,[op],{operationId,branchId:'a',terminalId:'t',kind:'product'});
+  await write(new sql.Request(tx));
+  return store.finish(tx,token);
+ });
+ const productMovements=async operationId=>(await pool.request().input('operation',operationId).query(`
+   SELECT store_id,quantity_delta,author_proof_json FROM dbo.stock_history_movements WHERE operation_id=@operation ORDER BY store_id;`
+ )).recordset;
+ const editId=randomUUID();
+ const edit={kind:'upsert',table:'products',rows:[{id:masterProduct}]};
+ assert.deepEqual(await catalogueWrite(editId,edit,q=>q.input('id',masterProduct).query("UPDATE dbo.products SET name=N'Imported metadata' WHERE id=@id;")),
+  {captured:0,available:true,incomplete:false});
+ assert.deepEqual(await productMovements(editId),[]);
+ pass('a catalogue-only imported edit preserves stock and coverage without generating any movement');
+
+ const mergeMasterId=randomUUID();
+ assert.deepEqual(await catalogueWrite(mergeMasterId,edit,q=>q.input('id',masterProduct).query(
+  `UPDATE dbo.products SET stock_by_store=N'{"a":11,"b":7}' WHERE id=@id;`)),{captured:2,available:true,incomplete:true});
+ assert.deepEqual(await productMovements(mergeMasterId),[
+  {store_id:'a',quantity_delta:5,author_proof_json:null},
+  {store_id:'b',quantity_delta:3,author_proof_json:null},
+ ]);
+ assert.deepEqual((await pool.request().query("SELECT store_id,coverage_state FROM dbo.stock_history_heads WHERE store_id IN(N'a',N'b') ORDER BY store_id;")).recordset,
+  [{store_id:'a',coverage_state:'incomplete'},{store_id:'b',coverage_state:'incomplete'}]);
+ pass('actual native merge-master effects remain unsigned and invalidate each changed branch');
+
+ const deleteProduct=(product,operationId)=>catalogueWrite(operationId,{kind:'delete',table:'products',match:{id:product}},
+  q=>q.input('id',product).query('DELETE dbo.products WHERE id=@id;'));
+ const acceptedDelete=randomUUID(),refusedDelete=randomUUID();
+ assert.deepEqual(await deleteProduct(removedProduct,acceptedDelete),{captured:2,available:true,incomplete:true});
+ await assert.rejects(deleteProduct(blockedProduct,refusedDelete),/fixture_product_reference/);
+ assert.deepEqual(await productMovements(acceptedDelete),[
+  {store_id:'a',quantity_delta:-2,author_proof_json:null},
+  {store_id:'b',quantity_delta:-1,author_proof_json:null},
+ ]);
+ assert.deepEqual(await productMovements(refusedDelete),[]);
+ assert.equal((await pool.request().input('id',blockedProduct).query('SELECT COUNT(*) n FROM dbo.products WHERE id=@id;')).recordset[0].n,1);
+ pass('native product deletion records a separate accepted leg and no leg for the declined deletion');
+
+ const activityOperation=randomUUID(),activityId=randomUUID();
+ const activityOp={kind:'upsert',table:'item_activity_logs',rows:[{id:activityId,product_id:masterProduct}]};
+ assert.deepEqual(await catalogueWrite(activityOperation,activityOp,q=>q.input('id',activityId).input('product',masterProduct).query(`
+  INSERT dbo.item_activity_logs(id,product_id,store_id,quantity_delta,activity_type) VALUES(@id,@product,N'a',9,N'adjustment');
+ `)),{captured:0,available:true,incomplete:true});
+ assert.deepEqual(await productMovements(activityOperation),[]);
+ pass('an activity-only stock claim in a product transaction cannot manufacture a physical movement');
  console.log('PASS '+groups+' actual disposable stock-history SQL groups');
 }finally{
  await pool?.close().catch(()=>{});if(created)await master.request().batch('ALTER DATABASE ['+database+'] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;DROP DATABASE ['+database+'];');await master?.close().catch(()=>{});

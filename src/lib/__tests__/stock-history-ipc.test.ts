@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
-import { describe, expect, it } from "vitest";
-const require = createRequire(import.meta.url), { createStockHistoryReader } = require("../../../electron/stock-history-ipc.cjs");
+import { describe, expect, it, vi } from "vitest";
+const require = createRequire(import.meta.url), { createStockHistoryReader, registerStocktakeControl } = require("../../../electron/stock-history-ipc.cjs");
 const actorId = "00000000-0000-4000-8000-000000000001", databaseGuid = "00000000-0000-4000-8000-000000000002";
 const request = { branchId: "a", cutoff: "2026-11-06T00:00:00.0000000Z", timeZone: "Asia/Brunei" };
 function fixture() {
@@ -61,4 +61,27 @@ describe("Main-owned stock history read admission", () => {
     const f = fixture(); f.after(() => { f.person.is_active = false; });
     expect(await f.read("pos",request)).toMatchObject({ ok: false,code: "PERMISSION_DENIED" }); expect(f.events).toEqual(["begin","commit"]);
   });
+});
+
+it("admits stocktake control only from the verified admin POS frame under the live sync lease", async () => {
+  let handler: (event: string, input: unknown) => Promise<unknown> = async () => { throw new Error("Handler missing"); };
+  let admin = false, lease = true;
+  const run = vi.fn(async (_action: string, options: { assertLease: () => boolean }) => ({ ready: options.assertLease() }));
+  registerStocktakeControl({
+    ipcMain: { handle(_channel: string, execute: typeof handler) { handler = execute; } },
+    session: { hasPosAuthority: () => true, hasLevel: () => admin, epoch: () => 1 },
+    isPosSender: (event: string) => event === "pos",
+    coordinator: { ownsExclusive: () => lease, paused: false, withExclusive: async (work: () => unknown) => work() },
+    run,
+  });
+  const input = { action: "arm", stocktakeId: actorId };
+  expect(await handler("pos", input)).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+  admin = true;
+  expect(await handler("customer", input)).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+  expect(await handler("pos", { ...input, branchId: "B" })).toMatchObject({ ok: false, code: "ESTOCK_STOCKTAKE_INVALID" });
+  lease = false;
+  expect(await handler("pos", input)).toMatchObject({ ok: false, code: "ESTOCK_HISTORY_CONTEXT_CHANGED" });
+  expect(run).not.toHaveBeenCalled();
+  lease = true;
+  expect(await handler("pos", input)).toEqual({ ok: true, result: { ready: true } });
 });

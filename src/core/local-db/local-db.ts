@@ -747,6 +747,9 @@ export type PosBridge = {
   }>;
   stockHistory?: (request:StockHistoryRequest)=>Promise<{ok:boolean;page?:StockHistoryPage;code?:string;error?:string}>;
   stockHistoryMovements?: (request: StockHistoryMovementRequest) => Promise<{ ok: boolean; page?: StockHistoryMovementPage; code?: string; error?: string }>;
+  stocktakeControl?: (request: { stocktakeId: string } & ({ action: "arm" } |
+    { action: "prove"; phase: "arm" | "confirm" } | { action: "release"; fenceGeneration: string })) =>
+    Promise<{ ok: boolean; result?: unknown; code?: string; error?: string }>;
   stockArrivalCapability?: ()=>Promise<{ok:boolean;available?:boolean;reason?:string;code?:string;error?:string}>;
   onReadProgress?: (cb: (progress: { table: string; completed: number }) => void) => () => void;
   onBusinessChanged?: (

@@ -9,7 +9,13 @@ function records(operations,table){
 }
 function id(value){try{return contract.identifier(value,true);}catch{return null;}}
 function sameRefs(left,right){return JSON.stringify(left)===JSON.stringify(right);}
-async function sourceManifestForMovement({action,row,operations,before,after,claims,request,arrivalReason}){
+function productCreationEffect(row,before,after,branchId){
+ if(row.store_id!==branchId||row.local_delta!==row.quantity_delta||row.local_delta==='0'||row.source_refs?.length||
+  before.some(product=>id(product.id)===row.product_id))return false;
+ const created=after.find(product=>id(product.id)===row.product_id);
+ return Boolean(created)&&String(contract.stockMap(created.stock_by_store).get(branchId)??0n)===row.quantity_delta;
+}
+async function sourceManifestForMovement({action,row,operations,before,after,claims,request,arrivalReason,branchId}){
  let document;
  if(action==='ADJUST'){
   const refs=(row.source_refs??[]).filter(ref=>ref[0]==='stock_adjustments');
@@ -18,7 +24,7 @@ async function sourceManifestForMovement({action,row,operations,before,after,cla
   if(!records(operations,'stock_adjustments').some(record=>id(record.id)===refs[0][1]))return null;
   document={type:'stock_adjustments',id:refs[0][1]};
  }else if(action==='PRODUCT_CREATE'){
-  if(before.some(product=>id(product.id)===row.product_id)||!after.some(product=>id(product.id)===row.product_id)||
+  if(!productCreationEffect(row,before,after,branchId)||
    !records(operations,'products').some(product=>id(product.id)===row.product_id))return null;
   document={type:'products',id:row.product_id};
  }else if(action==='RECEIVE'){
@@ -45,4 +51,4 @@ async function sourceManifestForMovement({action,row,operations,before,after,cla
  if(!sameRefs(JSON.parse(json).sourceRefs,row.source_refs??[]))return null;
  return json;
 }
-module.exports={sourceManifestForMovement};
+module.exports={productCreationEffect,sourceManifestForMovement};

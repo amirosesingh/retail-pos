@@ -21,16 +21,17 @@ let started=false,groups=0;const sessions=[],pass=name=>{groups++;console.log('P
  const{key,pair,project,database}=f.stockSourceFixture,header=JSON.parse(JSON.parse(op.submission.sourceCohortJson).proofJson);
  await control.query(fs.readFileSync('supabase/migrations/20261106073851_stock_history_coverage_frontiers.sql','utf8'));
  const scalar=async sql=>Object.values((await control.query(sql))[0])[0];
- const challengeSql=id=>bind("SELECT pos_stock_history_frontier_challenge($1,$2,'A',$3,$4,$5) result",[id,project,f.terminal,f.author,key]);
- const challenge=async()=>JSON.parse((await control.query(challengeSql(crypto.randomUUID())))[0].result);
- const sign=(c,changes={})=>{
-  const raw=stockCoverageFrontierJson({version:1,projectOrigin:project,branchId:'A',terminalId:f.terminal,authorId:f.author,databaseId:database,
-   challengeId:c.challengeId,nonce:c.nonce,cohortHash:c.cohortHash,writerRevision:'stock-history-source.v1',sourceSequence:'1',sourceRoot:header.sourceRoot,
+ const originalWriter={terminalId:f.terminal,authorId:f.author,keyId:key,pair,database,sourceSequence:'1',sourceRoot:header.sourceRoot};
+ const challengeSql=(id,writer=originalWriter)=>bind("SELECT pos_stock_history_frontier_challenge($1,$2,'A',$3,$4,$5) result",[id,project,writer.terminalId,writer.authorId,writer.keyId]);
+ const challenge=async writer=>JSON.parse((await control.query(challengeSql(crypto.randomUUID(),writer)))[0].result);
+ const sign=(c,changes={},writer=originalWriter)=>{
+  const raw=stockCoverageFrontierJson({version:1,projectOrigin:project,branchId:'A',terminalId:writer.terminalId,authorId:writer.authorId,databaseId:writer.database,
+   challengeId:c.challengeId,nonce:c.nonce,cohortHash:c.cohortHash,writerRevision:'stock-history-source.v1',sourceSequence:writer.sourceSequence,sourceRoot:writer.sourceRoot,
    sourceGeneration:'a'.repeat(64),gapHash:'b'.repeat(64),pending:{business:'0',metadata:'0',unsigned:'0',unknown:'0'},observedAt:c.issuedAt,...changes});
-  const fields={version:1,algorithm:'Ed25519',keyId:key,projectOrigin:project,terminalId:f.terminal,authorId:f.author,subject:f.author,branchId:'A',challengeId:c.challengeId,frontierHash:crypto.createHash('sha256').update(raw).digest('hex')};
-  return{raw,proof:JSON.stringify({...fields,signature:crypto.sign(null,Buffer.from(protocol.stockCoverageFrontierMessage(fields)),pair.privateKey).toString('base64url')})};
+  const fields={version:1,algorithm:'Ed25519',keyId:writer.keyId,projectOrigin:project,terminalId:writer.terminalId,authorId:writer.authorId,subject:writer.authorId,branchId:'A',challengeId:c.challengeId,frontierHash:crypto.createHash('sha256').update(raw).digest('hex')};
+  return{raw,terminalId:writer.terminalId,proof:JSON.stringify({...fields,signature:crypto.sign(null,Buffer.from(protocol.stockCoverageFrontierMessage(fields)),writer.pair.privateKey).toString('base64url')})};
  };
- const accept=(observation,branch='A')=>bind('SELECT pos_stock_history_accept_frontier($1,$2,$3,$4,$5,true) result',[project,branch,f.terminal,observation.raw,observation.proof]);
+ const accept=(observation,branch='A')=>bind('SELECT pos_stock_history_accept_frontier($1,$2,$3,$4,$5,true) result',[project,branch,observation.terminalId,observation.raw,observation.proof]);
  const id=crypto.randomUUID();await one.query('BEGIN;');const first=JSON.parse((await one.query(challengeSql(id)))[0].result);
  const waiting=two.query(challengeSql(id));await pause(30);await one.query('COMMIT;');assert.deepEqual(JSON.parse((await waiting)[0].result),first);
  assert.equal(await scalar('SELECT count(*) FROM private.stock_history_frontier_challenges'),'1');pass('concurrent identical nonce requests return one immutable challenge and original expiry');
@@ -52,14 +53,18 @@ let started=false,groups=0;const sessions=[],pass=name=>{groups++;console.log('P
  assert.equal(JSON.parse((await two.query(challengeSql(timed)))[0].result).challengeId,timed);pass('actual lock-wait cancellation changes no business work or duplicate nonce and later retry recovers');
  assert.equal(await f.stock(),'7');assert.equal(await scalar('SELECT count(*) FROM sync_idempotency_receipts'),'1');assert.equal(await scalar('SELECT count(*) FROM stock_history_movements'),'1');
  pass('all concurrent observation groups preserve actual original business stock, business ACK and movement receipt');
- const acceptOpeningFrontier=async changes=>{
-  const requested=await challenge(),receipt=JSON.parse((await control.query(accept(sign(requested,changes))))[0].result);
+ const acceptOpeningFrontier=async (changes,writer=originalWriter)=>{
+  const requested=await challenge(writer),signed=sign(requested,typeof changes==='function'?changes(requested):changes,writer);
+  const {signature,...proof}=JSON.parse(signed.proof);
+  assert(crypto.verify(null,Buffer.from(protocol.stockCoverageFrontierMessage(proof)),writer.pair.publicKey,Buffer.from(signature,'base64url')));
+  const receipt=JSON.parse((await control.query(accept(signed)))[0].result);
   assert.equal(receipt.state,'accepted');return requested.challengeId;
  };
  const preparedOpening=fs.readFileSync('scripts/preparation/stock-history-recorded-openings.sql','utf8');
  const preparedStocktake=fs.readFileSync('scripts/preparation/stock-history-physical-stocktakes.sql','utf8');
  await control.query(`BEGIN;${preparedOpening}${preparedStocktake}COMMIT;`);
  await require('./stock-physical-stocktake-postgres-cases.cjs')({control,one,two,f,bind,pass,header,acceptOpeningFrontier});
+ await require('./stock-cutover-postgres-cases.cjs')({control,one,two,f,bind,pass,acceptOpeningFrontier});
  await require('./stock-opening-observation-postgres-cases.cjs')({control,one,two,f,bind,pass,pause,header,acceptOpeningFrontier});
  console.log('PASS '+groups+' actual PostgreSQL frontier groups on '+version+'; provider/installed acceptance separate');
 }finally{

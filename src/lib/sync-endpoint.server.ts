@@ -7,6 +7,8 @@ import { applyGroupedCashUpload, groupedCashUploadSchema } from "./grouped-cash-
 import { applyGroupedRefundUpload, groupedRefundUploadSchema } from "./grouped-refund-upload.server";
 import { canRetrieveHistoricalReceipt } from "./receipt-history-permission";
 import { alignVerifiedScopeIds } from "./verified-scope-ids";
+import { stockHistoryDownload, stockHistoryDownloadSchema } from "./stock-history-download.server";
+import { stocktakeCutover, stocktakeCutoverSchema } from "./stocktake-cutover.server";
 import { extendedPayments, extendedTenderFields } from "../../electron/sync/sale-tender-evidence.mjs";
 /**
  * Shared handler for the POS sync relay.
@@ -671,6 +673,8 @@ const bodySchema = z.object({
   sqlServerStockHistory:z.object({version:z.literal(1),branchId:z.string().min(1).max(128),terminalId:z.string().min(1).max(128),
     rows:z.array(z.object({id:z.string().uuid(),payloadHash:z.string().regex(/^[a-f0-9]{64}$/),payloadJson:z.string().min(2).max(126976),authorProofJson:z.string().min(2).max(16384).optional(),sourceCohortJson:z.string().min(2).max(65536).optional()}).strict()).min(1).max(8),
   }).strict().optional(),
+  sqlServerStockHistoryDownload: stockHistoryDownloadSchema.optional(),
+  sqlServerStocktakeCutover: stocktakeCutoverSchema.optional(),
   sqlServerStockFrontier:z.discriminatedUnion('action',[
     z.object({version:z.literal(1),action:z.literal('challenge'),branchId:z.string().min(1).max(128),terminalId:z.string().min(1).max(128),
       challengeId:z.string().uuid(),authorId:z.string().uuid(),keyId:z.string().uuid()}).strict(),
@@ -867,13 +871,15 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     }
     const aggregate = body.sqlServerAggregate;
     if (body.sqlServerHeldSaleReview || body.sqlServerHeldStatus || body.sqlServerHistoryReconcile ||
+        body.sqlServerStockHistoryDownload || body.sqlServerStocktakeCutover ||
         body.sqlServerStockFrontier || body.sqlServerStockHistory || body.sqlServerLegacyRecovery ||
         body.sqlServerFinancialCapability || body.sqlServerFinancialEvent || body.sqlServerFinancialBasis ||
         body.sqlServerFinancialObservation || aggregate?.registerFinancialBoundary || aggregate?.shiftFinancialOpening ||
         aggregate?.financialLedgerProjection || aggregate?.stockSourceCohorts) {
       const operations = [
         body.managementSyncBranches, body.ops?.length, body.read, body.sqlServerBatch, aggregate,
-        body.sqlServerStockFrontier, body.sqlServerStockHistory, body.sqlServerLegacyRecovery,
+        body.sqlServerStockFrontier, body.sqlServerStockHistory, body.sqlServerStockHistoryDownload,
+        body.sqlServerStocktakeCutover, body.sqlServerLegacyRecovery,
         body.sqlServerFinancialCapability, body.sqlServerFinancialEvent, body.sqlServerFinancialBasis,
         body.sqlServerFinancialObservation, body.sqlServerShiftGraph, body.sqlServerPull, body.sqlServerBootstrap,
         body.sqlServerCounts, body.sqlServerHistoryReconcile, body.sqlServerHeldStatus, body.sqlServerHeldSaleReview,
@@ -926,6 +932,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     !body.sqlServerBatch &&
     !body.sqlServerAggregate &&
     !body.sqlServerStockHistory &&
+    !body.sqlServerStockHistoryDownload &&
+    !body.sqlServerStocktakeCutover &&
     !body.sqlServerStockFrontier &&
     !body.sqlServerLegacyRecovery &&
     !body.sqlServerFinancialEvent &&
@@ -971,7 +979,9 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   try {
     const { managementReplicaScope } = await import("./management-replica.server");
     const replicaScope = await managementReplicaScope(body);
-    const caller = replicaScope ? null : groupedRequest ? await verifyRelayCaller(body, { strictAvailability: true }) : await verifyRelayCaller(body);
+    const strictAvailability = groupedRequest || body.sqlServerStockHistoryDownload || body.sqlServerStocktakeCutover
+      ? { strictAvailability: true } : undefined;
+    const caller = replicaScope ? null : await verifyRelayCaller(body, strictAvailability);
     verifiedTerminal = caller?.terminal;
     if (caller?.storeId) {
       const { branchExists } = await import("./session-verify.server");
@@ -986,7 +996,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         );
       }
     }
-    scope = replicaScope ?? (groupedRequest ? await resolveRelayScope(caller!, { strictAvailability: true }) : await resolveRelayScope(caller!));
+    scope = replicaScope ?? await resolveRelayScope(caller!, strictAvailability);
     // Signed fields retain their exact spelling. Only the existing transport and
     // derived operations may resolve SQL-equivalent scope aliases.
     const signedAuthor = body.sqlServerAggregate?.shiftAuthor;
@@ -1083,6 +1093,19 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       return Response.json({ok:false,code:known?error.code:'ESTOCK_FRONTIER_UNAVAILABLE',error:'Stock writer coverage remains unconfirmed. No stock or saved work was changed.'},{status:known?Number(error.status):503});
     }
   }
+  if (body.sqlServerStockHistoryDownload || body.sqlServerStocktakeCutover) {
+    if (!verifiedTerminal || !body.deviceBindingProof || verifiedTerminal.id !== body.terminalToken ||
+        verifiedTerminal.id !== scope.terminalId || verifiedTerminal.branchId !== scope.storeId ||
+        scope.managementDevice || scope.managementReplica || scope.stale)
+      return Response.json({ ok: false, code: "STOCK_HISTORY_REPLICA_SCOPE_DENIED" }, { status: 403 });
+    if (body.sqlServerStockHistoryDownload)
+      return stockHistoryDownload(body.sqlServerStockHistoryDownload, verifiedTerminal, request.signal);
+    if (!body.sqlServerStocktakeCutover || scope.kind === "terminal" || !scope.staffUserId ||
+        (scope.role !== "admin" && scope.roleSlug !== "admin"))
+      return Response.json({ ok: false, code: "STOCK_CUTOVER_SCOPE_DENIED" }, { status: 403 });
+    return stocktakeCutover(body.sqlServerStocktakeCutover, verifiedTerminal, scope.staffUserId, request.signal);
+  }
+
   if(body.sqlServerStockHistory){
     if(!verifiedTerminal||!scope.terminalId)return Response.json({ok:false,code:"TERMINAL_REQUIRED",error:"A verified terminal is required."},{status:403});
     try{

@@ -34,7 +34,7 @@ function fixture(){
   proof_bytes:String(Buffer.byteLength(proof,'utf16le')),unsigned:0,ingested_cursor:null,upload_aggregate_id:uploadAggregateId(id(2),'a')}];
  const journal:Row[]=[{change_id:'9007199254740993',entity_type:'sales',entity_id:JSON.stringify({id:id(6)}),operation:'insert',branch_id:'a',entity_version:'9007199254740994',aggregate_id:id(6),failed:0}];
  const heads:Row[]=[{store_id:'a',coverage_state:'complete',baseline_id:id(7),coverage_generation:'9007199254740993',baseline_state:'verified',baseline_hash:'d'.repeat(64)}];
- const state={transaction:'0',options:'0',capability:'ready',databaseId:database,observedAt:'2026-11-06T00:00:00.1234567Z',current:true,lease:true,
+ const state={transaction:'0',options:'0',isolation:'4',priorOpening:false,capability:'ready',databaseId:database,observedAt:'2026-11-06T00:00:00.1234567Z',current:true,lease:true,
   failAt:'',failCode:'ETIMEOUT',failNumber:0,rollbackFails:false,afterQuery:(_text:string)=>{}};
  const commands:string[]=[],parents:unknown[]=[],timeouts:number[]=[];let acquires=0,releases=0,closes=0;
  const connection={hasError:false,close:(callback:()=>void)=>{closes++;callback();}};
@@ -48,12 +48,14 @@ function fixture(){
    if(state.failAt&&text.includes(state.failAt))throw Object.assign(new Error('Synthetic SQL failure'),{code:state.failCode,number:state.failNumber||undefined});
    let recordset:Row[]=[];
    if(text.includes('stock-frontier:session'))recordset=[{transaction_count:state.transaction,session_options:state.options}];
+   else if(text.includes('stock-frontier:caller'))recordset=[{transaction_count:state.transaction,transaction_state:'1',isolation_level:state.isolation}];
    else if(text.includes('stock-frontier:begin'))state.transaction='1';
    else if(text.includes('COMMIT')||text.includes('ROLLBACK'))state.transaction='0';
    else if(text.includes('database_guid')&&!text.includes('stock-frontier:'))recordset=[{database_guid:state.databaseId,schema_generation:'31:fixture'}];
    else if(text.includes('c.max_length [length]'))recordset=state.capability==='absent'?[]:state.capability==='partial'?shape.columns.filter((row:Row)=>row.table!=='stock_history_openings'):state.capability==='unknown'?shape.columns.slice(1):shape.columns;
    else if(text.includes('WITH objects AS'))recordset=objects;
    else if(text.includes('stock-frontier:head'))recordset=heads;
+   else if(text.includes('stock-frontier:prior-opening'))recordset=[{present:state.priorOpening}];
    else if(text.includes('stock-frontier:source-summary'))recordset=sourceSummary(sources);
    else if(text.includes('stock-frontier:movement-summary'))recordset=movementSummary(movements,sources);
    else if(text.includes('stock-frontier:sources'))recordset=sources.filter(row=>row.accepted_batch_id===null||row.unsigned===1);
@@ -109,6 +111,33 @@ describe('private bounded read-only native stock frontier snapshot',()=>{
   const f=fixture();f.sources.splice(0);f.movements.splice(0);f.journal.splice(0);f.heads[0]!.baseline_state=null;
   const result=await f.run();expect(result.pending).toEqual({business:'0',metadata:'0',unsigned:'0',unknown:'1'});expect(result.coverageProven).toBe(false);
   expect(result.blockers).toEqual(['LOCAL_COVERAGE_UNPROVEN']);
+ });
+ it('permits first-stocktake observation only for an absent opening and retains all actual pending gaps',async()=>{
+  const f=fixture(),transaction={};f.sources.splice(0);f.movements.splice(0);f.journal.splice(0);f.heads.splice(0);
+  expect((await f.run()).pending.unknown).toBe('1');
+  f.state.transaction='1';
+  const onFence=()=>f.run({transaction,firstStocktake:true});
+  const absent=await onFence();expect(absent.blockers).toEqual([]);expect(absent.pending.unknown).toBe('0');
+  f.heads.push({store_id:'a',coverage_state:'unverified',baseline_id:null,coverage_generation:'1',baseline_state:null});
+  const unverified=await onFence();expect(unverified.pending.unknown).toBe('0');expect(unverified.sourceGeneration).not.toBe(absent.sourceGeneration);
+  f.state.priorOpening=true;
+  expect((await onFence()).blockers).toContain('LOCAL_COVERAGE_UNPROVEN');
+  f.state.priorOpening=false;
+  f.heads[0]!.coverage_state='incomplete';
+  expect((await onFence()).blockers).toContain('LOCAL_COVERAGE_UNPROVEN');
+  f.heads[0]!.coverage_state='unverified';
+  f.journal.push({change_id:'1',entity_type:'sales',entity_id:'{}',operation:'insert',branch_id:'a',entity_version:'1',aggregate_id:null,failed:0});
+  expect((await onFence()).pending.business).toBe('1');
+  f.heads[0]!.baseline_id=id(7);
+  expect((await onFence()).blockers).toContain('LOCAL_COVERAGE_UNPROVEN');
+  expect(f.counts().acquires).toBe(1);
+  expect(f.commands.filter(text=>text.includes('stock-frontier:commit'))).toHaveLength(1);
+ });
+ it('refuses a nonserializable caller-owned transaction and leaves it to the owner',async()=>{
+  const f=fixture();f.state.transaction='1';f.state.isolation='2';
+  expect(await f.run({transaction:{},firstStocktake:true})).toEqual({available:false,reason:'FRONTIER_CALLER_TRANSACTION'});
+  expect(f.commands.join('\n')).not.toContain('ROLLBACK');
+  expect(f.state.transaction).toBe('1');
  });
  it('does not equate an arbitrary last sequence/root with a linked complete prefix',async()=>{
   const f=fixture();f.sources.push({...f.sources[0],id:id(9),source_sequence:'3',predecessor_root:'a'.repeat(64),source_root:'e'.repeat(64)});

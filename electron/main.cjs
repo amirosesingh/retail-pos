@@ -100,6 +100,13 @@ const stockHistory = createStockHistoryRuntime({
   enrollment: installedStockHistoryEnrollment(process.env),
   manager: databaseManager, cloud: syncCloud, keys: shiftAuthorKeys, session: adminSession,
   terminal:()=>terminalStore.read(), branch:localBranchId, project:()=>cloudCredentials.read({strict:true})?.url,
+  stocktakeBackend: {
+    drain: options => syncCoordinator.runFinal(options),
+    loadLease: ({ branchId, terminalId, databaseId, stocktakeId }, purpose) =>
+      syncCloud.loadStocktakeLease({ branchId, terminalId, databaseId, stocktakeId, purpose }),
+    loadRelease: ({ branchId, terminalId, databaseId, stocktakeId }) =>
+      syncCloud.loadStocktakeRelease({ branchId, terminalId, databaseId, stocktakeId }),
+  },
   ready:()=>{
     const state=databaseService.snapshot();
     return process.platform==="win32" && app.hasSingleInstanceLock() && !safeMode &&
@@ -136,6 +143,7 @@ const syncCoordinator = new SyncCoordinator({
   groupedSettingsPilotMode: groupedSettingsPilot?.mode,
   uploadStoreSettingsEdit: () => storeSettingsEdits.upload(),
   observeStockFrontier: options => stockHistory.observe(options),
+  downloadStockHistory: options => stockHistory.download(options),
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",legacyRecoveryRuntime.status(state)); },
 });
 const { cashSenderEnrollment, createCashCheckoutRuntime } = require("./sync/cash-checkout-runtime.cjs");
@@ -2650,6 +2658,10 @@ function registerIpc() {
     ipcMain, manager:databaseManager, session:adminSession, terminal:()=>terminalStore.read(),
     branch:()=>authorizedLocalBranch(), context:()=>[authorizationServerUrl(),cloudCredentials.read()?.url],
     isPosSender:event=>event.sender===mainWindow?.webContents&&event.senderFrame===event.sender.mainFrame,
+  });
+  require("./stock-history-ipc.cjs").registerStocktakeControl({
+    ipcMain, session: adminSession, coordinator: syncCoordinator, run: stockHistory.stocktake,
+    isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
   });
   require("./stock-arrival-ipc.cjs").registerStockArrivalCapability({
     ipcMain,manager:databaseManager,session:adminSession,terminal:()=>terminalStore.read(),branch:()=>authorizedLocalBranch(),

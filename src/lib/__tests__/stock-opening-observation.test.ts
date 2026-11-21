@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url);
 const { createActualStockWriter } = require("../../../scripts/lib/stock-actual-writer-fixture.cjs");
 const observationSql = readFileSync("scripts/preparation/stock-history-recorded-openings.sql", "utf8");
 const stocktakeSql = readFileSync("scripts/preparation/stock-history-physical-stocktakes.sql", "utf8");
+const cutoverSql = readFileSync("scripts/preparation/stock-history-stocktake-cutover.sql", "utf8");
 const zeroProduct = randomUUID();
 let fixture: Awaited<ReturnType<typeof createActualStockWriter>>;
 
@@ -20,6 +21,7 @@ beforeAll(async () => {
   }
   await fixture.db.exec(observationSql);
   await fixture.db.exec(stocktakeSql);
+  await fixture.db.exec(cutoverSql);
 }, 30_000);
 afterAll(async () => fixture?.db.close());
 beforeEach(async () => fixture.db.exec("BEGIN"));
@@ -151,4 +153,36 @@ describe("full-branch physical stocktake preparation", () => {
     await denied(() => scalar("SELECT public.pos_stock_history_stocktake_for_review($1,$2,'A',$3)", [fixture.admin, fixture.terminal, id]),
       "STOCKTAKE_COUNT_REQUIRED");
   });
+});
+
+it("addresses immutable lease and release readbacks to the exact enrolled terminal and database", async () => {
+  const { project, database } = fixture.stockSourceFixture;
+  const id = randomUUID(), marker = "CODEX-STOCK401-READBACK";
+  const scoped = [fixture.admin, fixture.terminal, project, "A", id];
+  const loadLease = (purpose: string, actualDatabase: string = database, actualId: string = id) => scalar(
+    "SELECT public.pos_stock_history_load_stocktake_lease($1,$2,$3,$4,$5,$6,$7)",
+    [...scoped.slice(0, 4), actualId, actualDatabase, purpose]);
+  const loadRelease = (actualDatabase: string = database) => scalar(
+    "SELECT public.pos_stock_history_load_stocktake_release($1,$2,$3,$4,$5,$6)", [...scoped, actualDatabase]);
+  await fixture.db.exec(`ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS parent_id text,
+    ADD COLUMN IF NOT EXISTS archived_at timestamptz,ADD COLUMN IF NOT EXISTS code text;`);
+  await fixture.db.query("UPDATE public.stores SET code=$1 WHERE id='A'", [marker]);
+  await scalar("SELECT private.stock_history_install_cutover_guard($1,'A',$2,ARRAY[$3::uuid],ARRAY[$4::uuid])", [project, marker, fixture.terminal, database]);
+  const prepare = () => scalar<{ leaseIssuedAt: string; leaseExpiresAt: string }>(
+    "SELECT public.pos_stock_history_prepare_stocktake_pause($1,$2,$3,$4,$5)", scoped);
+  const lease = await prepare();
+  const response = await loadLease("arm");
+  expect(response).toEqual({ ...lease, terminalId: fixture.terminal, databaseId: database, state: "draining" });
+  expect(await loadLease("arm")).toEqual(response);
+  expect(await prepare()).toEqual(lease);
+  await denied(() => loadLease("arm", randomUUID()), "STOCK_CUTOVER_SCOPE_UNCONFIRMED");
+  await denied(() => loadLease("arm", database, randomUUID()), "STOCK_CUTOVER_LEASE_CLOSED");
+  await denied(() => loadLease("confirm"), "STOCK_CUTOVER_STOCKTAKE_REQUIRED");
+  await denied(() => loadRelease(), "STOCK_CUTOVER_RELEASE_UNCONFIRMED");
+  const released = await scalar<{ releasedAt: string }>("SELECT public.pos_stock_history_release_stocktake_pause($1,$2,$3,$4,$5)", scoped);
+  expect(await loadRelease()).toMatchObject({ ...released, projectOrigin: project, terminalId: fixture.terminal, databaseId: database, state: "released" });
+  expect(await loadLease("release")).toMatchObject({ ...lease, state: "released" });
+  await denied(() => loadLease("arm"), "STOCK_CUTOVER_LEASE_CLOSED");
+  await denied(() => loadRelease(randomUUID()), "STOCK_CUTOVER_SCOPE_UNCONFIRMED");
+  expect(await scalar("SELECT count(*) FROM public.stock_history_baselines")).toBe(0);
 });

@@ -71,4 +71,35 @@ function registerStockHistoryRead(options) {
   options.ipcMain.handle('business:stock-history-movements',createStockHistoryReader(options,true));
   return handler;
 }
-module.exports = {createStockHistoryReader,registerStockHistoryRead};
+function registerStocktakeControl({ ipcMain, session, isPosSender, coordinator, run }) {
+  ipcMain.handle("business:stocktake-control", async (event, input) => {
+    try {
+      if (!isPosSender(event) || !session.hasPosAuthority() || !session.hasLevel("admin")) fail("PERMISSION_DENIED");
+      const { action, stocktakeId, phase, fenceGeneration } = input ?? {};
+      const expected = ["action", "stocktakeId"];
+      if (action === "prove") expected.push("phase");
+      if (action === "release") expected.push("fenceGeneration");
+      if (!input || !["arm", "prove", "release"].includes(action) || Object.keys(input).length !== expected.length ||
+          expected.some(key => !Object.hasOwn(input, key)) || typeof stocktakeId !== "string" || !UUID.test(stocktakeId) ||
+          (action === "prove" && phase !== "arm" && phase !== "confirm") ||
+          (action === "release" && (typeof fenceGeneration !== "string" || !UUID.test(fenceGeneration)))) fail("ESTOCK_STOCKTAKE_INVALID");
+      const epoch = session.epoch();
+      const assertLease = () => coordinator.ownsExclusive() && !coordinator.paused && session.epoch() === epoch &&
+        session.hasPosAuthority() && session.hasLevel("admin") && isPosSender(event);
+      const result = await coordinator.withExclusive(() => {
+        if (!assertLease()) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
+        return run(action, {
+          stocktakeId: identifier(stocktakeId, true), assertLease,
+          ...(phase ? { phase } : {}),
+          ...(fenceGeneration ? { fenceGeneration: identifier(fenceGeneration, true) } : {}),
+        });
+      });
+      return { ok: true, result };
+    } catch (error) {
+      const code = typeof error?.code === "string" && /^(ESTOCK_[A-Z_]+|STOCK_CUTOVER_[A-Z_]+|PERMISSION_DENIED)$/.test(error.code)
+        ? error.code : "ESTOCK_STOCKTAKE_UNAVAILABLE";
+      return { ok: false, code, error: "The stocktake pause could not be verified." };
+    }
+  });
+}
+module.exports = {createStockHistoryReader,registerStockHistoryRead,registerStocktakeControl};

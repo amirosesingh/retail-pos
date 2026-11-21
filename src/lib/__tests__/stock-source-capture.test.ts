@@ -20,10 +20,18 @@ describe('original stock source claims from actual transaction readbacks',()=>{
   if(mode==='multiple-documents')f.row.source_refs.push(['stock_adjustments',author,'0']);
   expect(await sourceManifestForMovement(f)).toBeNull();
  });
- it('a product creation claim cannot relabel an existing product update as a new opening',async()=>{
-  const f=fixture();f.action='PRODUCT_CREATE';f.operations=[{kind:'insert',table:'products',rows:[{id:product,product_id:product}]}];
-  expect(await sourceManifestForMovement(f)).toBeNull();f.before=[];
-  expect(JSON.parse(await sourceManifestForMovement(f)).document).toEqual({type:'products',id:product});
+ it('authorizes only the actual new product stock effect in the signed branch',async()=>{
+  const f=fixture(),operations=[{kind:'upsert',table:'products',rows:[{id:product}]}];
+  const context=c.normalizeContext({operationId:operation,branchId:'a',terminalId:'t',actorId:author,kind:'product'},f.row.recorded_at_raw);
+  const after=[{id:product,name:'New product',stock_by_store:{a:1,b:2}}];
+  const [local,foreign]=c.changes(context,[],after,[]);
+  const input={action:'PRODUCT_CREATE',branchId:'a',row:local,operations,before:[],after,claims:[]};
+  expect(JSON.parse(await sourceManifestForMovement(input)).document).toEqual({type:'products',id:product});
+  expect(await sourceManifestForMovement({...input,row:foreign})).toBeNull();
+  expect(await sourceManifestForMovement({...input,before:f.before})).toBeNull();
+  expect(await sourceManifestForMovement({...input,after:[{...after[0],stock_by_store:{a:2}}]})).toBeNull();
+  expect(await sourceManifestForMovement({...input,row:{...local,source_refs:[['item_activity_logs',document,'1']]}})).toBeNull();
+  expect(await sourceManifestForMovement({...input,row:{...local,local_delta:'0'}})).toBeNull();
  });
  it('uses the actual receiving document and activity readbacks, never invoice time or a nonexistent table',async()=>{
   const f=fixture('RECEIVE'),queries:string[]=[];

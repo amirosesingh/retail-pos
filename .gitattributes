@@ -13,6 +13,10 @@
 /supabase/migrations/20261106073851_stock_history_coverage_frontiers.sql text eol=lf
 /scripts/preparation/stock-history-recorded-openings.sql text eol=lf
 /scripts/preparation/stock-history-physical-stocktakes.sql text eol=lf
+/scripts/preparation/stock-history-replica-export.sql text eol=lf
+/scripts/preparation/stock-history-product-merge.sql text eol=lf
+/database/sqlserver/prepared/stock-history-stocktake-fence.sql text eol=lf
+/scripts/preparation/stock-history-stocktake-cutover.sql text eol=lf
 /scripts/preparation/stock-history-product-membership.sql text eol=lf
 /scripts/preparation/stock-history-transfer-legs.sql text eol=lf
 /scripts/preparation/stock-history-online-sponsorship-missed-bill.sql text eol=lf

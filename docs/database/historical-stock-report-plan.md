@@ -498,3 +498,48 @@ cutoff. Migration tool/ledger transaction ownership is also pending. The next
 session must resolve both before freezing an applicable hash, not reuse these
 draft bytes as a production upgrade. All stock SQL/031 is excluded from this
 release and remains subject to exact-project owner approval.
+
+### Catalogue import and product merge checkpoint
+
+Inventory's spreadsheet import rejects nonzero stock quantities. Purchasing
+and transfer imports save catalogue rows at unchanged stock, then carry
+spreadsheet quantities into their document drafts. The receiving and transfer
+writers own stock evidence when those documents actually change stock. A
+catalogue import can create a zero-stock product. Its membership observation
+retains the product and scope, pending proof of when that membership began.
+An edit to an existing catalogue item leaves the stock ledger unchanged.
+
+Product merge currently saves the master and attempts each source deletion
+separately. A referenced product can remain after the master write succeeds.
+The grouped catalogue upsert updates the existing master's metadata while
+preserving its stock. A later grouped deletion can still remove a source
+product's stock. The report therefore retains each accepted physical effect,
+holds affected branch coverage where origin is unproved and records no effect
+for a refused deletion. The existing product-creation proof is scoped to the
+actual quantity on a newly inserted product.
+
+A completed merge needs a dedicated operation spanning the native and
+central writers:
+
+1. Resolve the authorized master and sources, actor, terminal and applicable
+   branches before changing stock. Preserve current product and alias
+   permissions plus linked-record deletion protections. Define the treatment
+   of refused sources explicitly. Any source left in the catalogue must retain
+   its stock and contribute zero units to the master.
+2. Lock and read the exact master and source rows in a consistent order. Derive
+   quantities from those rows for each authorized branch. Commit the master
+   increase, every permitted source's retirement, immutable pre-retirement
+   identities and the operation outcome together. Require exact conservation
+   per branch and roll back a plan that changed under the lock. Keep archived
+   products and physical deletions distinct.
+3. Use a stable operation ID and one receipt for retry. The grouped relay needs
+   a merge-specific acceptance route that verifies current scope and original
+   author, checks the same accepted source outcomes, applies the complete
+   stock effect once and acknowledges it after commit. A generic catalogue
+   update or separate deletion acknowledgement cannot prove central
+   conservation. Hold any mismatch for review.
+4. Verify an all-eligible and a mixed eligible/refused merge, exact zero and
+   nonzero source stock, multiple authorized branches, permission and branch
+   denial, a concurrent sale or count, lost acknowledgement/replay and the
+   local-to-grouped result. Historical readers also need verified original
+   effective time and membership admission before marking a cutoff complete.

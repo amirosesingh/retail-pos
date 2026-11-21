@@ -19,12 +19,13 @@ class SyncCoordinator {
   #groupedSettingsPilotMode;
   #uploadStoreSettingsEdit;
   constructor({ pushWorker, pullWorker, publish = () => {}, recoverHeldStatuses = null, groupedSettingsPilot = null,
-    groupedSettingsPilotMode = null, uploadStoreSettingsEdit = null, observeStockFrontier = null }) {
+    groupedSettingsPilotMode = null, uploadStoreSettingsEdit = null, observeStockFrontier = null, downloadStockHistory = null }) {
     this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.recoverHeldStatuses=recoverHeldStatuses;
     this.#groupedSettingsPilot=pilotEnrollment(groupedSettingsPilot);
     this.#groupedSettingsPilotMode=["run", "handback"].includes(groupedSettingsPilotMode) ? groupedSettingsPilotMode : null;
     this.#uploadStoreSettingsEdit=uploadStoreSettingsEdit;
     this.observeStockFrontier=observeStockFrontier;
+    this.downloadStockHistory=downloadStockHistory;
     this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false;
     this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 };
   }
@@ -289,6 +290,15 @@ class SyncCoordinator {
       }
       this.status.pushed=Number(pushed.pushed??this.status.pushed); this.status.merged=Number(pulled.merged??this.status.merged);
       if (pushError) { failedDirection="push"; throw pushError; }
+      if (this.downloadStockHistory && options.branchId && !options.final && !options.pushOnly && !this.paused) {
+        // All network requests run outside the trading lane. The lease only
+        // protects the local SQL Server stock-report metadata installation.
+        syncLease.exit(() => {
+          void Promise.resolve().then(() => this.downloadStockHistory({ branchId: options.branchId,
+            runInstall: work => this.withExclusive(() => work(() => this.ownsExclusive() && !this.paused)),
+          })).catch(() => undefined);
+        });
+      }
       if (this.observeStockFrontier && options.branchId && !options.final && !options.pushOnly && !options.pullOnly && !this.paused) {
         try {
           await this.observeStockFrontier({branchId:options.branchId,assertLease:()=>this.ownsExclusive()&&!this.paused});

@@ -2,6 +2,8 @@
 
 const { StockHistoryStore } = require("./db/stock-history.cjs");
 const { StockHistoryOutbox } = require("./db/stock-history-outbox.cjs");
+const { createStockHistoryInstaller } = require("./db/stock-history-download.cjs");
+const { createStockHistoryDownloader } = require("./sync/stock-history-download.cjs");
 const { StockHistoryUploader } = require("./sync/stock-history-uploader.cjs");
 const { StockEventAuthority } = require("./stock-event-authority.cjs");
 const { createStockCoverageFrontierRuntime } = require("./stock-coverage-frontier-runtime.cjs");
@@ -33,7 +35,7 @@ function supportedAction(kind, operations) {
   return null;
 }
 
-function createStockHistoryRuntime({ enrollment, manager, cloud, keys, session, terminal, branch, project, ready }) {
+function createStockHistoryRuntime({ enrollment, manager, cloud, keys, session, terminal, branch, project, ready, stocktakeBackend }) {
   const active = pilotEnrollment(enrollment);
   const sourceContext = () => {
     if (!active || !ready()) return null;
@@ -149,10 +151,22 @@ function createStockHistoryRuntime({ enrollment, manager, cloud, keys, session, 
   const frontier = active ? createStockCoverageFrontierRuntime({
     manager, keys, session, terminal, branch, project, cloud, expectedDatabaseGuid: active.databaseGuid,
     context: () => sourceContext()?.fingerprint,
+    stocktakeBackend,
   }) : null;
+  const downloader = active ? createStockHistoryDownloader({
+    ...createStockHistoryInstaller(manager, active.databaseGuid), request: input => cloud.downloadStockHistory(input),
+  }) : null;
+  let downloading = null;
 
   return Object.freeze({
     capture, uploader,
+    async stocktake(action, request) {
+      if (!frontier?.stocktake || !sourceContext() || !session.hasLevel("admin")) fail("ESTOCK_STOCKTAKE_UNAVAILABLE");
+      if (action === "arm") return frontier.stocktake.arm(request);
+      if (action === "prove") return frontier.stocktake.prove(request);
+      if (action === "release") return frontier.stocktake.release(request);
+      fail("ESTOCK_STOCKTAKE_INVALID");
+    },
     async captureReady({ pool, branchId, terminalId, authorId }) {
       const source = sourceContext();
       if (!source || source.pool !== pool || active.branchId !== recordId(branchId) || active.terminalId !== recordId(terminalId) ||
@@ -171,6 +185,22 @@ function createStockHistoryRuntime({ enrollment, manager, cloud, keys, session, 
       const store = new StockHistoryStore(manager, { assertCurrent: sourceGuard(source), expectedDatabaseGuid: active.databaseGuid });
       if (!(await store.capability(source.pool)).available) return;
       return frontier.run({ assertLease: () => assertLease() === true && sourceContext()?.fingerprint === source.fingerprint });
+    },
+    download({ branchId, runInstall }) {
+      if (!downloader || active.branchId !== branchId || downloading || !session.hasPosAuthority()) return;
+      const source = sourceContext();
+      if (!source) return;
+      const assertSource = sourceGuard(source), epoch = session.epoch();
+      const guard = () => {
+        assertSource();
+        if (session.epoch() !== epoch || !session.hasPosAuthority()) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
+      };
+      const scope = { branchId, terminalId: active.terminalId, projectOrigin: active.projectOrigin };
+      downloading = downloader(scope, guard, work => runInstall(assertLease => work(() => {
+        guard();
+        if (assertLease() !== true) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
+      }))).finally(() => { downloading = null; });
+      return downloading;
     },
   });
 }

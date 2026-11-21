@@ -25,6 +25,9 @@ const digest=expression=>`LOWER(CONVERT(varchar(64),HASHBYTES('SHA2_256',${expre
 const originalExists=`EXISTS(SELECT 1 FROM dbo.stock_history_source_cohorts s WITH(HOLDLOCK,NOWAIT)
  WHERE s.operation_id=m.operation_id AND ${binary('s.store_id')} AND ${tillKey('s.terminal_id')}=${tillKey('m.terminal_id')})`;
 const knownKinds=[...contract.KINDS].filter(kind=>kind!=='general').map(kind=>`N'${kind}'`).join(',');
+// A downloaded accepted row has neither a local upload aggregate nor an
+// original local proof. Only locally created evidence can attest this PC.
+const localMovement=`(upload_aggregate_id IS NOT NULL OR ingested_cursor IS NULL OR author_proof_json IS NOT NULL)`;
 const sourceSummarySql=`/*stock-frontier:source-summary*/ WITH facts AS(SELECT s.*,
  ${tillKey('terminal_id')} till_key,
  ${digest("CONCAT(CONVERT(varchar(36),id),'|',CONVERT(varchar(36),operation_id),'|',CONVERT(varchar(30),source_sequence),'|',source_root,'|',COALESCE(predecessor_root,'!'),'|',payload_hash,'|',CASE WHEN proof_json IS NULL THEN '0' ELSE '1' END,'|',COALESCE(CONVERT(varchar(36),accepted_batch_id),'!'),'|',COALESCE(CONVERT(varchar(30),accepted_transaction_id),'!'),'|',COALESCE(CONVERT(varchar(40),SWITCHOFFSET(accepted_at,'+00:00'),127),'!'))")} row_hash
@@ -46,7 +49,7 @@ const sourceSummarySql=`/*stock-frontier:source-summary*/ WITH facts AS(SELECT s
 const movementSummarySql=`/*stock-frontier:movement-summary*/ WITH facts AS(SELECT m.*,${tillKey('m.terminal_id')} till_key,
  CASE WHEN ${originalExists} THEN 0 ELSE 1 END missing_source,
  ${digest("CONCAT(CONVERT(varchar(36),m.id),'|',CONVERT(varchar(36),m.operation_id),'|',CONVERT(varchar(36),m.product_id),'|',m.payload_hash,'|',CASE WHEN m.author_proof_json IS NULL THEN '0' ELSE '1' END,'|',COALESCE(CONVERT(varchar(30),m.ingested_cursor),'!'))")} row_hash
- FROM dbo.stock_history_movements m WITH(HOLDLOCK,NOWAIT) WHERE ${binary('m.store_id')})
+ FROM dbo.stock_history_movements m WITH(HOLDLOCK,NOWAIT) WHERE ${binary('m.store_id')} AND ${localMovement})
  SELECT TOP(${MAX_ROWS+1}) CONVERT(nvarchar(128),till_key) terminal_id,CONVERT(nvarchar(30),COUNT_BIG(*)) row_count,
  CONVERT(nvarchar(30),SUM(CONVERT(bigint,CASE WHEN ingested_cursor IS NOT NULL THEN 1 ELSE 0 END))) accepted_count,
  CONVERT(nvarchar(30),SUM(CONVERT(bigint,CASE WHEN author_proof_json IS NULL THEN 1 ELSE 0 END))) unsigned_count,
@@ -73,7 +76,8 @@ const movementSql=`/*stock-frontier:movements*/ SELECT TOP(${MAX_ROWS+1})
  CASE WHEN author_proof_json IS NULL THEN 1 ELSE 0 END unsigned,
  CONVERT(nvarchar(30),ingested_cursor) ingested_cursor,
  LOWER(CONVERT(nvarchar(36),upload_aggregate_id)) upload_aggregate_id
- FROM dbo.stock_history_movements WITH(HOLDLOCK,NOWAIT) WHERE ${scope} AND(ingested_cursor IS NULL OR author_proof_json IS NULL) ORDER BY id;`;
+ FROM dbo.stock_history_movements WITH(HOLDLOCK,NOWAIT) WHERE ${scope} AND ${localMovement}
+ AND(ingested_cursor IS NULL OR author_proof_json IS NULL) ORDER BY id;`;
 const journalSql=`/*stock-frontier:journal*/ SELECT TOP(${MAX_ROWS+1})
  CONVERT(nvarchar(30),j.change_id) change_id,j.entity_type,j.entity_id,j.operation,j.branch_id,
  CONVERT(nvarchar(30),j.entity_version) entity_version,LOWER(CONVERT(nvarchar(36),j.aggregate_id)) aggregate_id,
@@ -106,7 +110,7 @@ const journalSql=`/*stock-frontier:journal*/ SELECT TOP(${MAX_ROWS+1})
  * only pending/unsigned detail is materialized under the2000-row/byte bounds.
  * The verified031 immutable schema is required; summary counts or a highest
  * sequence alone never establish a linked source prefix or complete coverage. */
-async function readStockHistoryFrontierSnapshot({manager,branchId,terminalId,assertCurrent,assertLease}={}){
+async function readStockHistoryFrontierSnapshot({manager,branchId,terminalId,assertCurrent,assertLease,transaction=null,firstStocktake=false}={}){
  if(typeof assertCurrent!=='function'||typeof assertLease!=='function'||!manager?.pool||typeof manager.sql!=='function')fail();
  const branch=contract.identifier(branchId),terminal=contract.identifier(terminalId),pool=manager.pool,sql=manager.sql();
  if(/[\u0000-\u001f\u007f]/u.test(branch+terminal))fail();
@@ -119,9 +123,10 @@ async function readStockHistoryFrontierSnapshot({manager,branchId,terminalId,ass
   if(performance.now()-started>MAX_MILLISECONDS)fail('ESTOCK_FRONTIER_TIMEOUT');
  };
  const parent={config:pool.config,connected:pool.connected??true,acquire(_request,callback){queueMicrotask(()=>callback(null,connection,config));},release(){}};
+ const requestOwner=transaction??parent;
  const release=()=>{if(connection&&!released){released=true;pool.release(connection);}};
  const raw=async(text,parameters={})=>{
-  const request=new sql.Request(parent,{requestTimeout:REQUEST_MILLISECONDS});
+  const request=new sql.Request(requestOwner,{requestTimeout:REQUEST_MILLISECONDS});
   for(const [name,value]of Object.entries(parameters))request.input(name,sql.NVarChar(128),value);
   if(Object.hasOwn(parameters,'branch'))request.input('canonical_uuid',sql.Bit,/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(branch));
   return request.query(text);
@@ -129,29 +134,41 @@ async function readStockHistoryFrontierSnapshot({manager,branchId,terminalId,ass
  const query=async(text,parameters={})=>{guard();const result=await raw(text,parameters);guard();return result.recordset??[];};
  try{
   guard();
-  let abandoned=false,timer;
-  try{
-   await Promise.race([
-    new Promise((resolve,reject)=>pool.acquire(parent,(error,value,settings)=>{
-     if(error)return reject(error);connection=value;config=settings;
-     if(abandoned){release();return resolve();}resolve();
-    })),
-    new Promise((_,reject)=>{timer=setTimeout(()=>{abandoned=true;reject(Object.assign(new Error('Bounded pool wait'),{code:'ESTOCK_FRONTIER_BUSY'}));},REQUEST_MILLISECONDS);}),
-   ]);
-  }finally{clearTimeout(timer);}
-  guard();
-  // No FROM: this guard itself cannot start an implicit transaction.
-  const initial=(await query('/*stock-frontier:session*/ SELECT CONVERT(nvarchar(20),@@TRANCOUNT) transaction_count,CONVERT(nvarchar(20),@@OPTIONS) session_options;'))[0];
-  if(!initial||count(initial.transaction_count)!=='0'||(BigInt(count(initial.session_options))&2n)!==0n)return unavailable('FRONTIER_CALLER_TRANSACTION');
-  ownsTransaction=true;await query('/*stock-frontier:begin*/ BEGIN TRANSACTION;');
+  if(firstStocktake&&!transaction)fail();
+  if(transaction){
+   const current=(await query(`/*stock-frontier:caller*/ SELECT CONVERT(nvarchar(20),@@TRANCOUNT) transaction_count,
+    CONVERT(nvarchar(20),XACT_STATE()) transaction_state,
+    (SELECT CONVERT(nvarchar(20),transaction_isolation_level) FROM sys.dm_exec_sessions WHERE session_id=@@SPID) isolation_level;`))[0];
+   if(!current||current.transaction_count!=='1'||current.transaction_state!=='1'||current.isolation_level!=='4')
+    return unavailable('FRONTIER_CALLER_TRANSACTION');
+  }else{
+   let abandoned=false,timer;
+   try{
+    await Promise.race([
+     new Promise((resolve,reject)=>pool.acquire(parent,(error,value,settings)=>{
+      if(error)return reject(error);connection=value;config=settings;
+      if(abandoned){release();return resolve();}resolve();
+     })),
+     new Promise((_,reject)=>{timer=setTimeout(()=>{abandoned=true;reject(Object.assign(new Error('Bounded pool wait'),{code:'ESTOCK_FRONTIER_BUSY'}));},REQUEST_MILLISECONDS);}),
+    ]);
+   }finally{clearTimeout(timer);}
+   guard();
+   // No FROM: this guard itself cannot start an implicit transaction.
+   const initial=(await query('/*stock-frontier:session*/ SELECT CONVERT(nvarchar(20),@@TRANCOUNT) transaction_count,CONVERT(nvarchar(20),@@OPTIONS) session_options;'))[0];
+   if(!initial||count(initial.transaction_count)!=='0'||(BigInt(count(initial.session_options))&2n)!==0n)return unavailable('FRONTIER_CALLER_TRANSACTION');
+   ownsTransaction=true;await query('/*stock-frontier:begin*/ BEGIN TRANSACTION;');
+  }
   class BoundedRequest extends sql.Request{
    constructor(owner){super(owner,{requestTimeout:REQUEST_MILLISECONDS});}
    async query(text){guard();const result=await super.query(text);guard();
     if((result.recordset?.length??0)>10000||Buffer.byteLength(JSON.stringify(result.recordset??[]),'utf8')>MAX_BYTES)fail('ESTOCK_FRONTIER_BOUNDS');return result;}
   }
   const store=new StockHistoryStore({pool,sql:()=>({Request:BoundedRequest})},{assertCurrent:guard});
-  const capability=await store.capability(parent);guard();
-  if(!capability.available){await raw('ROLLBACK TRANSACTION;');ownsTransaction=false;guard();return unavailable(capability.reason);}
+  const capability=await store.capability(requestOwner);guard();
+  if(!capability.available){
+   if(ownsTransaction){await raw('ROLLBACK TRANSACTION;');ownsTransaction=false;}
+   guard();return unavailable(capability.reason);
+  }
   const databaseKey=exactText(capability.databaseKey),databaseId=contract.identifier(databaseKey.slice(0,36),true);
   const heads=await query(`/*stock-frontier:head*/ SELECT TOP(2) h.store_id,h.coverage_state,
    LOWER(CONVERT(nvarchar(36),h.baseline_id)) baseline_id,CONVERT(nvarchar(30),h.coverage_generation) coverage_generation,
@@ -159,6 +176,11 @@ async function readStockHistoryFrontierSnapshot({manager,branchId,terminalId,ass
    FROM dbo.stock_history_heads h WITH(HOLDLOCK,NOWAIT)
    LEFT JOIN dbo.stock_history_baselines b WITH(HOLDLOCK,NOWAIT) ON b.id=h.baseline_id
     AND CONVERT(varbinary(max),${canonicalColumn('b.store_id')})=CONVERT(varbinary(max),${canonicalColumn('h.store_id')}) WHERE ${binary('h.store_id')};`,{branch});
+  const priorOpening=firstStocktake?(await query(`/*stock-frontier:prior-opening*/
+   SELECT CONVERT(bit,CASE WHEN EXISTS(SELECT 1 FROM dbo.stock_history_baselines b WITH(HOLDLOCK,NOWAIT) WHERE ${binary('b.store_id')})
+    OR EXISTS(SELECT 1 FROM dbo.stock_history_heads h WITH(HOLDLOCK,NOWAIT) WHERE ${binary('h.store_id')}
+     AND (h.coverage_from_ticks IS NOT NULL OR h.coverage_through_ticks IS NOT NULL)) THEN 1 ELSE 0 END) present;`,{branch}))[0]?.present:null;
+  if(firstStocktake&&typeof priorOpening!=='boolean')fail();
   const sourceSummaries=await query(sourceSummarySql,{branch}),movementSummaries=await query(movementSummarySql,{branch});
   const sources=await query(sourceSql,{branch}),movements=await query(movementSql,{branch}),journal=await query(journalSql,{branch});
   if(heads.length>1||[sourceSummaries,movementSummaries,sources,movements,journal].some(rows=>rows.length>MAX_ROWS))fail('ESTOCK_FRONTIER_BOUNDS');
@@ -168,14 +190,17 @@ async function readStockHistoryFrontierSnapshot({manager,branchId,terminalId,ass
   const sourceProofs=await query(`/*stock-frontier:source-hashes*/ SELECT LOWER(CONVERT(nvarchar(36),id)) id,${proofHash('proof_json')} proof_hash
    FROM dbo.stock_history_source_cohorts WITH(HOLDLOCK,NOWAIT) WHERE ${scope} AND(accepted_batch_id IS NULL OR proof_json IS NULL) ORDER BY id;`,{branch});
   const movementProofs=await query(`/*stock-frontier:movement-hashes*/ SELECT LOWER(CONVERT(nvarchar(36),id)) id,${proofHash('author_proof_json')} proof_hash
-   FROM dbo.stock_history_movements WITH(HOLDLOCK,NOWAIT) WHERE ${scope} AND(ingested_cursor IS NULL OR author_proof_json IS NULL) ORDER BY id;`,{branch});
+   FROM dbo.stock_history_movements WITH(HOLDLOCK,NOWAIT) WHERE ${scope} AND ${localMovement}
+   AND(ingested_cursor IS NULL OR author_proof_json IS NULL) ORDER BY id;`,{branch});
   if(sourceProofs.length!==sources.length||movementProofs.length!==movements.length)fail();
   const proofMap=rows=>{const map=new Map();for(const row of rows){const id=contract.identifier(row.id,true);if(map.has(id))fail();map.set(id,nullableHash(row.proof_hash));}return map;};
   const sourceHashes=proofMap(sourceProofs),movementHashes=proofMap(movementProofs),gaps=new Map();
   const gap=(code,evidence,weight=1n)=>{if(weight===0n)return;const value=[code,evidence,String(weight)];gaps.set(JSON.stringify(value),value);};
   const sourceFingerprints=[],movementFingerprints=[],journalFingerprints=[],streamFingerprints=[],movementSummaryFingerprints=[],streams=new Map();
   let business=0n,metadata=0n,unsigned=0n;
-  if(heads.length!==1||heads[0].coverage_state!=='complete'||!heads[0].baseline_id||heads[0].baseline_state!=='verified')
+  const firstOpeningAbsent=firstStocktake&&priorOpening===false&&(!heads.length||
+   (heads[0].coverage_state==='unverified'&&heads[0].baseline_id==null&&heads[0].baseline_state==null));
+  if(!firstOpeningAbsent&&(heads.length!==1||heads[0].coverage_state!=='complete'||!heads[0].baseline_id||heads[0].baseline_state!=='verified'))
    gap('LOCAL_COVERAGE_UNPROVEN',hash(heads));
   for(const row of sourceSummaries){
    const database=contract.identifier(row.database_id,true),till=contract.identifier(row.terminal_id),rows=count(row.row_count),unique=count(row.unique_count);
@@ -249,14 +274,16 @@ async function readStockHistoryFrontierSnapshot({manager,branchId,terminalId,ass
   const last=streams.get(JSON.stringify([databaseId,terminal]));
   const clock=(await query("/*stock-frontier:clock*/ SELECT CONVERT(nvarchar(40),SYSUTCDATETIME(),127)+N'Z' observed_at;"))[0];
   const observedAt=contract.canonicalInstant(clock?.observed_at);
-  if(await store.identity(parent)!==databaseKey)fail('ESTOCK_HISTORY_CONTEXT_CHANGED');guard();
+  if(await store.identity(requestOwner)!==databaseKey)fail('ESTOCK_HISTORY_CONTEXT_CHANGED');guard();
   const diagnostics=[...gaps.values()].sort((a,b)=>JSON.stringify(a)<JSON.stringify(b)?-1:JSON.stringify(a)>JSON.stringify(b)?1:0);
   const result=Object.freeze({available:true,databaseId,databaseKey,branchId:branch,terminalId:terminal,observedAt,
    sourceSequence:last?.sequence??'0',sourceRoot:last?.root??null,
-   sourceGeneration:hash(['stock-history.frontier-state.v1',databaseKey,branch,terminal,streamFingerprints,movementSummaryFingerprints,sourceFingerprints,movementFingerprints,journalFingerprints]),
+   sourceGeneration:hash(['stock-history.frontier-state.v1',databaseKey,branch,terminal,streamFingerprints,movementSummaryFingerprints,sourceFingerprints,movementFingerprints,journalFingerprints,
+    ...(transaction?[heads,priorOpening]:[])]),
    gapHash:hash(diagnostics),pending:Object.freeze({business:count(String(business)),metadata:count(String(metadata)),unsigned:count(String(unsigned)),unknown:count(String(diagnostics.reduce((total,value)=>total+BigInt(value[2]),0n)))}),
    blockers:Object.freeze([...new Set(diagnostics.map(value=>value[0]))].sort()),coverageProven:false});
-  await query('/*stock-frontier:commit*/ COMMIT TRANSACTION;');ownsTransaction=false;guard();return result;
+  if(ownsTransaction){await query('/*stock-frontier:commit*/ COMMIT TRANSACTION;');ownsTransaction=false;}
+  guard();return result;
  }catch(error){
   if(ownsTransaction){try{await raw('IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;');ownsTransaction=false;}catch{
    // Never return an uncertain open transaction to other business requests.

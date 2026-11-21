@@ -5,6 +5,7 @@ const schemaObjects=require('./stock-history-schema-objects.json');
 const {catalogSql,physicalObjects}=require('./stock-history-schema-check.cjs');
 const {withStockHistoryReadSession,stockHistoryReadRequest}=require('./stock-history-read-session.cjs');
 const {movementRequest,movementPage,readVerifiedMovements}=require('./stock-history-movements.cjs');
+const {productCreationEffect,sourceManifestForMovement}=require('./stock-source-capture.cjs');
 const CAPABILITIES=new WeakMap();
 const CAPTURES=new WeakMap();
 const readPageSql=require('node:fs').readFileSync(require('node:path').join(__dirname,'stock-history-page.sql'),'utf8');
@@ -112,7 +113,8 @@ class StockHistoryStore{
   await this.ensureHead(tx,branch);
   await this.request(tx).input('history_branch',branch).input('history_reason',reason)
    .query(`UPDATE dbo.stock_history_heads SET coverage_state=N'incomplete',coverage_generation=coverage_generation+1,
-    updated_at=SYSDATETIMEOFFSET() WHERE store_id=@history_branch;`);
+    updated_at=SYSDATETIMEOFFSET() WHERE store_id=@history_branch
+     AND CONVERT(varbinary(max),store_id)=CONVERT(varbinary(max),@history_branch);`);
  }
  async ensureHead(tx,branch){
   await this.request(tx).input('history_branch',branch).query(`IF NOT EXISTS(SELECT 1 FROM dbo.stock_history_heads WITH(UPDLOCK,HOLDLOCK) WHERE store_id=@history_branch)
@@ -136,14 +138,26 @@ class StockHistoryStore{
    await this.invalidateCoverage(tx,context.branchId,'UNVERIFIED_STOCK_SHAPE');
    CAPTURES.delete(token);return {captured:0,available:true,incomplete:true};
   }
+  const unverifiedBranches=new Set();
+  if(!saved.writerKnown)unverifiedBranches.add(context.branchId);
+  if(context.kind==='product'){
+   // Catalog import has no stock effect for a zero birth or a metadata edit.
+   // A merge writes its master and each deletion independently. Preserve only
+   // the actual stock leg and keep its branch incomplete without a proved origin.
+   for(const row of rows){
+    if(!productCreationEffect(row,saved.before,after,context.branchId))unverifiedBranches.add(row.store_id);
+   }
+   rows=rows.filter(row=>row.local_delta!=='0');
+  }
   // A prepared Main-only signer freezes proof in this original transaction.
   // Missing enrollment/vault material keeps unsigned evidence for review;
   // it must not fabricate the later uploading cashier or block offline sales.
   const sourceManifests=[];
   if(saved.source?.author){const signed=[];for(const row of rows){
    try{
-    const sourceManifestJson=await require('./stock-source-capture.cjs').sourceManifestForMovement({
+    const sourceManifestJson=await sourceManifestForMovement({
      action:saved.source.author.action,row,operations:saved.sourceOperations,before:saved.before,after,claims,request:()=>this.request(tx),
+     branchId:context.branchId,
      ...(context.arrivalReason!==undefined?{arrivalReason:context.arrivalReason}:{})});
     sourceManifests.push(sourceManifestJson);
     this.assertCurrent();this.assertWriter(saved.source);
@@ -172,13 +186,13 @@ class StockHistoryStore{
    await this.insertMovements(tx,branch,rows.filter(row=>row.store_id===branch));
   }
   if(saved.products.unbounded)await this.invalidateCoverage(tx,context.branchId,'UNBOUNDED_STOCK_WRITE');
-  if(!saved.writerKnown)await this.invalidateCoverage(tx,context.branchId,'UNVERIFIED_STOCK_WRITER');
+  for(const branch of [...unverifiedBranches].sort())await this.invalidateCoverage(tx,branch,'UNVERIFIED_STOCK_WRITER');
   const previous=new Map(saved.before.map(product=>[String(product.id).toLowerCase(),product])),currentProducts=new Map(after.map(product=>[String(product.id).toLowerCase(),product]));
   const cohortChanged=previous.size!==currentProducts.size||[...previous].some(([id,product])=>!currentProducts.has(id)||
    (product.owner_store_id??null)!==(currentProducts.get(id).owner_store_id??null));
   if(cohortChanged)await this.invalidateCoverage(tx,context.branchId,'STOCK_PRODUCT_COHORT_CHANGED');
   this.assertCurrent();this.assertWriter(saved.source);
-  CAPTURES.delete(token);return {captured:rows.length,available:true,incomplete:saved.products.unbounded||!saved.writerKnown||cohortChanged};
+  CAPTURES.delete(token);return {captured:rows.length,available:true,incomplete:saved.products.unbounded||unverifiedBranches.size>0||cohortChanged};
  }
  async insertMovements(tx,branch,rows){
   if(!rows.length)return;
@@ -280,6 +294,7 @@ class StockHistoryStore{
      FROM dbo.stock_history_heads h WITH(HOLDLOCK,NOWAIT)
      OUTER APPLY(SELECT TOP(1) prior.id FROM dbo.stock_history_baselines prior WITH(HOLDLOCK,NOWAIT)
       WHERE prior.store_id=h.store_id AND CONVERT(varbinary(max),prior.store_id)=CONVERT(varbinary(max),h.store_id) AND prior.verification_state=N'verified'
+       AND (JSON_QUERY(h.terminal_watermarks,'$.stockHistoryDownload') IS NULL OR prior.id=h.baseline_id)
        AND prior.cutoff_ticks<=CONVERT(decimal(20,0),@history_baseline_limit)
       ORDER BY prior.cutoff_ticks DESC,prior.id DESC) eligible
      LEFT JOIN dbo.stock_history_baselines b WITH(HOLDLOCK,NOWAIT) ON b.id=COALESCE(eligible.id,h.baseline_id) AND b.store_id=h.store_id AND CONVERT(varbinary(max),b.store_id)=CONVERT(varbinary(max),h.store_id)
