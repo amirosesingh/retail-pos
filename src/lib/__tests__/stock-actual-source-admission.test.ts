@@ -1,4 +1,5 @@
 import{createRequire}from'node:module';
+import{randomUUID}from'node:crypto';
 import{beforeAll,beforeEach,afterAll,describe,it,expect}from'vitest';
 const require=createRequire(import.meta.url),{createActualStockWriter}=require('../../../scripts/lib/stock-actual-writer-fixture.cjs');
 describe.each([false,true])('genuine writer plus original stock admission, captured adjustment=%s',capturedAdjustment=>{
@@ -35,3 +36,46 @@ describe.each([false,true])('genuine writer plus original stock admission, captu
   await expect(op.accept()).rejects.toThrow('STOCK_HISTORY_SOURCE_ORIGIN_UNPROVEN');expect(await f.stock()).toBe('7');
  });
 });
+
+it('accepts a same-ID adjustment audit and receipt through the captured Retail POS Beta writers',async()=>{
+ const f=await createActualStockWriter({betaAdjustmentDelegates:true,sourceAdmission:true});
+ try {
+  await f.db.query(`UPDATE products SET stock_by_store='{"A":10,"B":4}',stock_quantity=14 WHERE id=$1`,[f.product]);
+  const legacy=f.adjustment();
+  expect(await f.push(randomUUID(),[{table:'stock_adjustments',rows:[legacy],changes:[]}])).toMatchObject({ok:true});
+  expect(await f.stock()).toBe('10');
+  expect(await f.scalar('SELECT count(*)::int FROM stock_delta_applied')).toBe(0);
+
+  const op=await f.sourceOperation({includeAdjustmentReceipt:true});
+  const movement=op.source.document.id;
+  const receipt=op.operations.find((part:{table:string})=>part.table==='stock_delta_applied');
+  expect(op.source.sourceRefs).toEqual([['stock_adjustments',movement,'-3'],['stock_delta_applied',movement,'-3']]);
+  expect(await f.push(randomUUID(),[{table:'stock_delta_applied',rows:[{
+   movement_id:randomUUID(),product_id:f.product,store_id:'A',delta:2,
+  }],changes:[]}])).toMatchObject({ok:true});
+  expect(await f.stock()).toBe('12');
+
+  const wrongBranch=op.operations.map((part:{table:string})=> part.table===receipt.table
+   ? {...receipt,rows:[{...receipt.rows[0],store_id:'B'}]} : part);
+  await expect(f.push(randomUUID(),wrongBranch)).rejects.toThrow('SYNC_BRANCH_FORBIDDEN');
+  expect(await f.scalar('SELECT count(*)::int FROM stock_adjustments WHERE id=$1',[movement])).toBe(0);
+  expect(await f.scalar('SELECT count(*)::int FROM stock_delta_applied WHERE movement_id=$1',[movement])).toBe(0);
+  expect(await f.stock()).toBe('12');
+
+  expect(await op.upload()).toMatchObject({ok:true,stockSourceStatus:'captured_unverified'});
+  expect(await f.scalar('SELECT stock_by_store FROM products WHERE id=$1',[f.product])).toEqual({A:9,B:4});
+  const witness=await f.scalar('SELECT accepted_sources FROM private.stock_history_original_sources WHERE batch_id=$1',[op.batch]);
+  expect(witness.stock_adjustments).toEqual([expect.objectContaining({id:movement,previous_stock:10,updated_stock:7,delta:-3})]);
+  expect(witness.stock_delta_applied).toEqual([{movement_id:movement,product_id:f.product,store_id:'A',delta:-3}]);
+  const accepted=await op.accept();
+  expect(accepted).toMatchObject({ok:true,receipts:[{id:op.row.id}]});
+  expect(await f.scalar('SELECT count(*)::int FROM private.stock_history_effect_sources WHERE movement_id=$1',[movement])).toBe(1);
+
+  expect(await op.upload()).toMatchObject({ok:true,replayed:true});
+  expect(await op.accept()).toEqual(accepted);
+  expect(await f.push(randomUUID(),op.operations)).toMatchObject({ok:true});
+  await expect(f.push(randomUUID(),[{...receipt,rows:[{...receipt.rows[0],delta:-9}]}])).rejects.toThrow('POS_STOCK_MOVEMENT_EVIDENCE_CONFLICT');
+  expect(await f.scalar('SELECT stock_by_store FROM products WHERE id=$1',[f.product])).toEqual({A:9,B:4});
+  expect(await f.scalar('SELECT count(*)::int FROM public.stock_history_movements WHERE id=$1',[op.row.id])).toBe(1);
+ } finally { await f.db.close(); }
+},60000);

@@ -3,6 +3,7 @@ const { createHash } = require("node:crypto");
 const { branchPredicate, rendererReadBranchPredicate } = require("../branch-scope.cjs");
 const { isFinancialStockUpdate, assertFinancialStockUpdate } = require("../financial-stock-policy.cjs");
 const { capturesBooking, bookingStorage, assertBookingPredecessors, captureBookingUpload } = require("../booking-upload.cjs");
+const { stockAdjustmentScope, prepareStockAdjustment, stampStockAdjustments, saveStockAdjustmentReceipts } = require("../stock-adjustment-receipts.cjs");
 
 const { projection } = require("../../sync/shift-recovery-exact.cjs");
 const SALE_STOCK_MUTABLE = new Set(["stock_quantity", "stock_by_store", "row_version", "updated_at", "is_archived", "archived_at"]);
@@ -158,6 +159,7 @@ class AggregateRepository {
     aggregate = normalizeUuidFields(aggregate);
     if (!AGGREGATE_KINDS.has(kind)) throw new Error("Unsupported aggregate type.");
     const operations = this.operationsRepository.validate(aggregate?.operations);
+    const adjustmentScope = stockAdjustmentScope(kind, operations, aggregate);
     let stockArrival;
     if(aggregate.stockArrival!==undefined){
       if(kind!=="receiving")throw Object.assign(new Error("An arrival time belongs only to receiving stock."),{code:"ESTOCK_ARRIVAL_INVALID"});
@@ -245,7 +247,14 @@ class AggregateRepository {
         }
       }
       // Keep the existing shift/financial-head lock order before product locks.
-      const stockCapture=this.stockHistory?await this.stockHistory.begin(transaction,operations,{
+      stage = "stock adjustment preimage";
+      const adjustmentPlan = adjustmentScope ? await prepareStockAdjustment(sql, transaction, operations, adjustmentScope) : null;
+      // The origin capture must read the generated receipt from this same
+      // transaction. The regular operation loop must not write it a second time.
+      const stockSources = adjustmentPlan?.movements.length
+        ? [...operations, { kind: "insert", table: "stock_delta_applied", rows: adjustmentPlan.movements }]
+        : operations;
+      const stockCapture=this.stockHistory?await this.stockHistory.begin(transaction,stockSources,{
         operationId,branchId:aggregate.branchId,terminalId:aggregate.terminalId,
         actorId:aggregate.activityOperator?.subject,kind,
         groupedCashOrigin: Boolean(saleOutbox?.installedHandoff && cashAuthor),
@@ -255,7 +264,8 @@ class AggregateRepository {
       const newOpenings = new Set();
       const confirmedStock = saleOutbox ? new Map() : null;
       const bookingChanges = [];
-      for (const operation of operations) {
+      for (const requestedOperation of operations) {
+        const operation = stampStockAdjustments(requestedOperation, adjustmentScope);
         stage = "business rows";
         tableName = operation.table;
         if (this.operationsRepository.tables.get(operation.table)?.direction === "pull")
@@ -337,6 +347,11 @@ class AggregateRepository {
           if (bookingSource) bookingChanges.push({ table: operation.table, entity, op: journalOperation });
         }
       }
+      if (adjustmentPlan) {
+        stage = "stock adjustment receipt";
+        tableName = "stock_delta_applied";
+        affected += await saveStockAdjustmentReceipts(sql, transaction, adjustmentPlan, adjustmentScope.branchId, operationId);
+      }
       if (saleOutbox) {
         stage = "sale event capture";
         tableName = "pos_sync_sale_outbox_v1";
@@ -378,7 +393,7 @@ class AggregateRepository {
         throw Object.assign(new Error("The unsupported cash capture rolled back before the existing sale route."),
           { code: "ESALE_CASH_LEGACY_ONLY" });
       if (["EIDEMPOTENCY", "EEXISTING_SALE_RECONCILIATION", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL", "ESALE_EVENT_UNVERIFIED", "ESALE_CASH_BRIDGE_UNVERIFIED",
-        "ESTOCK_ARRIVAL_INVALID", "ESTOCK_ARRIVAL_SOURCE_REQUIRED", "ESTOCK_HISTORY_SCHEMA_REQUIRED", "ESTOCK_HISTORY_FUTURE"].includes(error?.code))
+        "ESTOCK_ADJUSTMENT_UNVERIFIED", "ESTOCK_ARRIVAL_INVALID", "ESTOCK_ARRIVAL_SOURCE_REQUIRED", "ESTOCK_HISTORY_SCHEMA_REQUIRED", "ESTOCK_HISTORY_FUTURE"].includes(error?.code))
         throw error;
       const target = tableName ? ` while writing ${tableName}` : "";
       const native = error?.originalError?.info ?? error?.originalError ?? error;

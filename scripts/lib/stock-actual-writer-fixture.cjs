@@ -7,7 +7,7 @@ const schema=()=>read('supabase/schema.sql').replaceAll('\r\n','\n');
 function stockFunction(name){const source=schema(),start=source.lastIndexOf('CREATE OR REPLACE FUNCTION public.'+name+'(');assert(start>=0,name);
  const tail=source.slice(start),tag=tail.match(/\bAS\s+(\$[\w]*\$)/i)?.[1];assert(tag,name);const end=tail.indexOf(tag+';',tail.indexOf(tag)+tag.length);assert(end>0,name);return tail.slice(0,end+tag.length+1);}
 function table(name){const source=schema(),start=source.indexOf('CREATE TABLE IF NOT EXISTS public.'+name+' (');assert(start>=0,name);return source.slice(start,source.indexOf('\n);',start)+3);}
-async function createActualStockWriter({capturedAdjustment=false,sourceAdmission=false,db:providedDb,preexistingZeroProduct,installStockHistory}={}){
+async function createActualStockWriter({capturedAdjustment=false,betaAdjustmentDelegates=false,sourceAdmission=false,db:providedDb,preexistingZeroProduct,installStockHistory}={}){
  const f=await createFullFinancialCloud({actualSaleDefinition:true,...(providedDb?{db:providedDb}:{})});
  try{
   const{db}=f;
@@ -20,7 +20,23 @@ async function createActualStockWriter({capturedAdjustment=false,sourceAdmission
    assert.equal(actual.definition_md5,'6a15a6bc26a10fad7a3cee04c2c47637');assert.equal(createHash('md5').update(actual.definition).digest('hex'),actual.definition_md5);
    assert.equal(actual.prosecdef,false);assert.equal(actual.acl,'{postgres=X/postgres,service_role=X/postgres}');await db.exec(actual.definition);
   }
-  await db.exec('REVOKE ALL ON FUNCTION public.sync_apply_stock_adjustments(jsonb) FROM PUBLIC,anon,authenticated;GRANT EXECUTE ON FUNCTION public.sync_apply_stock_adjustments(jsonb) TO service_role;');
+  if(betaAdjustmentDelegates){
+   assert(!capturedAdjustment);
+   await db.exec(read('scripts/fixtures/stock-adjustment-beta-delegates-20261121.sql').replaceAll('\r\n','\n'));
+   await db.exec(read('scripts/preparation/pos-sync-stock-movement-proof-v1.sql').replaceAll('\r\n','\n'));
+   for(const [signature,expected] of [
+    ['public.sync_apply_stock_adjustments(jsonb)','f15c610bb0890b844e8ae2c771a6607f'],
+    ['public.sync_apply_stock_delta_applied(jsonb)','094a3bc02325246e9192c8711c7169d0'],
+    ['public.stock_apply_delta(uuid,uuid,text,integer)','09aa9eea1317191e72abd7a75b7ed67d'],
+   ]){
+    const result=await db.query("SELECT md5(replace(prosrc,E'\\r\\n',E'\\n')) digest FROM pg_proc WHERE oid=$1::regprocedure",[signature]);
+    assert.equal(result.rows[0]?.digest,expected,signature);
+   }
+  }
+  if(betaAdjustmentDelegates) await db.exec(`REVOKE ALL ON FUNCTION public.sync_apply_stock_adjustments(jsonb),public.sync_apply_stock_delta_applied(jsonb),public.stock_apply_delta(uuid,uuid,text,integer) FROM PUBLIC;
+   GRANT EXECUTE ON FUNCTION public.sync_apply_stock_adjustments(jsonb),public.sync_apply_stock_delta_applied(jsonb) TO anon,authenticated,service_role;
+   GRANT EXECUTE ON FUNCTION public.stock_apply_delta(uuid,uuid,text,integer) TO authenticated,service_role;`);
+  else await db.exec('REVOKE ALL ON FUNCTION public.sync_apply_stock_adjustments(jsonb) FROM PUBLIC,anon,authenticated;GRANT EXECUTE ON FUNCTION public.sync_apply_stock_adjustments(jsonb) TO service_role;');
   if(preexistingZeroProduct)await db.query(`INSERT INTO public.products(id,name,barcode,owner_store_id,stock_by_store,stock_quantity)
    VALUES($1,'Zero quantity fixture','fixture-zero-barcode','A','{"A":0}'::jsonb,0)`,[preexistingZeroProduct]);
   if(installStockHistory) await installStockHistory(db);
@@ -42,14 +58,17 @@ async function installSourceAdmission(f){
  await db.query('UPDATE app_users SET permissions=$2::jsonb WHERE id=$1',[author,JSON.stringify({can_adjust_stock:true,can_receive_purchase_order:true})]);
  await db.query(`INSERT INTO pos_sync_private.shift_author_keys(key_id,author_id,terminal_id,project_origin,subject,public_key) VALUES($1,$2,$3,$4,$5,$6)`,
   [key,author,terminal,project,author,pair.publicKey.export({type:'spki',format:'der'}).toString('base64url')]);
- async function sourceOperation({action='ADJUST',quantity=action==='ADJUST'?'-3':'2',arrivalReason,sourceSequence='1',sourcePredecessorRoot=null,stocktakeId,at='2026-11-06T01:02:03.1234567Z'}={}){
+ async function sourceOperation({action='ADJUST',quantity=action==='ADJUST'?'-3':'2',arrivalReason,sourceSequence='1',sourcePredecessorRoot=null,stocktakeId,includeAdjustmentReceipt=false,at='2026-11-06T01:02:03.1234567Z'}={}){
   const operationId=randomUUID(),batch=randomUUID(),document=randomUUID(),activity=randomUUID(),before=await f.stock(),after=String(BigInt(before)+BigInt(quantity));
+  assert(!includeAdjustmentReceipt||action==='ADJUST');
   const refs=[{table:action==='ADJUST'?'stock_adjustments':'item_activity_logs',id:action==='ADJUST'?document:activity,productId:product,branchId:'A',delta:quantity}];
+  if(includeAdjustmentReceipt) refs.push({table:'stock_delta_applied',id:document,productId:product,branchId:'A',delta:quantity});
   const row=c.changes(c.normalizeContext({operationId,branchId:'A',terminalId:terminal,actorId:author,kind:action==='ADJUST'?'stock':'receiving'},at),
    [{id:product,name:'Fixture',stock_by_store:{A:before}}],[{id:product,name:'Fixture',stock_by_store:{A:action==='ADJUST'?after:before}}],refs)[0];
   const operations=action==='ADJUST'?[{table:'products',rows:[await f.productRow(Number(after))],changes:[]},{table:'stock_adjustments',rows:[{...f.adjustment(Number(before),Number(after)),id:document,...(stocktakeId?{draft_id:stocktakeId}:{})}],changes:[]}]:
    [{table:'purchase_orders',rows:[{id:document,store_id:'A',status:'posted',reference:'FIXTURE-GRN',po_number:'PO-1',total_cost:0,total_items_count:Number(quantity),created_at:at,updated_at:at,row_version:1}],changes:[]},
     {table:'item_activity_logs',rows:[{id:activity,product_id:product,store_id:'A',terminal_id:terminal,activity_type:'receive',reference:'FIXTURE-GRN',quantity_delta:Number(quantity),unit_cost:0,note:'',created_at:at,row_version:1}],changes:[]}];
+  if(includeAdjustmentReceipt) operations.push({table:'stock_delta_applied',rows:[{movement_id:document,product_id:product,store_id:'A',delta:Number(quantity),applied_at:at}],changes:[]});
   const{buildStockSourceCohort,verifyStockSourceMembership}=require('../../electron/shared/stock-source-cohort.mjs');
   const source={version:1,operationId,action,document:{type:action==='ADJUST'?'stock_adjustments':'receivings',id:document},authorId:author,terminalId:terminal,branchId:'A',productId:product,delta:quantity,
    effectiveAt:row.effective_at_raw,recordedAt:row.recorded_at_raw,sourceRefs:row.source_refs,...(arrivalReason!==undefined?{arrivalReason}:{})};

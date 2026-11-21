@@ -10359,3 +10359,13 @@ The only failing required check on `c0b41601` was the role/permission suite
 failing to collect a test whose mock lacked TanStack's `createClientOnlyFn`.
 The partial mock preserves the tested permission behavior and corrects the
 missing export. The 37 targeted assertions, scoped lint and TypeScript passed.
+
+## 21 November — Repair native stock adjustment acceptance
+
+The owner authorized the native adjustment correction, a fresh hosted two-till
+Stock Report test on Retail POS Beta only, and merging PR #401 into `beta`
+after passing acceptance and required checks. Use the stable adjustment UUID
+for the canonical stock receipt, keep the audit, receipt and effect together,
+and prove exact retries. Preserve the failed synthetic adjustment and its
+pending Stock History movement. Keep production and saved POS profiles outside
+this work. Installer publication remains a separate owner action.
