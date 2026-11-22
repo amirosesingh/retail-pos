@@ -18,11 +18,12 @@ import { loadStockHistoryPage } from "@/lib/stock-history-client";
 import { loadStockHistoryMovements } from "@/lib/stock-history-movements-client";
 import { STOCK_MOVEMENT_PAGE_SIZE, type StockHistoryMovementCursor, type StockHistoryMovementPage } from "@/lib/stock-history-movements";
 import { exportStockHistoryXlsx, stockHistoryForExport } from "@/lib/stock-history-export";
-import { stockDateTimeInput, stockTimeChoices, type StockTimeChoice } from "@/lib/stock-history-selection";
-import { stockHistoryExplanation, type StockHistoryPage, type StockHistoryRequest } from "@/lib/stock-history-report";
+import { stockDateTimeInput, stockEndOfDay, stockTimeChoices, type StockTimeChoice } from "@/lib/stock-history-selection";
+import { stockHistoryExplanation, type StockHistoryPage, type StockHistoryRequest, type StockHistoryRow } from "@/lib/stock-history-report";
 import { stockReportDay } from "../../../../../electron/shared/stock-report-day.mjs";
-import { stockInstant } from "@/lib/stock-as-of";
+import { canonicalStockInstant, stockInstant } from "@/lib/stock-as-of";
 
+const zeroQuantity = (row: StockHistoryRow) => row.quantity === "0" || row.quantity === "-0";
 type MovementProduct = { productId: string; name: string };
 type MovementView = { product: MovementProduct; page: StockHistoryMovementPage | null; number: number; identity: string; error: string };
 const movementLabels: Record<StockHistoryMovementPage["rows"][number]["kind"], string> = {
@@ -44,14 +45,14 @@ export function stockReportDisplayGrade(page: StockHistoryPage | null): "verifie
   return "unavailable";
 }
 
-function CurrentStock({ branchId }: { branchId: string }) {
+function CurrentStock({ branchId, zeroOnly }: { branchId: string; zeroOnly: boolean }) {
   const { state, ready, loadPhase } = usePos();
   const catalogueReady = ready && loadPhase === "ready" && sameBranchId(state.currentStoreId, branchId);
   const products = useMemo(() => {
     if (!catalogueReady) return [];
     const visible = createCatalogueVisibility(state.settings, state.stores, state.transfers);
-    return state.products.filter(product => visible(product, branchId));
-  }, [catalogueReady, branchId, state.settings, state.stores, state.transfers, state.products]);
+    return state.products.filter(product => visible(product, branchId) && (!zeroOnly || stockAt(product, branchId) === 0));
+  }, [catalogueReady, branchId, state.settings, state.stores, state.transfers, state.products, zeroOnly]);
   const { pageItems, setPage, setPageSize, ...pagination } = usePagination(products, 50);
 
   return <section className="space-y-3" aria-label="Current stock">
@@ -69,7 +70,7 @@ function CurrentStock({ branchId }: { branchId: string }) {
               <TableCell className="max-w-52 whitespace-normal break-all text-xs">{product.sku || "—"}<br />{product.barcode || "—"}</TableCell>
               <TableCell className={`numeric whitespace-nowrap text-right ${quantity < 0 ? "text-destructive" : ""}`}>{quantity}{quantity < 0 && <span className="block text-xs">Negative stock</span>}</TableCell>
             </TableRow>;
-          }) : <TableRow><TableCell colSpan={3}>No products in the current inventory for this location.</TableCell></TableRow>}</TableBody>
+          }) : <TableRow><TableCell colSpan={3}>{zeroOnly ? "No products with zero stock at this location." : "No products in the current inventory for this location."}</TableCell></TableRow>}</TableBody>
         </Table>
       </div>
       <TablePagination {...pagination} onPage={setPage} onPageSize={setPageSize} label="products" />
@@ -84,10 +85,11 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
   const mayRead = can("can_view_inventory"), mayExport = can("can_export_reports");
   const mayReadShifts = isAdmin || can("can_shift_closing_history_view");
   const [showCurrent, setShowCurrent] = useState(true);
+  const [zeroOnly, setZeroOnly] = useState(false);
   const [value, setValue] = useState(() => stockDateTimeInput(new Date(), timeZone));
   const [mode, setMode] = useState("time"), [shiftId, setShiftId] = useState("");
   const [showPeriod, setShowPeriod] = useState(false);
-  const periodId = useId(), movementHeadingId = useId();
+  const periodId = useId(), quantityFilterId = useId(), movementHeadingId = useId();
   const [choices, setChoices] = useState<StockTimeChoice[]>([]), [choice, setChoice] = useState("");
   const [page, setPage] = useState<StockHistoryPage | null>(null), [request, setRequest] = useState<StockHistoryRequest | null>(null);
   const [error, setError] = useState(""), [busy, setBusy] = useState(false), [exporting, setExporting] = useState(false);
@@ -105,6 +107,7 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
   const active = activityIdentity === identity;
   const shownBusy = active && busy, shownExporting = active && exporting, shownError = active ? error : "";
   const grade = stockReportDisplayGrade(visiblePage);
+  const visibleRows = zeroOnly ? visiblePage?.rows.filter(zeroQuantity) : visiblePage?.rows;
   const canOpenMovements = grade === "verified" && Boolean(visiblePage?.sourceRevision && visiblePage.baselineAt);
   const visibleMovement = canOpenMovements && movement?.identity === identity ? movement : null;
   const movementProductId = visibleMovement?.product.productId, movementPageNumber = visibleMovement?.number;
@@ -122,6 +125,7 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
     setPageIdentity(""); setActivityIdentity(identity);
     setChoices([]); setChoice(""); setShiftId(""); setMode("time"); setShowPeriod(false);
     setShowCurrent(true);
+    setZeroOnly(false);
     // Identity includes every permission/account/scope used by this view.
   }, [identity]);
   useEffect(() => {
@@ -140,8 +144,15 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
         throw new Error("The report context changed. Open the report again.");
     };
   }
-  async function read(next?: StockHistoryRequest) {
+  async function read(next?: StockHistoryRequest, filterZero = zeroOnly) {
     if (!mayRead) return;
+    const now = new Date();
+    const today = !next && mode === "day" && day === stockDateTimeInput(now, timeZone).slice(0, 10);
+    if (today && !showPeriod) {
+      invalidate();
+      setShowCurrent(true);
+      return;
+    }
     setShowCurrent(false);
     const assertCurrent = context(); setActivityIdentity(identity); setMovement(null); setBusy(true); setError("");
     try {
@@ -152,6 +163,10 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
           // Required transport field only: the authorized source exclusively
           // resolves this CLOSED shift's saved instant, including exact digits.
           selected = { cutoff: "1970-01-01T00:00:00.0000000Z", timeZone, branchId, closedShiftId: shiftId };
+        } else if (mode === "day") {
+          const { cutoff, start } = stockEndOfDay(day, timeZone);
+          selected = { cutoff: today ? canonicalStockInstant(now.toISOString()) : cutoff, timeZone, branchId,
+            ...(showPeriod ? { periodStart: start } : {}) };
         } else {
           const options = stockTimeChoices(value, timeZone);
           if (!options.length) throw new Error("This local date/time does not exist in this time zone. Choose another time.");
@@ -163,12 +178,26 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
         }
       }
       const selectedRequest = Object.freeze({ ...selected });
-      const result = await loadStockHistoryPage(selectedRequest); assertCurrent();
-      if (result.branchId !== selectedRequest.branchId || result.timeZone !== selectedRequest.timeZone
-        || (!selectedRequest.closedShiftId && stockInstant(result.cutoff) !== stockInstant(selectedRequest.cutoff))
-        || Boolean(result.period) !== Boolean(selectedRequest.periodStart)
-        || (selectedRequest.periodStart && stockInstant(result.period!.start) !== stockInstant(selectedRequest.periodStart)))
-        throw new Error("The stock report returned a different scope or time. Refresh the report.");
+      let pageRequest = selectedRequest;
+      let result: StockHistoryPage;
+      const cursors = new Set([selectedRequest.after ?? null]);
+      for (let scanned = 0; ; scanned++) {
+        result = await loadStockHistoryPage(pageRequest); assertCurrent();
+        if (result.branchId !== pageRequest.branchId || result.timeZone !== pageRequest.timeZone
+          || ((!pageRequest.closedShiftId || pageRequest.sourceRevision) && stockInstant(result.cutoff) !== stockInstant(pageRequest.cutoff))
+          || (pageRequest.sourceRevision && result.sourceRevision !== pageRequest.sourceRevision)
+          || Boolean(result.period) !== Boolean(pageRequest.periodStart)
+          || (pageRequest.periodStart && stockInstant(result.period!.start) !== stockInstant(pageRequest.periodStart)))
+          throw new Error("The stock report returned a different scope, time, or revision. Refresh the report.");
+        if (!filterZero || stockReportDisplayGrade(result) === "unavailable" || result.rows.some(zeroQuantity) || !result.next) break;
+        if (cursors.has(result.next) || !result.sourceRevision)
+          throw new Error("The stock report could not continue at the same verified position.");
+        // Look beyond the first unfiltered page without turning one click into
+        // an unbounded branch-wide request. The next page can continue the scan.
+        if (scanned === 4) break;
+        cursors.add(result.next);
+        pageRequest = { ...selectedRequest, cutoff: result.cutoff, after: result.next, sourceRevision: result.sourceRevision };
+      }
       setPage(result); setPageIdentity(identity);
       setRequest({ ...selectedRequest, cutoff: result.cutoff, after: null, sourceRevision: result.sourceRevision });
     } catch (failure) {
@@ -220,9 +249,17 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
   return <section className="min-w-0 space-y-4" aria-label="Stock report data">
     <form className="space-y-3" onSubmit={event => { event.preventDefault(); if (!shownBusy && !shownExporting) void read(); }}>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Label className="space-y-1"><span>Date and time · {timeZone}</span><Input aria-label="Stock report date and time" type="datetime-local" step="1" value={value} onChange={event => { invalidate(); setShowCurrent(false); setChoices([]); setChoice(""); setShiftId(""); setValue(event.target.value); }} /></Label>
+        <Label className="space-y-1"><span>{mode === "day" ? "Date" : "Date and time"} · {timeZone}</span>
+          <Input aria-label={mode === "day" ? "Stock report date" : "Stock report date and time"}
+            type={mode === "day" ? "date" : "datetime-local"} step={mode === "day" ? undefined : 1}
+            value={mode === "day" ? day : value} onChange={event => {
+              invalidate(); setShowCurrent(false); setChoices([]); setChoice(""); setShiftId("");
+              const input = event.target.value;
+              setValue(mode === "day" && input ? input + (value.slice(10) || "T00:00:00") : input);
+            }} />
+        </Label>
         <Label className="space-y-1"><span>Cutoff</span><ThemedSelect ariaLabel="Stock cutoff method" value={mode} onChange={next => { invalidate(); setShowCurrent(false); setMode(next); setShowPeriod(false); }} options={[
-          { value: "time", label: "Selected date and time" }, ...(mayReadShifts ? [{ value: "shift", label: "After a closed shift" }] : []),
+          { value: "time", label: "Selected date and time" }, { value: "day", label: "End of selected date" }, ...(mayReadShifts ? [{ value: "shift", label: "After a closed shift" }] : []),
         ]} /></Label>
         {mode === "time" && choices.length > 1 && <Label className="space-y-1"><span>Repeated local time</span><ThemedSelect ariaLabel="Stock cutoff UTC offset" value={choice} onChange={next => { invalidate(); setChoice(next); }} placeholder="Choose an offset" options={choices.map(item => ({ value: item.instant, label: `${item.label} · ${item.instant}` }))} /></Label>}
         {mode === "shift" && <Label className="space-y-1 sm:col-span-2"><span>Closed shift opened on {day}</span><ThemedSelect ariaLabel="Closed shift stock cutoff" value={shiftId} onChange={next => { invalidate(); setShiftId(next); }} placeholder={shifts.loading ? "Loading closed shifts…" : "Choose a closed shift"} disabled={shifts.loading} options={shiftOptions} />
@@ -230,15 +267,22 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
           {shifts.error && <span role="alert" className="block text-xs text-destructive">{shifts.error}</span>}
         </Label>}
       </div>
-      {mode === "time" && <div className="flex items-start gap-2 text-sm"><Switch id={periodId} className="mt-0.5" checked={showPeriod}
+      {mode !== "shift" && <div className="flex items-start gap-2 text-sm"><Switch id={periodId} className="mt-0.5" checked={showPeriod}
         onCheckedChange={checked => { invalidate(); setShowCurrent(false); setShowPeriod(checked); }} /><Label htmlFor={periodId} className="block leading-normal">Show inventory changes for this day<span className="block text-xs text-muted-foreground">Opening stock, stock in and stock out through the same selected time.</span></Label></div>}
       <div className="flex flex-wrap gap-2"><Button type="submit" disabled={shownBusy || shownExporting}>{shownBusy && <Loader2 className="size-4 animate-spin" />}Show stock at selected time</Button>
         {!showCurrent && <Button type="button" variant="outline" onClick={() => { invalidate(); setChoices([]); setChoice(""); setShiftId(""); setMode("time"); setShowPeriod(false); setShowCurrent(true); }}>Return to current stock</Button>}
-        {!showCurrent && mayExport && <Button type="button" variant="outline" disabled={shownBusy || shownExporting || grade !== "verified" || visiblePage?.status !== "complete"} onClick={() => void download()}>{shownExporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}Export Excel</Button>}
+        <div className="flex items-center gap-2">
+          <Switch id={quantityFilterId} checked={zeroOnly} onCheckedChange={checked => {
+            setZeroOnly(checked);
+            if (visibleRequest) void read(visibleRequest, checked);
+          }} disabled={shownBusy || shownExporting} />
+          <Label htmlFor={quantityFilterId}>Zero stock only</Label>
+        </div>
+        {!showCurrent && mayExport && <Button type="button" variant="outline" disabled={shownBusy || shownExporting || grade !== "verified" || visiblePage?.status !== "complete"} onClick={() => void download()}>{shownExporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}{zeroOnly ? "Export full report" : "Export Excel"}</Button>}
       </div>
     </form>
     {shownError && <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{shownError}</p>}
-    {showCurrent && <CurrentStock key={branchId} branchId={branchId} />}
+    {showCurrent && <CurrentStock key={branchId} branchId={branchId} zeroOnly={zeroOnly} />}
     {visiblePage && <div className="space-y-3" aria-live="polite">
       {grade === "provisional" && <div role="alert" className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-foreground"><p className="font-semibold">Provisional recorded stock</p><p>Some terminals have not confirmed uploads; this recorded balance may change.</p><p className="mt-1 text-xs">This report is not eligible for complete-report export.</p></div>}
       <div className="rounded-md border p-3 text-sm"><p className="font-medium">{grade === "unavailable" ? "Historical quantities are not yet verified" : "Stock available at selected time"}</p><p className="break-words text-xs text-muted-foreground">Exact cutoff: {visiblePage.cutoff} · {visiblePage.timeZone}</p>
@@ -248,7 +292,7 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
         {visiblePage.reasons.filter(reason => grade !== "provisional" || !["WRITER_COVERAGE_PENDING", "WRITER_COVERAGE_UNKNOWN"].includes(reason)).map(reason => <p key={reason} className="mt-1 text-sm">{stockHistoryExplanation(reason)}</p>)}
       </div>
       {grade !== "unavailable" && <><div className="overflow-x-auto rounded-md border"><Table><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>SKU / barcode</TableHead>{visiblePage.period && <TableHead className="text-right">Opening stock</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock in</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock out</TableHead>}<TableHead className="text-right">Stock available</TableHead></TableRow></TableHeader><TableBody>
-        {visiblePage.rows.length ? visiblePage.rows.map(row => <TableRow key={row.productId}>
+        {visibleRows?.length ? visibleRows.map(row => <TableRow key={row.productId}>
           <TableCell className="min-w-40 max-w-80 whitespace-normal break-words"><span>{row.name}</span>
             {canOpenMovements && <Button variant="link" size="sm" className="block h-auto px-0 py-1" disabled={shownBusy || shownExporting}
               aria-label={`View movements for ${row.name}`} aria-expanded={movementProductId === row.productId}
@@ -260,7 +304,7 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
           {visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.inQuantity}</TableCell>}
           {visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.outQuantity}</TableCell>}
           <TableCell className={`numeric whitespace-nowrap text-right ${row.negative ? "text-destructive" : ""}`}>{row.quantity}{row.negative && <span className="block text-xs">Negative stock</span>}</TableCell>
-        </TableRow>) : <TableRow><TableCell colSpan={visiblePage.period ? 6 : 3}>No products in the verified opening for this location.</TableCell></TableRow>}
+        </TableRow>) : <TableRow><TableCell colSpan={visiblePage.period ? 6 : 3}>{zeroOnly ? "No zero-stock products on this page." : "No products in the verified opening for this location."}</TableCell></TableRow>}
       </TableBody></Table></div>
       {visiblePage.next && visibleRequest && <Button variant="outline" disabled={shownBusy || shownExporting} onClick={() => void read({ ...visibleRequest, after: visiblePage.next })}>Next products</Button>}
       <p className="break-all text-[11px] text-muted-foreground">Read at {visiblePage.readAt} · Source {visiblePage.sourceRevision}</p></>}

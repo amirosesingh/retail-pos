@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stockDateTimeInput, stockTimeChoices } from "../stock-history-selection";
+import { stockDateTimeInput, stockEndOfDay, stockTimeChoices } from "../stock-history-selection";
 
 describe("stock report physical-time selection", () => {
   it("uses the selected business zone rather than the PC clock zone", () => {
@@ -7,6 +7,14 @@ describe("stock report physical-time selection", () => {
     expect(stockTimeChoices("2026-11-06T08:01:02.0000001", "Asia/Brunei")).toEqual([
       { instant: "2026-11-06T00:01:02.0000001Z", label: "UTC+08:00" },
     ]);
+  });
+  it("selects the inclusive end of the business day, including a DST transition", () => {
+    expect(stockEndOfDay("2026-11-06", "Asia/Brunei")).toEqual({
+      start: "2026-11-05T16:00:00.0000000Z", cutoff: "2026-11-06T15:59:59.9999999Z",
+    });
+    expect(stockEndOfDay("2026-11-01", "America/New_York")).toEqual({
+      start: "2026-11-01T04:00:00.0000000Z", cutoff: "2026-11-02T04:59:59.9999999Z",
+    });
   });
   it("preserves all seven fractional digits when an explicit exact instant is selected", () => {
     expect(stockTimeChoices("2026-11-06T00:00:00.1234567", "UTC")[0].instant).toBe("2026-11-06T00:00:00.1234567Z");

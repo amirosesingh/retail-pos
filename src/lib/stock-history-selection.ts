@@ -1,4 +1,5 @@
 import { canonicalStockInstant, stockInstant } from "./stock-as-of";
+import { stockReportDay } from "../../electron/shared/stock-report-day.mjs";
 
 const formatter = (timeZone: string) => new Intl.DateTimeFormat("en-GB", {
   timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
@@ -14,6 +15,13 @@ export function stockDateTimeInput(instant: string | Date, timeZone: string): st
   if (!Number.isFinite(date.getTime())) throw new Error("Choose a valid date and time.");
   return wall(date, formatter(timeZone));
 }
+/** The last representable instant of the selected business day. */
+export function stockEndOfDay(date: string, timeZone: string) {
+  const day = stockReportDay(date, timeZone);
+  const finalSecond = new Date(Date.parse(day.endExclusive) - 1000).toISOString().slice(0, 19);
+  return { cutoff: `${finalSecond}.9999999Z`, start: day.start };
+}
+
 export type StockTimeChoice = { instant: string; label: string };
 /** Resolve a business-zone wall clock explicitly; a repeated DST hour has two choices. */
 export function stockTimeChoices(value: string, timeZone: string): StockTimeChoice[] {

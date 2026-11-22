@@ -58,6 +58,8 @@ describe('actual cloud stock-history SQL read and authorization',()=>{
   await seed();const first=await page({limit:1});expect(first).toMatchObject({status:'complete',rows:[{productId:product,quantity:'1',name:'鞋 “A”'}],next:product});
   expect(await page({after:product,limit:1,revision:String(first.sourceRevision)})).toMatchObject({rows:[{productId:archived,quantity:'0'}],next:null});
   expect(await page({at:'2026-11-05T01:00:00.0000000Z'})).toMatchObject({rows:[{quantity:'3'},{quantity:'0'}]});
+  expect(await page({at:'2026-11-06T00:00:00.0000000Z'})).toMatchObject({status:'complete',
+   rows:[{productId:product,quantity:'1'},{productId:archived,quantity:'0'}],next:null});
  });
  it('rejects normal Administrator terminal crossbranch access',async()=>{
   await expect(page({actor:'admin',branch:'b'})).rejects.toThrow(/BRANCH_DENIED|SYNC_TERMINAL_SCOPE_FORBIDDEN/);

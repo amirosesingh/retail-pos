@@ -28,6 +28,9 @@ function response(r){const cutoff=r.closedShiftId?'2026-11-05T13:00:00.1234567Z'
  const row=(id,negative)=>({productId:id,locationId:r.branchId,name:r.branchId==='a'?'Fixture A product':'Fixture B product',sku:'00001',barcode:'0000001',quantity:negative?'-2':'9007199254740993',negative,
   ...(r.periodStart?{openingQuantity:negative?'1':'9007199254740991',inQuantity:negative?'0':'5',outQuantity:'3'}:{})});
  if(model.kind==='incomplete')return{...base,baselineAt:undefined,reasons:['NO_VERIFIED_OPENING'],rows:[]};
+ if(model.kind==='zero-pages')return{...base,status:'complete',rows:[
+  {...row(r.after?second:first,false),name:r.after?'Historical zero stock':'Historical earlier balance',quantity:r.after?'0':'7'},
+ ],next:r.after?null:first};
  const record={...base,rows:r.after?[row(second,true)]:[row(first,false)],next:r.after?null:first};
  if(model.kind==='provisional')return{...record,status:'incomplete',reasons:['WRITER_COVERAGE_PENDING'],coverage:{acceptedLedger:'complete',writers:'pending',balanceGrade:'recorded_provisional',timeGrade:'author_entered'}};
  if(model.kind==='ungraded')return{...record,status:'incomplete',reasons:['NO_VERIFIED_OPENING']};
@@ -197,6 +200,44 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
    await page.getByRole('region',{name:'Stock report data'}).waitFor({state:'detached'});
    await page.getByText('Inventory permission is required to view this report.',{exact:true}).waitFor();
    passed++;console.log('PASS in-page current stock, cutoff, missing opening, scope and permissions '+width);await page.close();
+  }
+  {
+   const page=await fresh();
+   const zero=page.getByRole('switch',{name:'Zero stock only'});
+   const current=page.getByRole('table',{name:'Current inventory'});
+   await current.getByText('Current branch A stock',{exact:true}).waitFor();
+   await zero.check();
+   await current.getByText('Zero stock item',{exact:true}).waitFor();
+   assert.equal(await current.getByText('Current branch A stock',{exact:true}).count(),0);
+   assert.equal(await page.evaluate(()=>window.fixture.calls.length),0);
+   await zero.uncheck();
+
+   await page.evaluate(()=>window.fixture.set({kind:'zero-pages'}));
+   await page.getByRole('combobox',{name:'Stock cutoff method'}).click();
+   await page.getByRole('option',{name:'End of selected date'}).click();
+   const date=page.getByLabel('Stock report date',{exact:true});
+   await date.fill('2026-11-06');await show(page).click();
+   await page.getByText('Historical earlier balance',{exact:true}).waitFor();
+   assert.equal((await page.evaluate(()=>window.fixture.calls[0])).cutoff,'2026-11-06T15:59:59.9999999Z');
+
+   await zero.check();
+   await page.getByText('Historical zero stock',{exact:true}).waitFor();
+   assert.equal(await page.getByText('Historical earlier balance',{exact:true}).count(),0);
+   const scanned=await page.evaluate(()=>window.fixture.calls.slice(1));
+   assert.equal(scanned.length,2);
+   assert.equal(scanned[0].after,null);
+   assert.equal(scanned[1].after,'20000000-0000-4000-8000-000000000001');
+   assert(scanned.every(r=>r.cutoff===scanned[0].cutoff&&r.sourceRevision==='source-a'));
+   assert(await page.getByRole('button',{name:'Export full report'}).isEnabled());
+
+   await zero.uncheck();
+   await page.getByText('Historical earlier balance',{exact:true}).waitFor();
+   const requests=await page.evaluate(()=>window.fixture.calls.length);
+   const today=await page.evaluate(()=>new Date(Date.now()+8*3600000).toISOString().slice(0,10));
+   await date.fill(today);await show(page).click();
+   await current.getByText('Current branch A stock',{exact:true}).waitFor();
+   assert.equal(await page.evaluate(()=>window.fixture.calls.length),requests);
+   passed++;console.log('PASS business-day balance and a zero-stock filter across verified historical pages');await page.close();
   }
   console.log('PASS '+passed+' actual mounted Stock report groups');
  }finally{await browser?.close();await server?.close();}
