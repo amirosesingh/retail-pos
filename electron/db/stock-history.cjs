@@ -120,12 +120,14 @@ class StockHistoryStore{
   await this.request(tx).input('history_branch',branch).query(`IF NOT EXISTS(SELECT 1 FROM dbo.stock_history_heads WITH(UPDLOCK,HOLDLOCK) WHERE store_id=@history_branch)
    INSERT dbo.stock_history_heads(store_id) VALUES(@history_branch);`);
  }
- async finish(tx,token){
+ async finish(tx,token,finalizedSale){
   if(token==null)return {captured:0,available:false};
   const saved=CAPTURES.get(token);
   if(!saved||saved.tx!==tx||saved.pool!==this.manager.pool)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
   this.assertCurrent();
   this.assertWriter(saved.source);
+  const missingFinancialOrigin=saved.source?.verifyFinancialSale&&!saved.source.verifyFinancialSale(finalizedSale);
+  const author=missingFinancialOrigin?null:saved.source?.author;
   const current=await this.identity(tx);if(current!==saved.databaseKey)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
   const after=await this.snapshot(tx,saved.products.ids),seen=new Set(saved.beforeSources.map(row=>row.table+':'+row.id));
   const claims=(await this.sources(tx,saved.products.refs)).filter(row=>!seen.has(row.table+':'+row.id));
@@ -139,7 +141,7 @@ class StockHistoryStore{
    CAPTURES.delete(token);return {captured:0,available:true,incomplete:true};
   }
   const unverifiedBranches=new Set();
-  if(!saved.writerKnown)unverifiedBranches.add(context.branchId);
+  if(!saved.writerKnown||missingFinancialOrigin)unverifiedBranches.add(context.branchId);
   if(context.kind==='product'){
    // Catalog import has no stock effect for a zero birth or a metadata edit.
    // A merge writes its master and each deletion independently. Preserve only
@@ -153,16 +155,16 @@ class StockHistoryStore{
   // Missing enrollment/vault material keeps unsigned evidence for review;
   // it must not fabricate the later uploading cashier or block offline sales.
   const sourceManifests=[];
-  if(saved.source?.author){const signed=[];for(const row of rows){
+  if(author){const signed=[];for(const row of rows){
    try{
     const sourceManifestJson=await sourceManifestForMovement({
-     action:saved.source.author.action,row,operations:saved.sourceOperations,before:saved.before,after,claims,request:()=>this.request(tx),
+     action:author.action,row,operations:saved.sourceOperations,before:saved.before,after,claims,request:()=>this.request(tx),
      branchId:context.branchId,
      ...(context.arrivalReason!==undefined?{arrivalReason:context.arrivalReason}:{})});
     sourceManifests.push(sourceManifestJson);
     this.assertCurrent();this.assertWriter(saved.source);
     if(saved.source.requireSourceManifests&&!sourceManifestJson){signed.push(row);continue;}
-    signed.push(Object.freeze({...row,author_proof_json:JSON.stringify(saved.source.author.signMovement(row,sourceManifestJson??undefined))}));
+    signed.push(Object.freeze({...row,author_proof_json:JSON.stringify(author.signMovement(row,sourceManifestJson??undefined))}));
    }
    catch(error){
     if(!['ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING','ESYNC_SHIFT_AUTHOR_KEY_MISSING','ESYNC_SHIFT_AUTHOR_KEY_UNAVAILABLE','ESYNC_SHIFT_AUTHOR_VAULT_UNAVAILABLE','ESTOCK_AUTHOR_PERMISSION_REVOKED','ESTOCK_SOURCE_OVERSIZED'].includes(error?.code))throw error;
@@ -172,7 +174,7 @@ class StockHistoryStore{
   }rows=signed;}
   let sourceCohort;
   try{
-   sourceCohort=await require('./stock-history-cohort.cjs').persistSourceCohort(this,tx,{rows,manifests:sourceManifests,author:saved.source?.author,
+   sourceCohort=await require('./stock-history-cohort.cjs').persistSourceCohort(this,tx,{rows,manifests:sourceManifests,author,
     databaseKey:saved.databaseKey,assertCurrent:()=>{this.assertCurrent();this.assertWriter(saved.source);}});
   }catch(error){
    if(!['ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING','ESYNC_SHIFT_AUTHOR_KEY_MISSING','ESYNC_SHIFT_AUTHOR_KEY_UNAVAILABLE','ESYNC_SHIFT_AUTHOR_VAULT_UNAVAILABLE',

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 
@@ -146,6 +147,43 @@ describe("Main stock history pilot scope", () => {
     const token = await f.runtime.capture.begin(f.tx, operations, movement);
     f.switchActor();
     await expect(f.runtime.capture.finish(f.tx, token)).rejects.toMatchObject({ code: "ESTOCK_HISTORY_CONTEXT_CHANGED" });
+  });
+
+  it.each(["original", "missing", "malformed", "other-key", "different-shift"])("requires the finalized original financial sale before signing stock (%s)", async mode => {
+    const f = fixture();
+    exactCapture(f);
+    const keyId = "66666666-6666-4666-8666-666666666666", publicKey = "fixture-key";
+    const shiftId = "77777777-7777-4777-8777-777777777777", saleId = "88888888-8888-4888-8888-888888888888";
+    f.prepareKey.mockReturnValue({ enrolled: true, keyId, publicKey });
+    f.query.mockImplementation(async (sql: string) => ({ recordset: sql.includes("pos_sync_shift_author_keys")
+      ? [{ project_origin: enrollment.projectOrigin, terminal_id: enrollment.terminalId, author_id: actor, key_id: keyId, public_key: publicKey }]
+      : [{ recorded_at: "2026-11-20T00:00:00.0000000Z" }] }));
+    const insert = vi.spyOn(f.runtime.capture, "insertMovements").mockResolvedValue(undefined);
+    const gap = vi.spyOn(f.runtime.capture, "invalidateCoverage").mockResolvedValue(undefined);
+    const payloadJson = mode === "malformed" ? "invalid" : JSON.stringify({ action: "SALE", operationId: operation, terminalId: enrollment.terminalId,
+      branchId: enrollment.branchId, shiftId, changes: [{ saleId, before: null, after: { id: saleId,
+        branchId: enrollment.branchId, shiftId: mode === "different-shift" ? product : shiftId } }] });
+    const payloadHash = createHash("sha256").update(payloadJson).digest("hex");
+    const finalized = mode === "missing" ? null : { operationId: operation, payloadJson, payloadHash, proof: {
+      action: "SALE", operationId: operation, projectOrigin: enrollment.projectOrigin, terminalId: enrollment.terminalId,
+      branchId: enrollment.branchId, authorId: actor, subject: f.person.canonicalSubject,
+      keyId: mode === "other-key" ? product : keyId, payloadHash,
+    } };
+    const token = await f.runtime.capture.begin(f.tx, operations, { ...movement, kind: "sale", financialSaleOrigin: true });
+    expect(await f.runtime.capture.finish(f.tx, token, finalized)).toMatchObject({ captured: 1, incomplete: mode !== "original" });
+    const rows = insert.mock.calls[0]?.[2];
+    if (!Array.isArray(rows)) throw new Error("Expected captured stock movements");
+    expect(rows[0]).toMatchObject({ operation_id: operation, actor_id: actor, quantity_delta: "-2" });
+    if (mode === "original") {
+      expect(f.signStockEvent).toHaveBeenCalledWith(expect.objectContaining({ authorId: actor }),
+        expect.objectContaining({ action: "SALE", expectedKeyId: keyId, operationId: operation }));
+      expect(rows[0]).toHaveProperty("author_proof_json");
+      expect(gap).not.toHaveBeenCalled();
+    } else {
+      expect(f.signStockEvent).not.toHaveBeenCalled();
+      expect(rows[0]).not.toHaveProperty("author_proof_json");
+      expect(gap).toHaveBeenCalledWith(f.tx, enrollment.branchId, "UNVERIFIED_STOCK_WRITER");
+    }
   });
 
   it.each(["original", "other-key", "legacy"])("requires the original enrolled refund signer (%s)", async mode => {

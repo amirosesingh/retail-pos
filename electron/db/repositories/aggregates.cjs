@@ -254,10 +254,12 @@ class AggregateRepository {
       const stockSources = adjustmentPlan?.movements.length
         ? [...operations, { kind: "insert", table: "stock_delta_applied", rows: adjustmentPlan.movements }]
         : operations;
+      const financialSaleOrigin = kind === "sale" && financialTokens.length === 1 && financialTokens[0] !== null;
       const stockCapture=this.stockHistory?await this.stockHistory.begin(transaction,stockSources,{
         operationId,branchId:aggregate.branchId,terminalId:aggregate.terminalId,
         actorId:aggregate.activityOperator?.subject,kind,
         groupedCashOrigin: Boolean(saleOutbox?.installedHandoff && cashAuthor),
+        financialSaleOrigin,
         ...(stockArrival?{effectiveAt:stockArrival.effectiveAt,arrivalReason:stockArrival.reason}:{}),
       }):null;
       if(stockArrival&&stockCapture==null)throw Object.assign(new Error("The stock-history update is not available. The receiving invoice has not been saved."),{code:"ESTOCK_HISTORY_SCHEMA_REQUIRED"});
@@ -365,8 +367,12 @@ class AggregateRepository {
         const store=new ShiftIntentStore(this.connectionManager,this.operationsRepository.registry);
         for(const shiftId of newOpenings){await store.freezeOpening(transaction,operationId,aggregate.branchId,shiftId,{exactFinancial:financialStore!==null});if(financialStore)await financialStore.finalizeOpening(transaction,openingTokens.get(shiftId));}
       }
-      for(const token of financialTokens)await financialStore.finalizeMutation(transaction,token);
-      if(this.stockHistory)await this.stockHistory.finish(transaction,stockCapture);
+      let finalizedSale;
+      for (const token of financialTokens) {
+        const finalized = await financialStore.finalizeMutation(transaction, token);
+        if (financialSaleOrigin) finalizedSale = finalized;
+      }
+      if (this.stockHistory) await this.stockHistory.finish(transaction, stockCapture, finalizedSale);
       tableName = "local_operation_receipts";
       await new sql.Request(transaction)
         .input("operation_id", sql.UniqueIdentifier, operationId)

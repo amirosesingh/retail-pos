@@ -1,5 +1,6 @@
 "use strict";
 
+const { createHash } = require("node:crypto");
 const { StockHistoryStore } = require("./db/stock-history.cjs");
 const { StockHistoryOutbox } = require("./db/stock-history-outbox.cjs");
 const { createStockHistoryInstaller } = require("./db/stock-history-download.cjs");
@@ -33,6 +34,24 @@ function supportedAction(kind, operations) {
   if (kind === "product" && operations.some(op => op.table === "products" && ["insert", "upsert"].includes(op.kind)))
     return "PRODUCT_CREATE";
   return null;
+}
+
+function matchesFinalizedSale(sale, operationId, author) {
+  const proof = sale?.proof;
+  if (!author || !proof || sale.operationId !== operationId || proof.operationId !== operationId || proof.action !== "SALE" ||
+      proof.projectOrigin !== author.binding.projectOrigin || proof.terminalId !== author.binding.terminalId ||
+      proof.authorId !== author.binding.authorId || proof.subject !== author.subject || proof.branchId !== author.branchId ||
+      proof.keyId !== author.keyId || typeof sale.payloadJson !== "string" || proof.payloadHash !== sale.payloadHash ||
+      createHash("sha256").update(sale.payloadJson).digest("hex") !== sale.payloadHash) return false;
+  // Only finalizeMutation can supply this event, after persisting it in the
+  // same transaction as stock. Require its exact single original sale birth.
+  let event;
+  try { event = JSON.parse(sale.payloadJson); } catch { return false; }
+  const birth = Array.isArray(event?.changes) && event.changes.length === 1 ? event.changes[0] : null;
+  return event?.action === "SALE" && event.operationId === operationId && event.branchId === author.branchId &&
+    event.terminalId === author.binding.terminalId && typeof event.shiftId === "string" && birth?.before === null &&
+    typeof birth.saleId === "string" && birth.after?.id === birth.saleId && birth.after.branchId === event.branchId &&
+    birth.after.shiftId === event.shiftId;
 }
 
 function createStockHistoryRuntime({ enrollment, manager, cloud, keys, session, terminal, branch, project, ready, stocktakeBackend }) {
@@ -90,13 +109,16 @@ function createStockHistoryRuntime({ enrollment, manager, cloud, keys, session, 
       const protectedRefund = refundAuthor?.action === "REFUND" && refundAuthor.operationId === input.operationId &&
         refundAuthor.projectOrigin === active.projectOrigin && refundAuthor.terminalId === active.terminalId &&
         refundAuthor.branchId === active.branchId && refundAuthor.authorId === authorId && refundAuthor.subject === actor?.canonicalSubject;
-      const directAction = input.kind === "sale" && input.groupedCashOrigin === true ? "SALE" : protectedRefund ? "REFUND" : null;
+      const groupedCash = input.kind === "sale" && input.groupedCashOrigin === true;
+      const financialSale = input.kind === "sale" && input.financialSaleOrigin === true && !groupedCash;
+      const directAction = groupedCash || financialSale ? "SALE" : protectedRefund ? "REFUND" : null;
       const action = directAction ?? supportedAction(input.kind, operations);
       const prepared = authorId ? await prepareAuthor(action, tx) : null;
       const author = !protectedRefund || prepared?.keyId === refundAuthor.keyId ? prepared : null;
       assertCurrent();
       return { key: source.fingerprint, branchId: active.branchId, terminalId: active.terminalId, actorId: authorId,
         clockState: "unverified", assertCurrent, author, writerKnown: Boolean(action) && (!protectedRefund || Boolean(author)),
+        ...(financialSale ? { verifyFinancialSale: sale => matchesFinalizedSale(sale, input.operationId, author) } : {}),
         requireSourceManifests: directAction === null };
     },
   }) : null;

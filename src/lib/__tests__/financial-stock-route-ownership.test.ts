@@ -111,8 +111,9 @@ describe("financial journal ownership of untagged stock CT", () => {
 describe("native pending-financial key and capture contract", () => {
   function readerFixture() {
     const events: string[] = [], queries: { text: string; inputs: Row; transaction: unknown }[] = [];
-    const state = { pending: true };
+    const state = { pending: true, owned: true, receipt: null as Row | null };
     const physical = { movement_id: movement, store_id: branch };
+    const saleParent = { id: saleId, store_id: branch };
     class Transaction { begin = async () => { events.push("begin"); }; commit = async () => { events.push("commit"); }; rollback = async () => { events.push("rollback"); }; }
     class Request {
       inputs: Row = {};
@@ -120,7 +121,23 @@ describe("native pending-financial key and capture contract", () => {
       input(name: string, value: unknown) { this.inputs[name] = value; return this; }
       async query(text: string) {
         queries.push({ text, inputs: { ...this.inputs }, transaction: this.transaction });
-        if (text.includes("FROM dbo.sync_change_journal j WITH(HOLDLOCK)")) { events.push("pending");return { recordset: state.pending ? [{ change_id: 1 }] : [] }; }
+        if (text.includes("FROM dbo.sync_change_journal j WITH(HOLDLOCK)")) {
+          const pendingOnly = text.includes("j.acknowledged_at IS NULL");
+          events.push(pendingOnly ? "pending" : "ownership");
+          return { recordset: (pendingOnly ? state.pending : state.owned) ? [{ change_id: 1 }] : [] };
+        }
+        if (text.includes("FROM dbo.sales WITH(HOLDLOCK)")) {
+          events.push("ticket-parent");
+          return { recordset: [{ id: saleId.toUpperCase(), store_id: branch, bill_number: this.inputs.reference }] };
+        }
+        if (text.includes("FROM dbo.[sales] source WITH(UPDLOCK,HOLDLOCK)")) {
+          events.push("financial-sale");
+          return { recordset: [saleParent] };
+        }
+        if (text.includes("SELECT operation_id,operation_type,entity_id,note FROM dbo.local_operation_receipts")) {
+          events.push("business-receipt");
+          return { recordset: state.receipt ? [state.receipt] : [] };
+        }
         if (text.includes("__financial_row_json")) { events.push("rows");return { recordset: [{ ...physical, __financial_row_json: JSON.stringify(physical) }] }; }
         throw Error("Unexpected fixture query");
       }
@@ -128,9 +145,9 @@ describe("native pending-financial key and capture contract", () => {
     const manager = { sql: () => ({ Request, Transaction, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }), pool: {} };
     const source = { identity: { branchId: branch, terminalId: terminal, databaseGuid: uuid(7), projectOrigin: "https://fixture.test",
       backend: "https://fixture-pos.test", activation: "synthetic", profile: "fixture" }, assertSource: vi.fn() };
-    const reader = new ChangeReader(manager, { tables: [stock] }, { financialOperations: { enabled: true, schema: async () => {} }, financialCoverageSource: source });
+    const reader = new ChangeReader(manager, { tables: [sales, stock] }, { financialOperations: { enabled: true, schema: async () => {} }, financialCoverageSource: source });
     const changes = [{ key: { movement_id: movement }, operation: "I" }];
-    return { reader, state, changes, events, queries };
+    return { reader, state, changes, events, queries, source, saleParent };
   }
   it("matches movement_id and current branch/terminal against pending aggregate financial evidence", async () => {
     const f = readerFixture();expect(await f.reader.financialBusinessPending(stock, f.changes, branch, terminal)).toBe(true);
@@ -153,5 +170,37 @@ describe("native pending-financial key and capture contract", () => {
   it("does not introduce a SQL query on legacy, disabled financial paths", async () => {
     const reader = new ChangeReader({}, { tables: [stock] });
     expect(await reader.financialBusinessPending(stock, [{ key: { movement_id: movement } }], branch, terminal)).toBe(false);
+  });
+  it("holds an independent completed ticket until its exact financial sale is proved present", async () => {
+    const f = readerFixture();
+    const completed = { store_id: branch, bill_no: "stock-report-bill", status: "completed" };
+    await expect(f.reader.ticketCompletionParents([completed], branch, terminal))
+      .rejects.toMatchObject({ code: "EFINANCIAL_BUSINESS_PENDING", table: "sales" });
+    expect(f.events).toEqual(["begin", "ticket-parent", "pending", "rollback"]);
+    expect(f.queries[0].transaction).toBe(f.queries[1].transaction);
+    expect(f.queries[0].inputs).toEqual({ branch, reference: completed.bill_no });
+    expect(f.queries[1].inputs).toMatchObject({ branch, terminal, table: "sales", ids: JSON.stringify([saleId]) });
+    expect(f.queries[1].text).toContain("j.acknowledged_at IS NULL");
+    f.state.pending = false;
+    await expect(f.reader.ticketCompletionParents([completed], branch, terminal))
+      .rejects.toMatchObject({ code: "EFINANCIAL_BUSINESS_PENDING", table: "sales" });
+    expect(f.events.slice(-7)).toEqual(["begin", "ticket-parent", "pending", "ownership", "financial-sale", "business-receipt", "rollback"]);
+    const key = f.reader.financialCoverageKey(sales, f.saleParent, f.source);
+    f.state.receipt = {
+      operation_id: key.id, operation_type: "financial_business_row_accepted", entity_id: key.entity,
+      note: `${key.rowHash}:${key.schemaHash}:${saleOperation}`,
+    };
+    await expect(f.reader.ticketCompletionParents([completed], branch, terminal)).resolves.toEqual([]);
+    expect(f.events.slice(-7)).toEqual(["begin", "ticket-parent", "pending", "ownership", "financial-sale", "business-receipt", "commit"]);
+    expect(new Set(f.queries.slice(-5).map(query => query.transaction)).size).toBe(1);
+  });
+  it("still attaches the ordinary legacy sale parent for a completed ticket", async () => {
+    const f = readerFixture();
+    f.state.pending = false;
+    f.state.owned = false;
+    const completed = { store_id: branch, bill_no: "legacy-bill", status: "completed" };
+    await expect(f.reader.ticketCompletionParents([completed], branch, terminal))
+      .resolves.toEqual([{ table: "sales", rows: [{ id: saleId, store_id: branch, bill_number: completed.bill_no }] }]);
+    expect(f.events).toEqual(["begin", "ticket-parent", "pending", "ownership", "commit"]);
   });
 });

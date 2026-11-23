@@ -17,10 +17,10 @@ const hash=(raw:string)=>createHash('sha256').update(raw).digest('hex');
 const canonical=(v:unknown):unknown=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical((v as Record<string,unknown>)[k])])):v;
 const json=(v:unknown)=>JSON.stringify(canonical(v));
 type Row=Record<string,unknown>;
-function fixture(){
+function fixture(openingOperation = 'insert'){
  const pair=generateKeyPairSync('ed25519'),registry=loadRegistry(),common={version:1,algorithm:'Ed25519',keyId:'77777777-7777-4777-8777-777777777777',projectOrigin:'https://fixture.example',terminalId:terminal,authorId:'88888888-8888-4888-8888-888888888888',subject:'real.author',branchId:branch};
  const signed=(fields:Row,message:(v:Row)=>string):Row&{signature:string}=>({...fields,signature:sign(null,Buffer.from(message(fields)),pair.privateKey).toString('base64url')});
- const openingRow={id:shift,store_id:branch,status:'OPEN',state:'ACTIVE',closed_at:null,row_version:1,opening_float:'20.00'},rowJson=JSON.stringify(openingRow),openingOrigin={localAggregateId:openId,rowHash:hash(rowJson)};
+ const openingRow={id:shift,store_id:branch,terminal_id:terminal,status:'OPEN',state:'ACTIVE',closed_at:null,row_version:1,opening_float:'20.00'},rowJson=JSON.stringify(openingRow),openingOrigin={localAggregateId:openId,rowHash:hash(rowJson)};
  const openingJson=JSON.stringify({version:1,localAggregateId:openId,branchId:branch,terminalId:terminal,shiftId:shift,rowHash:openingOrigin.rowHash,rowJson});
  const opening={openingJson,proof:signed({...common,operationId:openId,action:'OPEN',payloadHash:hash(openingJson)},financialOperationMessage)};
  const fact={id:saleId,branchId:branch,shiftId:shift,totalAmount:'100.00',paymentType:'cash',paymentsJson:null,discountAmount:'0.00',isRefunded:false,rowVersion:'1'};
@@ -40,15 +40,39 @@ function fixture(){
  const boundary={kind:'CLOSING',branchId:branch,terminalId:terminal,shiftId:shift,operationId:closeId,sequence:'2',payloadJson:boundaryJson,payloadHash:hash(boundaryJson),proof,intent};
  const refund=mutation(refundOp,'REFUND','3',closeId,boundary.payloadHash,fact,{...fact,isRefunded:true,rowVersion:'2'});
  const history=[sale,boundary,refund],meta=new Set<string>(),business=new Set<string>(),order:string[]=[];let opened=false;
- const groups=[{aggregateId:openId,changes:[{entity_type:'shifts',key:{id:shift},entity_id:JSON.stringify({id:shift}),operation:'insert'}]},...[[saleOp,'sales',saleId],[closeId,'shifts',shift],[refundOp,'sales',saleId]].map(([aggregateId,table,id])=>({aggregateId,changes:[{entity_type:table,key:{id},entity_id:JSON.stringify({id}),operation:'update'}]}))];
+ const openingChange={aggregate_id:openId,entity_type:'shifts',key:{id:shift},entity_id:JSON.stringify({id:shift}),operation:openingOperation};
+ const groups=[{aggregateId:openId,operationType:'shift',changes:[openingChange]},...[[saleOp,'sales',saleId],[closeId,'shifts',shift],[refundOp,'sales',saleId]].map(([aggregateId,table,id])=>({aggregateId,changes:[{entity_type:table,key:{id},entity_id:JSON.stringify({id}),operation:'update'}]}))];
  const fullAck={ok:true,shift_closure_ack_version:3,shift_closures:[{id:shift,store_id:branch,row_version:5,requested_row_version:5,intent_id:closeId,intent_hash:payloadHash,accepted_token:'a'.repeat(64),current_token:'a'.repeat(64),superseded:false,coverage:matchingCoverage(registry,operations)}],financial_basis_receipt:{ack_version:2,intentId:closeId,graphPayloadHash:payloadHash,basisHash:hash(basisJson),serverBasisId:'99999999-9999-4999-8999-999999999999',formula:proof.formula,openingOrigin}};
  const ackFor=(item:typeof sale|typeof boundary)=>({status:item.kind==='MUTATION'?'financial_metadata_recorded':'boundary_registered_not_shift_closed',operationId:item.operationId,payloadHash:item.payloadHash,sequence:item.sequence,...(item.kind==='CLOSING'?{graphPayloadHash:payloadHash,basisHash:hash(basisJson)}:{}),businessUploaded:false,shiftClosed:false});
  const reader={pendingAggregates:vi.fn(async(_b:string,_n:number,deferred:string[])=>groups.filter(g=>!business.has(g.aggregateId)&&!deferred.includes(g.aggregateId))),financialAggregateRequired:vi.fn(async(id:string)=>id!==openId),financialOpening:vi.fn(async(id:string)=>id===openId?opening:null),financialHistory:vi.fn(async()=>opened?history.filter(h=>!meta.has(h.operationId)):[]),financialHistoryReady:vi.fn(async()=>meta.size===3),acknowledgeFinancialHistory:vi.fn(async(item:typeof sale|typeof boundary,ack:unknown)=>{assertFinancialHistoryAcknowledgement(item,ack);meta.add(item.operationId);order.push('metadata:'+item.sequence);}),acknowledgeFinancialOpening:vi.fn(async()=>{opened=true;}),protectedIntent:vi.fn(async(id:string)=>id===closeId?intent:null),predecessorAccepted:vi.fn(async()=>true),shiftPrerequisites:vi.fn(async()=>business.has(saleOp)&&business.has(refundOp)),frozenOpeningRows:vi.fn(async(id:string)=>id===openId?[openingRow]:[]),rows:vi.fn(async(table:{cloudTable:string})=>table.cloudTable==='shifts'?[{...openingRow,status:'CLOSED'}]:[{id:saleId,store_id:branch,shift_id:shift,total_amount:'100.00',is_refunded:true,row_version:2}]),acknowledgeAggregate:vi.fn(async(id:string)=>{business.add(id);order.push('business:'+id);}),acknowledgeProtectedIntent:vi.fn(async()=>{business.add(closeId);order.push('real-close');}),failAggregate:vi.fn()};
  const cloud={terminalId:()=>terminal,pushFinancialEvent:vi.fn(async({operationJson}:{operationJson:string})=>ackFor(history.find(h=>h.payloadJson===operationJson)!)),registerFinancialBoundary:vi.fn(async()=>{expect(reader.acknowledgeProtectedIntent).not.toHaveBeenCalled();return ackFor(boundary);}),pushAggregate:vi.fn(async(batch:Row)=>{if(batch.shiftIntent){expect(business.has(saleOp)&&business.has(refundOp)).toBe(true);return fullAck;}if((batch.operations as {table:string}[])[0].table==='shifts'){expect(batch).toHaveProperty('shiftFinancialOpening.openingJson',openingJson);return{ok:true,batch_id:batch.batchId};}expect(meta.size).toBe(3);expect(batch.financialLedgerProjection).toBe(true);return{ok:true,batch_id:batch.batchId};})};
  const worker=new PushWorker({reader,cloud,registry,checkpoints:{},financialHistoryEnabled:true});worker.retry=async(fn:()=>Promise<unknown>)=>fn();
- return{worker,reader,cloud,history,intent,opening,ackFor,order,business,meta,signed,common,run:()=>worker.pushAggregates(branch,100,false)};
+ return{worker,reader,cloud,history,intent,opening,openingChange,openingRow,ackFor,order,business,meta,signed,common,run:()=>worker.pushAggregates(branch,100,false)};
 }
 describe('two-phase exact financial history transport',()=>{
+ it('uploads an app-generated upsert as its exact signed birth with an identical retry',async()=>{
+  const f=fixture('update');
+  f.cloud.pushAggregate.mockRejectedValueOnce(Object.assign(new Error('503'),{status:503}));
+  await expect(f.run()).rejects.toMatchObject({status:503});
+  expect(f.reader.acknowledgeFinancialOpening).not.toHaveBeenCalled();
+  const original=f.cloud.pushAggregate.mock.calls[0][0];
+  expect(original).toMatchObject({shiftFinancialOpening:f.opening,
+   operations:[{table:'shifts',rows:[f.openingRow],changes:[{...f.openingChange,operation:'insert'}]}]});
+  expect(f.openingChange.operation).toBe('update');
+  await f.run();
+  expect(f.cloud.pushAggregate.mock.calls[1][0]).toEqual(original);
+  expect(f.reader.acknowledgeFinancialOpening).toHaveBeenCalledOnce();
+ });
+ it('holds foreign updates and changed opening rows before a birth can be uploaded',async()=>{
+  const changedOwner=fixture('update');
+  changedOwner.openingChange.aggregate_id=saleOp;
+  await expect(changedOwner.run()).rejects.toMatchObject({code:'EFINANCIAL_HISTORY_INVALID'});
+  expect(changedOwner.cloud.pushAggregate).not.toHaveBeenCalled();
+  const changedRow=fixture('update');
+  changedRow.openingRow.opening_float='21.00';
+  await expect(changedRow.run()).rejects.toMatchObject({code:'EFINANCIAL_HISTORY_INVALID'});
+  expect(changedRow.cloud.pushAggregate).not.toHaveBeenCalled();
+ });
  it('registers frozen SALE→CLOSE boundary→REFUND before latest business and only then real closure',async()=>{
   const f=fixture();expect(await f.run()).toBe(3);expect(await f.run()).toBe(1);expect(f.order.slice(1,4)).toEqual(['metadata:1','metadata:2','metadata:3']);expect(f.order.at(-1)).toBe('real-close');expect(f.reader.acknowledgeProtectedIntent).toHaveBeenCalledOnce();expect(f.cloud.registerFinancialBoundary).toHaveBeenCalledOnce();
   const first=JSON.parse(f.cloud.pushFinancialEvent.mock.calls[0][0].operationJson);expect(first.changes[0].after.isRefunded).toBe(false);const last=JSON.parse(f.cloud.pushFinancialEvent.mock.calls[1][0].operationJson);expect(last.changes[0].after.isRefunded).toBe(true);

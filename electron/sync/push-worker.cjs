@@ -1,3 +1,4 @@
+const { createHash } = require("node:crypto");
 const {prepareFinancialOpening,prepareFinancialHistory,assertFinancialHistoryAcknowledgement}=require("./financial-history-ack.cjs");
 const { recordId } = require("./uuid-fields.cjs");
 const { retryDelay } = require("./retry.cjs");
@@ -170,11 +171,15 @@ function isSharedPosFieldChange(change) {
 }
 
 /** A child-only retry must carry its locally owned parent into the same cloud transaction. */
-async function includeMissingParents(operations, reader, registry, branchId, {exactFinancial=false}={}) {
+async function includeMissingParents(operations, reader, registry, branchId, { exactFinancial = false, terminalId } = {}) {
   branchId = recordId(branchId);
-  const completed = (operations.find(op => op.table === "held_orders" && !op.deletePhase)?.rows ?? []).filter(row => row.status === "completed");
+  const originalSales = exactFinancial ? operations.find(op => op.table === "sales" && !op.deletePhase)?.rows ?? [] : [];
+  const originalBills = new Set(originalSales.filter(row => row.store_id === branchId && row.bill_number).map(row => row.bill_number));
+  const completed = (operations.find(op => op.table === "held_orders" && !op.deletePhase)?.rows ?? [])
+    .filter(row => row.status === "completed" && (row.store_id !== branchId ||
+      String(row.note ?? "").startsWith("booking:") || !originalBills.has(row.bill_no)));
   if (completed.length) {
-    const parents = await reader.ticketCompletionParents(completed, branchId);
+    const parents = await reader.ticketCompletionParents(completed, branchId, terminalId);
     for (const parent of parents) {
       const existing = operations.find(op => op.table === parent.table && !op.deletePhase);
       if (existing) existing.rows.push(...parent.rows.filter(row => !existing.rows.some(saved => saved.id === row.id)));
@@ -490,7 +495,8 @@ class PushWorker {
       if(waitingForIntent){originalIds.forEach(id=>deferred.add(id));continue;}
       for(let index=operations.length-1;index>=0;index--)if(!operations[index].rows.length&&!operations[index].changes.length)operations.splice(index,1);
       try {
-        if (!frozenBooking) await includeMissingParents(operations, this.reader, this.registry, branchId,{exactFinancial:financialRequired});
+        if (!frozenBooking) await includeMissingParents(operations, this.reader, this.registry, branchId,
+          { exactFinancial: financialRequired, terminalId });
         await includeClosedShiftGraphs(operations, this.reader, this.registry, branchId);
       } catch (error) {
         throw error;
@@ -524,7 +530,23 @@ class PushWorker {
         let openingSidecar;
         if(financialOpening){
           const verified=prepareFinancialOpening(financialOpening,branchId,terminalId);
-          if(operations.length!==1||operations[0].table!=='shifts'||operations[0].deletePhase||operations[0].rows.length!==1||recordId(operations[0].rows[0].id)!==verified.shiftId)throw Object.assign(new Error('The protected opening requires its exact original business group.'),{code:'EFINANCIAL_HISTORY_INVALID',table:'shifts'});
+          const [operation] = operations;
+          const [change] = operation?.changes ?? [];
+          const frozen = openings.get(verified.shiftId);
+          const exactRow = JSON.stringify(frozen);
+          const ownsBirth = originalIds.length === 1 && recordId(originalIds[0]) === verified.operationId &&
+            operations.length === 1 && operation.table === "shifts" && !operation.deletePhase && operation.rows.length === 1 &&
+            operation.changes.length === 1 && recordId(changeKey(change).id) === verified.shiftId &&
+            frozen?.terminal_id === terminalId && JSON.stringify(operation.rows[0]) === exactRow &&
+            createHash("sha256").update(exactRow, "utf8").digest("hex") === verified.rowHash;
+          const isOriginalUpsert = change?.operation === "update" && aggregate.operationType === "shift" &&
+            recordId(change.aggregate_id) === verified.operationId;
+          if (!ownsBirth || (change.operation !== "insert" && !isOriginalUpsert))
+            throw Object.assign(new Error("The protected opening requires its exact original business group."),
+              { code: "EFINANCIAL_HISTORY_INVALID", table: "shifts" });
+          // The local journal represents every upsert as an update. Only the
+          // signed, frozen opening can establish that this one created a shift.
+          if (isOriginalUpsert) operation.changes = [{ ...change, operation: "insert" }];
           openingSidecar={openingJson:verified.openingJson,proof:verified.proof};
         }
         const batchId = frozenBooking
@@ -732,7 +754,7 @@ class PushWorker {
         // draft can arrive before its sale, followed by orphan payment/items.
         const operations = [{ table: table.cloudTable, dependencyOrder: table.dependencyOrder,
           deletePhase: false, rows, changes: changes.filter(change => change.operation !== "D") }];
-        await includeMissingParents(operations, this.reader, this.registry, branchId);
+        await includeMissingParents(operations, this.reader, this.registry, branchId, { terminalId });
         const closedGraph = await includeClosedShiftGraphs(operations, this.reader, this.registry, branchId);
         const withParents = operations.length > 1;
         if (withParents) {
