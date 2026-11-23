@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld("pos", {
   managementReport: (options) => invoke("business:management-report", options),
   stockHistory: (request) => invoke("business:stock-history", request),
   stockHistoryMovements: (request) => invoke("business:stock-history-movements", request),
+  stockActivity: (request) => invoke("business:stock-activity", request),
   productMergeCapability: (request) => invoke("business:product-merge-capability", request),
   mergeProducts: (request) => invoke("business:merge-products", request),
   stocktakeControl: (request) => invoke("business:stocktake-control", request),

@@ -7,7 +7,7 @@ import {
  type StockHistoryMovementPage,type StockHistoryMovementRequest,
 } from './stock-history-movements';
 
-async function authorizeStockHistoryRead(proof:CallerProof,request:Pick<StockHistoryRequest,'branchId'|'closedShiftId'|'export'>){
+export async function authorizeStockHistoryRead(proof:CallerProof,request:Pick<StockHistoryRequest,'branchId'|'closedShiftId'|'export'>){
  const {requireCallerScope}=await import('./privileged-caller.server');
  const {canCrossBranches}=await import('@/core/api/relay-policy.server');
  const scope=await requireCallerScope(proof,{permission:'can_view_inventory'});

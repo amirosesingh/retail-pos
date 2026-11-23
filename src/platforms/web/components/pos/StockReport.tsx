@@ -22,8 +22,11 @@ import { stockDateTimeInput, stockEndOfDay, stockTimeChoices, type StockTimeChoi
 import { stockHistoryExplanation, type StockHistoryPage, type StockHistoryRequest, type StockHistoryRow } from "@/lib/stock-history-report";
 import { stockReportDay } from "../../../../../electron/shared/stock-report-day.mjs";
 import { canonicalStockInstant, stockInstant } from "@/lib/stock-as-of";
+import { StockActivityTime, StockRecordedBalances, StockReportActivity } from "./StockReportActivity";
+import { reportActivityEvidence, useStockReportActivityPage, type StockActivityProduct } from "./use-stock-report-activity";
 
 const zeroQuantity = (row: StockHistoryRow) => row.quantity === "0" || row.quantity === "-0";
+const unresolvedClosedShiftCutoff = "1970-01-01T00:00:00.0000000Z";
 type MovementProduct = { productId: string; name: string };
 type MovementView = { product: MovementProduct; page: StockHistoryMovementPage | null; number: number; identity: string; error: string };
 const movementLabels: Record<StockHistoryMovementPage["rows"][number]["kind"], string> = {
@@ -80,7 +83,7 @@ function CurrentStock({ branchId, zeroOnly }: { branchId: string; zeroOnly: bool
 
 export function StockReport({ branchId, branchName }: { branchId: string; branchName: string }) {
   const { can, isAdmin, authUserId, appUser, terminalUser, user } = useAuth();
-  const { state } = usePos();
+  const { state, ready, loadPhase } = usePos();
   const timeZone = effectiveTimeZone();
   const mayRead = can("can_view_inventory"), mayExport = can("can_export_reports");
   const mayReadShifts = isAdmin || can("can_shift_closing_history_view");
@@ -95,7 +98,9 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
   const [error, setError] = useState(""), [busy, setBusy] = useState(false), [exporting, setExporting] = useState(false);
   const [pageIdentity, setPageIdentity] = useState(""), [activityIdentity, setActivityIdentity] = useState("");
   const [movement, setMovement] = useState<MovementView | null>(null);
+  const [activitySelection, setActivitySelection] = useState<{ scope: string; productId: string } | null>(null);
   const movementHeading = useRef<HTMLHeadingElement>(null), movementTrigger = useRef<HTMLButtonElement | null>(null);
+  const activityHeading = useRef<HTMLHeadingElement>(null);
   const returnMovementFocus = useRef(false);
   const generation = useRef(0), mounted = useRef(false);
   const identity = JSON.stringify([branchId, timeZone, mayRead, mayExport, mayReadShifts, sessionEpoch(),
@@ -107,10 +112,55 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
   const active = activityIdentity === identity;
   const shownBusy = active && busy, shownExporting = active && exporting, shownError = active ? error : "";
   const grade = stockReportDisplayGrade(visiblePage);
+  const historicalCutoff = !visiblePage?.reasons.includes("FUTURE_CUTOFF");
   const visibleRows = zeroOnly ? visiblePage?.rows.filter(zeroQuantity) : visiblePage?.rows;
   const canOpenMovements = grade === "verified" && Boolean(visiblePage?.sourceRevision && visiblePage.baselineAt);
   const visibleMovement = canOpenMovements && movement?.identity === identity ? movement : null;
   const movementProductId = visibleMovement?.product.productId, movementPageNumber = visibleMovement?.number;
+  const unresolvedShift = Boolean(visibleRequest?.closedShiftId && visiblePage?.cutoff === unresolvedClosedShiftCutoff);
+  const activityBranch = unresolvedShift ? undefined : visiblePage?.branchId;
+  const activityCutoff = unresolvedShift ? undefined : visiblePage?.cutoff;
+  const activityScope = JSON.stringify([identity, activityBranch, activityCutoff]);
+  const activityProduct = activitySelection?.scope === activityScope ? activitySelection.productId : undefined;
+  const before = useStockReportActivityPage(activityScope, activityBranch, activityCutoff, "through-cutoff");
+  const after = useStockReportActivityPage(activityScope, activityBranch, activityCutoff, "after-cutoff");
+  const itemBefore = useStockReportActivityPage(activityScope, activityProduct ? activityBranch : undefined, activityCutoff, "through-cutoff", activityProduct);
+  const itemAfter = useStockReportActivityPage(activityScope, activityProduct ? activityBranch : undefined, activityCutoff, "after-cutoff", activityProduct);
+  const activityFormat = useMemo(() => new Intl.DateTimeFormat(undefined, {
+    timeZone, year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }), [timeZone]);
+  const evidence = useMemo(() => reportActivityEvidence(before.evidence, after.evidence), [before.evidence, after.evidence]);
+  const itemEvidence = useMemo(() => reportActivityEvidence(itemBefore.evidence, itemAfter.evidence), [itemBefore.evidence, itemAfter.evidence]);
+  const activityProducts = useMemo(() => {
+    const catalogue = new Map<string, StockActivityProduct>();
+    if (!activityBranch) return catalogue;
+    if (ready && loadPhase === "ready" && sameBranchId(state.currentStoreId, branchId)) {
+      const visible = createCatalogueVisibility(state.settings, state.stores, state.transfers);
+      for (const product of state.products) {
+        if (visible(product, branchId)) catalogue.set(product.id, { productId: product.id, name: product.name, sku: product.sku, barcode: product.barcode });
+      }
+    }
+    for (const row of visiblePage?.rows ?? []) catalogue.set(row.productId, { productId: row.productId, name: row.name, sku: row.sku, barcode: row.barcode });
+    for (const records of [before.evidence, after.evidence, before.page, after.page, itemBefore.page, itemAfter.page]) {
+      for (const row of records?.rows ?? []) {
+        if (!catalogue.has(row.productId)) catalogue.set(row.productId, { productId: row.productId, name: row.productName || row.productId });
+      }
+    }
+    return catalogue;
+  }, [activityBranch, ready, loadPhase, state.currentStoreId, state.settings, state.stores, state.transfers, state.products, branchId,
+    visiblePage?.rows, before.evidence, after.evidence, before.page, after.page, itemBefore.page, itemAfter.page]);
+  const balances = useMemo(() => grade === "unavailable" ? [...activityProducts.values()].map(product => {
+    const selected = product.productId === activityProduct && Boolean(itemBefore.evidence);
+    const observed = selected ? itemEvidence : evidence;
+    const awaitingAfter = selected ? itemAfter.loading && !itemAfter.evidence : after.loading && !after.evidence;
+    const balance = historicalCutoff && !awaitingAfter ? observed.balances.get(product.productId) : undefined;
+    return { ...product, quantity: balance?.quantity ?? null, supportedAt: balance?.supportedAt, lastChange: observed.latest.get(product.productId) };
+  }).sort((left, right) => left.name.localeCompare(right.name) || left.productId.localeCompare(right.productId)) : [],
+  [activityProduct, activityProducts, after.loading, after.evidence, evidence, itemBefore.evidence, itemAfter.loading, itemAfter.evidence, itemEvidence, grade, historicalCutoff]);
+  function selectActivityProduct(productId: string) {
+    setActivitySelection({ scope: activityScope, productId });
+    activityHeading.current?.focus();
+  }
   useEffect(() => {
     if (movementProductId) movementHeading.current?.focus();
     else if (returnMovementFocus.current) {
@@ -162,7 +212,7 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
           if (!mayReadShifts || !shiftId) throw new Error("Select a closed shift from this location.");
           // Required transport field only: the authorized source exclusively
           // resolves this CLOSED shift's saved instant, including exact digits.
-          selected = { cutoff: "1970-01-01T00:00:00.0000000Z", timeZone, branchId, closedShiftId: shiftId };
+          selected = { cutoff: unresolvedClosedShiftCutoff, timeZone, branchId, closedShiftId: shiftId };
         } else if (mode === "day") {
           const { cutoff, start } = stockEndOfDay(day, timeZone);
           selected = { cutoff: today ? canonicalStockInstant(now.toISOString()) : cutoff, timeZone, branchId,
@@ -183,11 +233,12 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
       const cursors = new Set([selectedRequest.after ?? null]);
       for (let scanned = 0; ; scanned++) {
         result = await loadStockHistoryPage(pageRequest); assertCurrent();
+        const absentPeriod = result.status === "unavailable" && !result.period;
         if (result.branchId !== pageRequest.branchId || result.timeZone !== pageRequest.timeZone
           || ((!pageRequest.closedShiftId || pageRequest.sourceRevision) && stockInstant(result.cutoff) !== stockInstant(pageRequest.cutoff))
           || (pageRequest.sourceRevision && result.sourceRevision !== pageRequest.sourceRevision)
-          || Boolean(result.period) !== Boolean(pageRequest.periodStart)
-          || (pageRequest.periodStart && stockInstant(result.period!.start) !== stockInstant(pageRequest.periodStart)))
+          || (!absentPeriod && (Boolean(result.period) !== Boolean(pageRequest.periodStart)
+            || (pageRequest.periodStart && stockInstant(result.period!.start) !== stockInstant(pageRequest.periodStart)))))
           throw new Error("The stock report returned a different scope, time, or revision. Refresh the report.");
         if (!filterZero || stockReportDisplayGrade(result) === "unavailable" || result.rows.some(zeroQuantity) || !result.next) break;
         if (cursors.has(result.next) || !result.sourceRevision)
@@ -274,7 +325,7 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
         <div className="flex items-center gap-2">
           <Switch id={quantityFilterId} checked={zeroOnly} onCheckedChange={checked => {
             setZeroOnly(checked);
-            if (visibleRequest) void read(visibleRequest, checked);
+            if (visibleRequest && grade !== "unavailable") void read(visibleRequest, checked);
           }} disabled={shownBusy || shownExporting} />
           <Label htmlFor={quantityFilterId}>Zero stock only</Label>
         </div>
@@ -285,7 +336,7 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
     {showCurrent && <CurrentStock key={branchId} branchId={branchId} zeroOnly={zeroOnly} />}
     {visiblePage && <div className="space-y-3" aria-live="polite">
       {grade === "provisional" && <div role="alert" className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-foreground"><p className="font-semibold">Provisional recorded stock</p>{visiblePage.coverage?.timeGrade === "recorded" && <p>Movements are counted when the central stock ledger recorded them.</p>}<p>Some terminals have not confirmed uploads; this recorded balance may change.</p><p className="mt-1 text-xs">This report is not eligible for complete-report export.</p></div>}
-      <div className="rounded-md border p-3 text-sm"><p className="font-medium">{grade === "unavailable" ? "Historical quantities are not yet verified" : grade === "provisional" ? "Stock recorded through the selected time" : "Stock available at selected time"}</p><p className="break-words text-xs text-muted-foreground">{grade === "provisional" ? "Recorded cutoff" : "Exact cutoff"}: {visiblePage.cutoff} · {visiblePage.timeZone}</p>
+      <div className="rounded-md border p-3 text-sm"><p className="font-medium">{grade === "unavailable" ? "Historical quantities are not yet verified" : grade === "provisional" ? "Stock recorded through the selected time" : "Stock available at selected time"}</p><p className="break-words text-xs text-muted-foreground">{unresolvedShift ? "The saved closing time could not be resolved." : <>{grade === "provisional" ? "Recorded cutoff" : "Exact cutoff"}: {visiblePage.cutoff} · {visiblePage.timeZone}</>}</p>
         {visiblePage.baselineAt && <p className="break-words text-xs text-muted-foreground">Verified opening: {visiblePage.baselineAt}</p>}
         {visiblePage.period && <p className="break-words text-xs text-muted-foreground">Inventory changes from {visiblePage.period.start} through the selected time (inclusive).</p>}
         {visiblePage.coverage && visiblePage.coverage.timeGrade !== "recorded" && <p className="mt-1 text-xs text-muted-foreground">Movement times include authorized arrival-time entries.</p>}
@@ -293,20 +344,27 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
         {visiblePage.recordedThrough && <Button type="button" size="sm" variant="outline" className="mt-2" disabled={shownBusy || shownExporting}
           onClick={() => void read({ cutoff: visiblePage.recordedThrough!, timeZone, branchId })}>View latest recorded stock</Button>}
       </div>
-      {grade !== "unavailable" && <><div className="overflow-x-auto rounded-md border"><Table><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>SKU / barcode</TableHead>{visiblePage.period && <TableHead className="text-right">Opening stock</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock in</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock out</TableHead>}<TableHead className="text-right">Stock available</TableHead></TableRow></TableHeader><TableBody>
+      {grade === "unavailable" && !unresolvedShift && <StockRecordedBalances rows={balances} zeroOnly={zeroOnly} selected={activityProduct}
+        selectProduct={selectActivityProduct} format={activityFormat} />}
+      {grade !== "unavailable" && <><div className="overflow-x-auto rounded-md border"><Table aria-label="Stock at selected time"><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>SKU / barcode</TableHead>{visiblePage.period && <TableHead className="text-right">Opening stock</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock in</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock out</TableHead>}<TableHead className="text-right">Stock available</TableHead><TableHead>Last recorded change</TableHead><TableHead>Balance status</TableHead></TableRow></TableHeader><TableBody>
         {visibleRows?.length ? visibleRows.map(row => <TableRow key={row.productId}>
           <TableCell className="min-w-40 max-w-80 whitespace-normal break-words"><span>{row.name}</span>
             {canOpenMovements && <Button variant="link" size="sm" className="block h-auto px-0 py-1" disabled={shownBusy || shownExporting}
               aria-label={`View movements for ${row.name}`} aria-expanded={movementProductId === row.productId}
               aria-controls={movementProductId === row.productId ? `${movementHeadingId}-panel` : undefined}
               onClick={event => { movementTrigger.current = event.currentTarget; void readMovements(row); }}>View movements</Button>}
+            <Button type="button" variant="link" size="sm" className="block h-auto px-0 py-1"
+              aria-label={`Filter activity for ${row.name}`} aria-pressed={activityProduct === row.productId}
+              onClick={() => selectActivityProduct(row.productId)}>Filter activity</Button>
           </TableCell>
           <TableCell className="max-w-52 whitespace-normal break-all text-xs">{row.sku || "—"}<br />{row.barcode || "—"}</TableCell>
           {visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.openingQuantity}</TableCell>}
           {visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.inQuantity}</TableCell>}
           {visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.outQuantity}</TableCell>}
           <TableCell className={`numeric whitespace-nowrap text-right ${row.negative ? "text-destructive" : ""}`}>{row.quantity}{row.negative && <span className="block text-xs">Negative stock</span>}</TableCell>
-        </TableRow>) : <TableRow><TableCell colSpan={visiblePage.period ? 6 : 3}>{zeroOnly ? "No zero-stock products on this page." : "No products in the verified opening for this location."}</TableCell></TableRow>}
+          <TableCell className="whitespace-normal text-xs"><StockActivityTime format={activityFormat} value={(activityProduct === row.productId && itemBefore.evidence ? itemEvidence : evidence).latest.get(row.productId)} /></TableCell>
+          <TableCell className="text-xs">{grade === "verified" ? "Verified" : "Provisional"}</TableCell>
+        </TableRow>) : <TableRow><TableCell colSpan={visiblePage.period ? 8 : 5}>{zeroOnly ? "No zero-stock products on this page." : "No products in the verified opening for this location."}</TableCell></TableRow>}
       </TableBody></Table></div>
       {visiblePage.next && visibleRequest && <Button variant="outline" disabled={shownBusy || shownExporting} onClick={() => void read({ ...visibleRequest, after: visiblePage.next })}>Next products</Button>}
       <p className="break-all text-[11px] text-muted-foreground">Read at {visiblePage.readAt} · Source {visiblePage.sourceRevision}</p></>}
@@ -335,6 +393,9 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
           </div>}
         </> : <p role="alert" className="text-sm text-muted-foreground">Movement details are unavailable for this report.{visibleMovement.page.reasons.length > 0 && ` ${stockHistoryExplanation(visibleMovement.page.reasons[0]!)}`}</p>)}
       </section>}
+      {!unresolvedShift && <StockReportActivity before={activityProduct ? itemBefore : before} after={activityProduct ? itemAfter : after}
+        products={activityProducts} selected={activityProduct} clearSelection={() => setActivitySelection(null)}
+        timeZone={timeZone} format={activityFormat} heading={activityHeading} />}
     </div>}
   </section>;
 }

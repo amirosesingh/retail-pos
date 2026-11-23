@@ -92,15 +92,18 @@ async function main(){
     backendOrigin:'https://fixture-pos.example',databaseGuid},manager,cloud,keys:keys.keys,session,
     terminal:()=>activation,branch:()=>branch,project:()=>project,ready:()=>true});
    const aggregate=new AggregateRepository(manager,repository,{financialOperations:context.operations,stockHistory:stockHistory.capture});
-   const shiftId=preciseShift,saleId=randomUUID(),productId=randomUUID(),operationId=randomUUID(),activityId=randomUUID(),bill='OWNED-STOCK-SALE';
-   await manager.pool.request().input('id',productId).input('branch',branch).input('stock',JSON.stringify({[branch]:7})).query(
-    'INSERT dbo.products(id,name,owner_store_id,stock_quantity,stock_by_store,row_version) VALUES(@id,N\'Owned fixture product\',@branch,7,@stock,1);');
+   const shiftId=preciseShift,saleId=randomUUID(),productId=randomUUID(),multiProduct=randomUUID(),operationId=randomUUID(),activityId=randomUUID(),bill='OWNED-STOCK-SALE';
+   const multiActivity=[randomUUID(),randomUUID()];
+   await manager.pool.request().input('id',productId).input('multi',multiProduct).input('branch',branch)
+    .input('stock',JSON.stringify({[branch]:7,OTHER:9})).input('multiStock',JSON.stringify({[branch]:7})).query(
+    'INSERT dbo.products(id,name,owner_store_id,stock_quantity,stock_by_store,row_version) VALUES(@id,N\'Owned fixture product\',@branch,16,@stock,1),(@multi,N\'Owned fixture two-line product\',@branch,7,@multiStock,1);');
    const operations=[
     {kind:'insert',table:'sales',rows:[{id:saleId,store_id:branch,shift_id:shiftId,bill_number:bill,total_amount:'10.00',payment_type:'cash',payments:[],discount_amount:'0',row_version:1}]},
-    {kind:'insert',table:'sale_items',rows:[{id:randomUUID(),sale_id:saleId,branch_id:branch,product_id:productId,quantity:1}]},
-    {kind:'update',table:'products',match:{id:productId},values:{stock_quantity:6,stock_by_store:{[branch]:6}}},
-    {kind:'insert',table:'item_activity_logs',rows:[{id:activityId,store_id:branch,terminal_id:terminal,product_id:productId,
-     quantity_delta:-1,activity_type:'sale',reference:bill,created_at:new Date().toISOString()}]},
+    {kind:'insert',table:'sale_items',rows:[productId,multiProduct,multiProduct].map(id=>({id:randomUUID(),sale_id:saleId,branch_id:branch,product_id:id,quantity:1}))},
+    {kind:'update',table:'products',match:{id:productId},values:{stock_quantity:15,stock_by_store:{[branch]:6,OTHER:9}}},
+    {kind:'update',table:'products',match:{id:multiProduct},values:{stock_quantity:5,stock_by_store:{[branch]:5}}},
+    {kind:'upsert',table:'item_activity_logs',rows:[activityId,...multiActivity].map(id=>({id,store_id:branch,terminal_id:terminal,
+     product_id:id===activityId?productId:multiProduct,quantity_delta:-1,activity_type:'sale',reference:bill,created_at:new Date().toISOString()}))},
    ];
    const saleInput={operationId,branchId:branch,terminalId:terminal,operations,permissions:session.identity().permissions,...aggregatePolicy('sale',operations,session.identity())};
    offline=true;
@@ -114,7 +117,11 @@ async function main(){
     JOIN dbo.products p ON p.id=m.product_id WHERE m.operation_id=@operation AND m.product_id=@product;`)).recordset;
    assert.equal(rows.length,1);
    const row=rows[0],stockProof=JSON.parse(row.author_proof_json),financialProof=JSON.parse(row.proof_json);
-   assert.equal(row.stock_quantity,6);assert.equal(row.quantity_delta,-1);assert.equal(row.ingested_cursor,null);assert.equal(row.pending_claims,1);
+   assert.equal(row.stock_quantity,15);assert.equal(row.quantity_delta,-1);assert.equal(row.ingested_cursor,null);assert.equal(row.pending_claims,1);
+   const activity=(await manager.pool.request().input('product',productId).input('multi',multiProduct).query(`
+    SELECT product_id,stock_before,stock_after FROM dbo.item_activity_logs WHERE product_id IN(@product,@multi);`)).recordset;
+   assert.deepEqual(activity.filter(log=>log.product_id.toLowerCase()===productId).map(log=>[log.stock_before,log.stock_after]),[[7,6]]);
+   assert.deepEqual(activity.filter(log=>log.product_id.toLowerCase()===multiProduct).map(log=>[log.stock_before,log.stock_after]),[[null,null],[null,null]]);
    assert.deepEqual(JSON.parse(row.stock_payload)[16],[['item_activity_logs',activityId,'-1']]);
    assert.equal(JSON.parse(row.payload_json).changes[0].saleId,saleId);
    for(const field of ['keyId','projectOrigin','terminalId','authorId','subject','branchId','operationId','action'])assert.equal(stockProof[field],financialProof[field]);

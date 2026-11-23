@@ -80,6 +80,7 @@ const CHANNEL_LEVELS = {
   "business:management-report": OPEN, // explicit report permissions below; handler additionally verifies sealed management registration and complete replica
   "business:stock-history": OPEN, // dedicated Main reader rechecks current SQL account and trusted branch
   "business:stock-history-movements": OPEN, // same dedicated stock report admission
+  "business:stock-activity": OPEN, // same dedicated stock report admission
   "business:product-merge-capability": OPEN, // dedicated verified Operations PC protocol
   "business:merge-products": OPEN, // Main derives paired scope and original actor
   "business:stocktake-control": ADMIN, // the handler requires an exact hosted pilot and a current POS administrator
@@ -475,7 +476,7 @@ function allowed(channel, args = []) {
   if (channel === "business:stock-arrival-capability") {
     return adminSession.hasPosAuthority() && (adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_receive_purchase_order"));
   }
-  if (channel === "business:stock-history" || channel === "business:stock-history-movements") {
+  if (["business:stock-history", "business:stock-history-movements", "business:stock-activity"].includes(channel)) {
     if (!adminSession.hasPosAuthority() || !(adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_view_inventory"))) return false;
     if (args[0]?.export === true && !(adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_export_reports"))) return false;
     return true; // Only the admitted POS frame may touch the session in its handler.

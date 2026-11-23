@@ -1,6 +1,7 @@
 import { effectiveDatabaseMode } from "./db-mode";
 import type {StockHistoryRequest,StockHistoryPage} from '@/lib/stock-history-report';
 import type { StockHistoryMovementPage, StockHistoryMovementRequest } from "@/lib/stock-history-movements";
+import type { StockActivityPage, StockActivityRequest } from "@/lib/stock-activity-query";
 import type { StockHistoryProductMergeCapability, StockHistoryProductMergeFailure, StockHistoryProductMergeReceipt,
   StockHistoryProductMergeRequest } from "@/lib/stock-history-product-merge";
 import { isManagementDevice } from "@/lib/management-device";
@@ -749,6 +750,7 @@ export type PosBridge = {
   }>;
   stockHistory?: (request:StockHistoryRequest)=>Promise<{ok:boolean;page?:StockHistoryPage;code?:string;error?:string}>;
   stockHistoryMovements?: (request: StockHistoryMovementRequest) => Promise<{ ok: boolean; page?: StockHistoryMovementPage; code?: string; error?: string }>;
+  stockActivity?: (request: StockActivityRequest) => Promise<{ ok: boolean; page?: StockActivityPage; code?: string; error?: string }>;
   productMergeCapability?: (request: { branchId: string }) => Promise<StockHistoryProductMergeCapability | StockHistoryProductMergeFailure>;
   mergeProducts?: (request: StockHistoryProductMergeRequest) => Promise<StockHistoryProductMergeReceipt | StockHistoryProductMergeFailure>;
   stocktakeControl?: (request: { action: "enroll" | "approve-financial" } | ({ stocktakeId: string } & ({ action: "arm" } |

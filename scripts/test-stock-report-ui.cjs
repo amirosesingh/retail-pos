@@ -7,8 +7,8 @@ async function main(){
  const root=process.cwd(),directory=path.join(root,'.tmp','stock-report-ui');fs.mkdirSync(directory,{recursive:true});
  fs.writeFileSync(path.join(directory,'index.html'),'<div id="root"></div><script type="module" src="/.tmp/stock-report-ui/main.tsx"></script>');
  fs.writeFileSync(path.join(directory,'fixture.ts'),`import{useMemo,useSyncExternalStore}from'react';
-export let model={branch:'a',name:'Fixture A',open:true,mount:true,inventory:true,export:true,shifts:true,zone:'Asia/Brunei',epoch:1,kind:'complete',liveQuantity:7,inventoryReady:true,inventoryPhase:'ready',movementKind:'complete'};
-const listeners=new Set();export const calls=[],movementCalls=[],exports=[],pending=[],commits=[];let defer=false,deferMovement=false;
+export let model={branch:'a',name:'Fixture A',open:true,mount:true,inventory:true,export:true,shifts:true,zone:'Asia/Brunei',epoch:1,kind:'complete',liveQuantity:7,inventoryReady:true,inventoryPhase:'ready',movementKind:'complete',activity:false,pagedActivity:false};
+const listeners=new Set();export const calls=[],movementCalls=[],activityCalls=[],exports=[],pending=[],commits=[];let defer=false,deferMovement=false,deferActivity=false;
 export const set=next=>{model={...model,...next};listeners.forEach(fn=>fn());};export const watch=()=>useSyncExternalStore(fn=>{listeners.add(fn);return()=>listeners.delete(fn);},()=>model);
 export const useAuth=()=>{const m=watch();return{isAdmin:false,user:{staffId:'fixture-'+m.epoch},can:key=>key==='can_view_inventory'?m.inventory:key==='can_export_reports'?m.export:key==='can_shift_closing_history_view'?m.shifts:false};};
 const stores=[{id:'a',groupId:'cluster-a'},{id:'b',groupId:'cluster-b'}],settings={integrations:{}},transfers=[];
@@ -28,6 +28,7 @@ function response(r){const cutoff=r.closedShiftId?'2026-11-05T13:00:00.1234567Z'
  const row=(id,negative)=>({productId:id,locationId:r.branchId,name:r.branchId==='a'?'Fixture A product':'Fixture B product',sku:'00001',barcode:'0000001',quantity:negative?'-2':'9007199254740993',negative,
   ...(r.periodStart?{openingQuantity:negative?'1':'9007199254740991',inQuantity:negative?'0':'5',outQuantity:'3'}:{})});
  if(model.kind==='incomplete')return{...base,baselineAt:undefined,reasons:['NO_VERIFIED_OPENING'],rows:[]};
+ if(model.kind==='schema')return{...base,status:'unavailable',cutoff:r.cutoff,baselineAt:undefined,period:undefined,reasons:['SCHEMA_NOT_INSTALLED'],rows:[]};
  if(model.kind==='zero-pages')return{...base,status:'complete',rows:[
   {...row(r.after?second:first,false),name:r.after?'Historical zero stock':'Historical earlier balance',quantity:r.after?'0':'7'},
  ],next:r.after?null:first};
@@ -50,6 +51,27 @@ export const loadStockHistoryMovements=async r=>{
 };
 export const deferNext=()=>defer=true,resolve=()=>pending.shift()?.();
 export const deferNextMovement=()=>deferMovement=true;
+export const deferNextActivity=()=>deferActivity=true;
+const activities=[
+ {id:'50000000-0000-4000-8000-000000000001',productId:first,productName:'Recorded test item',branchId:'a',occurredAt:'2026-11-05T02:00:00.0000000Z',kind:'receive',delta:7,before:0,after:7,reference:'RECEIVE-1'},
+ {id:'50000000-0000-4000-8000-000000000002',productId:first,productName:'Recorded test item',branchId:'a',occurredAt:'2026-11-05T03:00:00.1234567Z',kind:'sale',delta:-1,before:null,after:null,reference:'SALE-1'},
+ {id:'50000000-0000-4000-8000-000000000003',productId:second,productName:'Recorded zero item',branchId:'a',occurredAt:'2026-11-05T02:00:00.0000001Z',kind:'stock_adjustment',delta:-1,before:1,after:0,reference:'ADJUST-1'},
+];
+export const loadStockActivityPage=async request=>{
+ activityCalls.push(request);
+ const {cursor,limit,...scope}=request;
+ const earlier=scope.side==='through-cutoff', extra=model.pagedActivity?Array.from({length:25},(_,index)=>({
+  ...activities[0],id:'60000000-0000-4000-8000-'+String(index+1).padStart(12,'0'),reference:null,delta:0,before:null,after:null,
+  occurredAt:'2026-11-05T02:00:'+String(index+1).padStart(2,'0')+'.0000000Z',kind:'stock_adjustment',
+ })):[];
+ const position=(a,b)=>a.occurredAt.localeCompare(b.occurredAt)||a.id.localeCompare(b.id);
+ const all=model.activity?[...activities,...extra].filter(row=>row.branchId===request.branchId&&(!scope.productId||row.productId===scope.productId)&&
+  (earlier?row.occurredAt<=scope.cutoff:row.occurredAt>scope.cutoff)&&(!cursor||(earlier?position(row,cursor)<0:position(row,cursor)>0)))
+  .sort((a,b)=>earlier?position(b,a):position(a,b)):[];
+ const rows=all.slice(0,limit),last=rows.at(-1),page={...scope,rows,next:all.length>limit?{occurredAt:last.occurredAt,id:last.id}:null};
+ if(deferActivity){deferActivity=false;return new Promise(resolve=>pending.push(()=>resolve(page)));}
+ return page;
+};
 export const xlsx={utils:{book_new:()=>({sheets:[]}),aoa_to_sheet:rows=>rows,json_to_sheet:rows=>rows,book_append_sheet:(book,sheet,name)=>book.sheets.push({name,sheet})},writeFile:(book,name)=>exports.push({book,name})};
 `);
  fs.writeFileSync(path.join(directory,'xlsx.ts'),`export{utils,writeFile};import{xlsx}from'./fixture';const{utils,writeFile}=xlsx;`);
@@ -61,12 +83,12 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
  let server,browser,passed=0;
  try{
   const fixture=path.join(directory,'fixture.ts');server=await createServer({configFile:false,root,cacheDir:path.join(directory,'.vite'),plugins:[react(),tailwind()],resolve:{alias:[
-   ...['pos-auth','pos-store','time-zone','use-report-shifts','session-epoch','stock-history-client','stock-history-movements-client','personal-appearance'].map(name=>({find:new RegExp('^@/lib/'+name+'$'),replacement:fixture})),
+   ...['pos-auth','pos-store','time-zone','use-report-shifts','session-epoch','stock-history-client','stock-history-movements-client','stock-activity-client','personal-appearance'].map(name=>({find:new RegExp('^@/lib/'+name+'$'),replacement:fixture})),
    {find:/^@\/platforms\/web\/components\/pos\/AppShell$/,replacement:path.join(directory,'shell.tsx')},{find:/^xlsx$/,replacement:path.join(directory,'xlsx.ts')},...popupRuntimeAliases(),{find:'@',replacement:path.join(root,'src')},
   ]},server:{host:'127.0.0.1',port:0,fs:{allow:[root,fs.realpathSync(path.join(root,'node_modules'))]}},logLevel:'error'});
   await server.listen();const origin='http://127.0.0.1:'+server.httpServer.address().port;browser=await chromium.launch({channel:'chrome',headless:true,args:['--disable-gpu']});
   const fresh=async(width=390,dark=false)=>{const page=await browser.newPage({viewport:{width,height:840},colorScheme:dark?'dark':'light'});
-   await page.route('**/*',route=>route.request().url().startsWith(origin)?route.continue():route.abort());await page.goto(origin+'/.tmp/stock-report-ui/index.html');
+   await page.route('**/*',route=>route.request().url().startsWith(origin)?route.continue():route.abort());await page.goto(origin+'/.tmp/stock-report-ui/index.html',{waitUntil:'domcontentloaded',timeout:60000});
    if(dark)await page.evaluate(()=>document.documentElement.classList.add('dark'));await page.getByRole('region',{name:'Stock report data'}).waitFor();return page;};
   const show=page=>page.getByRole('button',{name:'Show stock at selected time',exact:true}),explain=page=>page.getByRole('switch',{name:/Show inventory changes for this day/});
   const details=page=>page.getByRole('button',{name:/View movements for Fixture A product/});
@@ -76,8 +98,8 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
    await page.getByRole('columnheader',{name:/^Stock available/}).waitFor();await page.getByText('9007199254740993',{exact:true}).waitFor();
    for(const label of['Opening stock','Stock in','Stock out'])assert.equal(await page.getByRole('columnheader',{name:new RegExp('^'+label)}).count(),1);
    const cells=await page.locator('tbody tr').first().locator('td').evaluateAll(nodes=>nodes.map(node=>({label:node.getAttribute('data-label'),value:node.textContent})));
-   assert.deepEqual(cells.map(cell=>cell.label),['Product','SKU / barcode','Opening stock','Stock in','Stock out','Stock available']);
-   assert.deepEqual(cells.slice(2).map(cell=>cell.value),['9007199254740991','5','3','9007199254740993']);
+   assert.deepEqual(cells.map(cell=>cell.label),['Product','SKU / barcode','Opening stock','Stock in','Stock out','Stock available','Last recorded change','Balance status']);
+   assert.deepEqual(cells.slice(2,6).map(cell=>cell.value),['9007199254740991','5','3','9007199254740993']);
    const request=await page.evaluate(()=>window.fixture.calls[0]);assert.equal(request.cutoff,'2026-11-06T00:00:00.0000000Z');assert.equal(request.periodStart,'2026-11-05T16:00:00.0000000Z');
    const before=await page.evaluate(()=>window.fixture.calls.length);await page.waitForTimeout(100);assert.equal(await page.evaluate(()=>window.fixture.calls.length),before);
    await page.getByRole('button',{name:'Next products'}).click();await page.getByText('Negative stock',{exact:true}).waitFor();const next=await page.evaluate(()=>window.fixture.calls[1]);assert.equal(next.sourceRevision,'source-a');assert.equal(next.periodStart,request.periodStart);assert.equal(next.cutoff,request.cutoff);
@@ -89,7 +111,12 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
   for(const kind of['incomplete','ungraded','error']){
    const page=await fresh();await page.evaluate(kind=>window.fixture.set({kind}),kind);await show(page).click();
    if(kind==='error')await page.getByRole('alert').getByText('Synthetic stock reader unavailable').waitFor();else await page.getByText('Historical quantities are not yet verified',{exact:true}).waitFor();
-   assert.equal(await page.getByRole('table').count(),0);assert(await page.getByRole('button',{name:'Export Excel'}).isDisabled());passed++;console.log('PASS '+kind+' cannot display estimated stock or export');await page.close();
+   if(kind==='error')assert.equal(await page.getByRole('table').count(),0);else{
+    const balances=page.getByRole('table',{name:'Stock at selected time'});
+    await balances.getByRole('row',{name:/Current branch A stock/}).getByText('Unverified',{exact:true}).waitFor();
+    assert.equal(await balances.getByText('9007199254740993',{exact:true}).count(),0);
+   }
+   assert(await page.getByRole('button',{name:'Export Excel'}).isDisabled());passed++;console.log('PASS '+kind+' cannot display unsupported stock or export');await page.close();
   }
   for(const width of[1440,390]){
    const page=await fresh(width);await page.evaluate(()=>window.fixture.set({kind:'provisional'}));await show(page).click();
@@ -200,6 +227,56 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
    await page.getByRole('region',{name:'Stock report data'}).waitFor({state:'detached'});
    await page.getByText('Inventory permission is required to view this report.',{exact:true}).waitFor();
    passed++;console.log('PASS in-page current stock, cutoff, missing opening, scope and permissions '+width);await page.close();
+  }
+  {
+   const page=await fresh();await page.evaluate(()=>window.fixture.set({kind:'incomplete',activity:true}));
+   const date=page.getByLabel('Stock report date and time');
+   const balances=page.getByRole('table',{name:'Stock at selected time'}), before=page.getByRole('table',{name:'Activity at or before the cutoff'}), after=page.getByRole('table',{name:'Activity after the cutoff'});
+   const target=balances.getByRole('row',{name:/Recorded test item/}), zero=balances.getByRole('row',{name:/Recorded zero item/});
+   await date.fill('2026-11-05T10:30');await show(page).click();
+   await target.getByText('7',{exact:true}).waitFor();await target.getByText('Provisional',{exact:true}).waitFor();
+   await zero.getByText('0',{exact:true}).waitFor();
+   await balances.getByRole('row',{name:/Current branch A stock/}).getByText('Unverified',{exact:true}).waitFor();
+   await before.getByText('RECEIVE-1',{exact:true}).waitFor();await after.getByText('SALE-1',{exact:true}).waitFor();
+   assert.equal(await after.locator('time').getAttribute('datetime'),'2026-11-05T03:00:00.1234567Z');
+   await target.getByRole('button',{name:'Filter activity for Recorded test item'}).click();
+   await before.getByText('RECEIVE-1',{exact:true}).waitFor();assert.equal(await before.getByText('ADJUST-1',{exact:true}).count(),0);
+   assert((await page.evaluate(()=>window.fixture.activityCalls.slice(-2))).every(request=>request.productId==='20000000-0000-4000-8000-000000000001'));
+   await page.getByRole('button',{name:'All products'}).click();await before.getByText('ADJUST-1',{exact:true}).waitFor();
+   await date.fill('2026-11-05T11:15');await show(page).click();
+   await target.getByText('6',{exact:true}).waitFor();await before.getByText('SALE-1',{exact:true}).waitFor();
+   assert.equal(await after.count(),0);assert(await page.getByRole('button',{name:'Export Excel'}).isDisabled());
+   await page.getByRole('switch',{name:'Zero stock only'}).check();await zero.getByText('0',{exact:true}).waitFor();assert.equal(await target.count(),0);
+   const width=await page.getByRole('region',{name:'Stock report data'}).evaluate(element=>element.scrollWidth-element.clientWidth);assert(width<=1);
+   passed++;console.log('PASS recorded activity carries the last balance through the inclusive cutoff and keeps later sales separate');await page.close();
+  }
+  {
+   const page=await fresh();await page.evaluate(()=>window.fixture.set({kind:'schema',activity:true,pagedActivity:true}));
+   await page.getByLabel('Stock report date and time').fill('2026-11-05T10:30');await explain(page).check();await show(page).click();
+   await page.getByText(/needs the reviewed stock-history upgrade/).waitFor();
+   const target=page.getByRole('table',{name:'Stock at selected time'}).getByRole('row',{name:/Recorded test item/});
+   await target.getByText('Unverified',{exact:true}).waitFor();
+   await target.getByRole('button',{name:'Filter activity for Recorded test item'}).click();
+   const earlier=page.getByRole('region',{name:'Activity at or before the cutoff'});
+   await earlier.getByRole('button',{name:'Earlier activity'}).click();await target.getByText('7',{exact:true}).waitFor();
+   await earlier.getByRole('button',{name:'First activity page'}).click();await target.getByText('7',{exact:true}).waitFor();
+   await page.getByRole('combobox',{name:'Stock cutoff method'}).click();await page.getByRole('option',{name:'After a closed shift'}).click();
+   await page.getByRole('combobox',{name:'Closed shift stock cutoff'}).click();await page.getByRole('option',{name:/Fixture cashier/}).click();
+   const requests=await page.evaluate(()=>window.fixture.activityCalls.length);await show(page).click();
+   await page.getByText('The saved closing time could not be resolved.',{exact:true}).waitFor();
+   assert.equal(await page.getByRole('region',{name:'Inventory activity'}).count(),0);
+   assert.equal(await page.evaluate(()=>window.fixture.activityCalls.length),requests);
+   passed++;console.log('PASS activity paging reaches an older anchor without a ledger schema and withholds unresolved shift cutoffs');await page.close();
+  }
+  {
+   const page=await fresh();await page.evaluate(()=>{window.fixture.set({kind:'incomplete',activity:true});window.fixture.deferNextActivity();});
+   await page.getByLabel('Stock report date and time').fill('2026-11-05T10:30');await show(page).click();
+   await page.waitForFunction(()=>window.fixture.pending.length===1);
+   await page.evaluate(()=>{window.fixture.set({branch:'b',name:'Fixture B',epoch:2});window.fixture.resolve();});
+   await page.getByRole('table',{name:'Current inventory'}).getByText('Current branch B stock',{exact:true}).waitFor();
+   assert.equal(await page.getByRole('region',{name:'Inventory activity'}).count(),0);
+   assert((await page.evaluate(()=>window.fixture.commits.filter(commit=>commit.branch==='b'))).every(commit=>!commit.text.includes('Recorded test item')));
+   passed++;console.log('PASS late inventory activity cannot cross the report location and account fence');await page.close();
   }
   {
    const page=await fresh();
