@@ -104,6 +104,11 @@ function setup(enrolling = false) {
     events.push("enroll");
     return { projectOrigin: project, branchId: "A", terminalId, databaseId: database, cohortReady: false };
   });
+  const approveFinancial = vi.fn(async (_scope: { challengeId: string }) => {
+    assertOutsideTx();
+    events.push("approve-financial");
+    return { projectOrigin: project, branchId: "A", terminalId, databaseId: database, cohortReady: true };
+  });
   const readSnapshot = vi.fn(async (input: { transaction: Transaction; firstStocktake: boolean; assertCurrent(): void }) => {
     expect(input.transaction).toBe(transaction);
     expect(input.firstStocktake).toBe(true);
@@ -152,11 +157,11 @@ function setup(enrolling = false) {
   const runtime = createStockCoverageFrontierRuntime({
     manager, keys, session, terminal: () => ({ tokenId: terminalId, platform: "pc", mode: "operations", locationId: "A" }),
     branch: () => "A", project: () => project, context: () => state.context, cloud, readSnapshot, expectedDatabaseGuid: database,
-    stocktakeBackend: { drain, enroll, loadLease, loadRelease },
+    stocktakeBackend: { drain, enroll, approveFinancial, loadLease, loadRelease },
   });
   const input = { assertLease: () => true, stocktakeId };
   const prove = (phase = "arm") => runtime.stocktake.prove({ ...input, phase });
-  return { state, events, input, runtime, prove, drain, enroll, loadLease, loadRelease, readSnapshot, wire, cloud, keys };
+  return { state, events, input, runtime, prove, drain, enroll, approveFinancial, loadLease, loadRelease, readSnapshot, wire, cloud, keys };
 }
 
 describe("Main-only signed stocktake fence", () => {
@@ -197,6 +202,40 @@ describe("Main-only signed stocktake fence", () => {
       code: "ESTOCK_STOCKTAKE_SCOPE",
     });
     expect(f.enroll).toHaveBeenCalledTimes(1);
+  });
+
+  it("signs the financial purpose from Main and rejects forged renderer identity and pending work", async () => {
+    const f = setup(true);
+    const handlers = new Map();
+    registerStocktakeControl({
+      ipcMain: { handle: (key: string, callback: unknown) => handlers.set(key, callback) },
+      session: { epoch: () => f.state.epoch, hasPosAuthority: () => f.state.hasAuthority, hasLevel: () => f.state.role === "admin" },
+      coordinator: { ownsExclusive: () => true, paused: false, withExclusive: (work: () => unknown) => work() },
+      isPosSender: (event: { foreign?: boolean }) => !event.foreign,
+      run: (action: string, request: unknown) => {
+        expect(action).toBe("approve-financial");
+        return f.runtime.stocktake.approveFinancial(request);
+      },
+    });
+    const handler = handlers.get("business:stocktake-control");
+    const input = { action: "approve-financial" };
+    expect(await handler({}, { ...input, databaseId: database })).toMatchObject({ ok: false, code: "ESTOCK_STOCKTAKE_INVALID" });
+    expect(await handler({ foreign: true }, input)).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+    f.state.role = "staff";
+    expect(await handler({}, input)).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+    f.state.role = "admin";
+    f.state.pending.business = "1";
+    expect(await handler({}, input)).toMatchObject({ ok: false, code: "ESTOCK_STOCKTAKE_PENDING" });
+    expect(f.cloud.requestStockFrontierChallenge).not.toHaveBeenCalled();
+    f.state.pending.business = "0";
+
+    expect(await handler({}, input)).toMatchObject({ ok: true, result: { terminalId, databaseId: database, cohortReady: true } });
+    const { challengeId, gapHash } = JSON.parse(f.wire[0].frontierJson);
+    expect(gapHash).toBe(digest(["stock401-financial-approval-v1", project, "A", terminalId, database, challengeId].join("\x1f")));
+    expect(gapHash).not.toBe(f.state.gapHash);
+    expect(f.approveFinancial).toHaveBeenCalledExactlyOnceWith({ branchId: "A", terminalId, databaseId: database, challengeId });
+    expect(f.enroll).not.toHaveBeenCalled();
+    expect(f.drain).not.toHaveBeenCalled();
   });
 
   it("commits the fence before final push, signs only clean SQL observations, and binds phase and generation", async () => {

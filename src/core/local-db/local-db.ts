@@ -751,7 +751,7 @@ export type PosBridge = {
   stockHistoryMovements?: (request: StockHistoryMovementRequest) => Promise<{ ok: boolean; page?: StockHistoryMovementPage; code?: string; error?: string }>;
   productMergeCapability?: (request: { branchId: string }) => Promise<StockHistoryProductMergeCapability | StockHistoryProductMergeFailure>;
   mergeProducts?: (request: StockHistoryProductMergeRequest) => Promise<StockHistoryProductMergeReceipt | StockHistoryProductMergeFailure>;
-  stocktakeControl?: (request: { action: "enroll" } | ({ stocktakeId: string } & ({ action: "arm" } |
+  stocktakeControl?: (request: { action: "enroll" | "approve-financial" } | ({ stocktakeId: string } & ({ action: "arm" } |
     { action: "prove"; phase: "arm" | "confirm" } | { action: "release"; fenceGeneration: string }))) =>
     Promise<{ ok: boolean; result?: unknown; code?: string; error?: string }>;
   stockArrivalCapability?: ()=>Promise<{ok:boolean;available?:boolean;reason?:string;code?:string;error?:string}>;

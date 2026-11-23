@@ -1,3 +1,13 @@
+## 23 November — approved two-till protected financial rollout
+
+The owner approved an application-managed protected financial enrollment only
+for the two registered Retail POS Beta test tills in the Stock Report cohort.
+Reuse the authorized, named, device-bound stocktake workflow and require fresh
+not-pending proof from each distinct till before enabling both together. Keep
+the approved schema review boundary. The app must own enrollment writes and
+the synthetic sale. Production, other branches and saved operator data stay
+outside this task.
+
 ## 23 November — Stock Report application-owned enrollment and history
 
 The owner requires authorized application workflows for all record changes,

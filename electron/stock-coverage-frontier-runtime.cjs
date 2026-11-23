@@ -1,5 +1,5 @@
 'use strict';
-// Main-only observation factory. No IPC signer, scheduler, enrollment or ACK.
+// Main-only observation and scoped Stock Report control. No renderer signer or ACK.
 const{randomUUID,createHash}=require('node:crypto');
 const{performance}=require('node:perf_hooks');
 const contract=require('./db/stock-history-contract.cjs');
@@ -121,13 +121,14 @@ function createStockCoverageFrontierRuntime({manager,keys,session,terminal,branc
   captured.assertCurrent();
   return {captured,lease:checkedLease(captured,request.stocktakeId,purpose,source),request};
  }
- const stocktake=fence&&Object.freeze({
-  async enroll({assertLease,trace}){
-   if(typeof stocktakeBackend.enroll!=='function')fail('ESTOCK_STOCKTAKE_UNAVAILABLE');
+ async function submitTillProof(action,{assertLease,trace}){
+   if(typeof stocktakeBackend[action]!=='function')fail('ESTOCK_STOCKTAKE_UNAVAILABLE');
+   const financial=action==='approveFinancial';
    const captured=capture(assertLease,true,trace);
    trace?.('stage','snapshot-initial');
    const before=await fence.enrollmentSnapshot(captured);
    if(!before.available||before.databaseId!==captured.databaseId)fail('ESTOCK_STOCKTAKE_SCOPE');
+   if(financial&&Object.values(before.pending).some(count=>count!=='0'))fail('ESTOCK_STOCKTAKE_PENDING');
    trace?.('stage','original-key');
    const keyId=await originalKey(captured);
    trace?.('stage','challenge');
@@ -136,21 +137,26 @@ function createStockCoverageFrontierRuntime({manager,keys,session,terminal,branc
    const actual=await fence.enrollmentSnapshot(captured);
    if(!sameSnapshot(before,actual))fail('ESTOCK_STOCKTAKE_SOURCE_CHANGED');
    trace?.('stage','sign');
-   const signed=signSnapshot(captured,keyId,challenge,actual);
+   const gapHash=financial?createHash('sha256').update(['stock401-financial-approval-v1',captured.binding.projectOrigin,
+    captured.branchId,captured.binding.terminalId,actual.databaseId,challenge.challengeId].join('\x1f'),'utf8').digest('hex'):actual.gapHash;
+   const signed=signSnapshot(captured,keyId,challenge,actual,gapHash);
    trace?.('stage','snapshot-after-sign');
    if(!sameSnapshot(actual,await fence.enrollmentSnapshot(captured)))fail('ESTOCK_STOCKTAKE_SOURCE_CHANGED');
    trace?.('stage','confirm-frontier');
    const receipt=await acceptProof(captured,signed);
    if(receipt.state!=='accepted')fail('ESTOCK_STOCKTAKE_SOURCE_CHANGED');
-   trace?.('stage','enroll-relay');
-   const result=await stocktakeBackend.enroll({branchId:captured.branchId,terminalId:captured.binding.terminalId,
+   trace?.('stage',financial?'approve-financial-relay':'enroll-relay');
+   const result=await stocktakeBackend[action]({branchId:captured.branchId,terminalId:captured.binding.terminalId,
     databaseId:actual.databaseId,challengeId:challenge.challengeId});
    captured.assertCurrent();
    if(result?.projectOrigin!==captured.binding.projectOrigin||result.branchId!==captured.branchId||
     result.terminalId!==captured.binding.terminalId||result.databaseId!==captured.databaseId||typeof result.cohortReady!=='boolean')
     fail('ESTOCK_STOCKTAKE_ENROLLMENT_UNCONFIRMED');
    return result;
-  },
+ }
+ const stocktake=fence&&Object.freeze({
+  enroll:input=>submitTillProof('enroll',input),
+  approveFinancial:input=>submitTillProof('approveFinancial',input),
   async arm({assertLease,stocktakeId}){
    const{captured,lease}=await resolveStocktake(assertLease,stocktakeId,'arm');
    return fence.arm(captured,lease);

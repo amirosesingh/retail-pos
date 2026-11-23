@@ -46,7 +46,7 @@ module.exports = async function stockEnrollment({ control, f, bind, pass }) {
     assert.equal(await read("SELECT count(*) FROM private.stock_history_pilot_enrollment_receipts"), "0");
     assert.equal(await read("SELECT private.stock_history_cutover_guard_ready($1,$2)", [previous, cluster(previous)]), "t");
 
-    async function acceptedObservation(witness) {
+    async function acceptedObservation(witness, describeGap = () => "b".repeat(64)) {
       const { terminalId, databaseId, authorId } = witness.ids;
       const challengeId = randomUUID(), keyId = witness.keyId;
       const challenge = await json("SELECT public.pos_stock_history_frontier_challenge($1,$2,$3,$4,$5,$6)",
@@ -54,7 +54,7 @@ module.exports = async function stockEnrollment({ control, f, bind, pass }) {
       const raw = stockCoverageFrontierJson({ version: 1, projectOrigin: project, branchId: branch, terminalId,
         authorId, databaseId, challengeId, nonce: challenge.nonce, cohortHash: challenge.cohortHash,
         writerRevision: "stock-history-source.v1", sourceSequence: "0", sourceRoot: null, sourceGeneration: "a".repeat(64),
-        gapHash: "b".repeat(64), pending: { business: "0", metadata: "0", unsigned: "0", unknown: "0" },
+        gapHash: describeGap(challengeId), pending: { business: "0", metadata: "0", unsigned: "0", unknown: "0" },
         observedAt: challenge.issuedAt });
       const fields = { version: 1, algorithm: "Ed25519", keyId, projectOrigin: project, terminalId, authorId,
         subject: authorId, branchId: branch, challengeId, frontierHash: createHash("sha256").update(raw).digest("hex") };
@@ -102,6 +102,10 @@ module.exports = async function stockEnrollment({ control, f, bind, pass }) {
     assert.equal(await read("SELECT count(*) FROM private.stock_history_cutover_leases"), "0");
     assert.equal(await f.stock(), "7");
     pass("two matching app enrollments replace only the unused pilot guard and replay after a lost reply without new receipts or stock writes");
+
+    await control.query(readFileSync("scripts/preparation/stock-history-financial-pilot-enrollment.sql", "utf8"));
+    await require("./stock-financial-pilot-postgres-cases.cjs")({ control, bind, pass, read, json, denied,
+      project, branch, newTills, acceptedObservation });
   } finally {
     await control.query("ROLLBACK");
   }

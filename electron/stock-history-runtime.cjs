@@ -163,6 +163,7 @@ function createStockHistoryRuntime({ enrollment, manager, cloud, keys, session, 
     async stocktake(action, request) {
       if (!frontier?.stocktake || !sourceContext() || !session.hasLevel("admin")) fail("ESTOCK_STOCKTAKE_UNAVAILABLE");
       if (action === "enroll") return frontier.stocktake.enroll(request);
+      if (action === "approve-financial") return frontier.stocktake.approveFinancial(request);
       if (action === "arm") return frontier.stocktake.arm(request);
       if (action === "prove") return frontier.stocktake.prove(request);
       if (action === "release") return frontier.stocktake.release(request);

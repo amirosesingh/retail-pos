@@ -9,11 +9,13 @@ const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const instant = z.string().regex(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}Z$/);
 const scopeIdentity = { version: z.literal(1), terminalId: uuid, branchId: z.string().min(1).max(128) };
 const identity = { ...scopeIdentity, stocktakeId: uuid };
+const tillProofIdentity = { ...scopeIdentity, databaseId: uuid, challengeId: uuid };
 const proofs = z.array(z.object({ terminalId: uuid, databaseId: uuid, challengeId: uuid, fenceGeneration: uuid,
   localFencedAt: instant, localExpiresAt: instant }).strict()).min(1).max(16);
 const counts = z.array(z.tuple([uuid, z.string().regex(/^(?:0|[1-9][0-9]{0,37})$/)])).max(10000);
 export const stocktakeCutoverSchema = z.discriminatedUnion("action", [
-  z.object({ ...scopeIdentity, action: z.literal("enroll"), databaseId: uuid, challengeId: uuid }).strict(),
+  z.object({ ...tillProofIdentity, action: z.literal("enroll") }).strict(),
+  z.object({ ...tillProofIdentity, action: z.literal("approve-financial") }).strict(),
   z.object({ ...identity, action: z.literal("prepare") }).strict(),
   z.object({ ...identity, action: z.literal("lease"), databaseId: uuid, purpose: z.enum(["arm", "confirm", "release"]) }).strict(),
   z.object({ ...identity, action: z.literal("arm"), proofs }).strict(),
@@ -32,19 +34,22 @@ const syntheticBranch = z.string().regex(/^codex-stock401-[a-f0-9]{6,64}$/);
 const enrollmentPilot = z.object({
   backendOrigin: exactOrigin, projectOrigin: exactOrigin, previousBranchId: syntheticBranch, branchId: syntheticBranch,
   marker: z.string().regex(/^CODEX-STOCK401-[A-F0-9]{6,64}$/),
+  allowFinancialApproval: z.boolean().optional(),
   tills: z.tuple([z.object({ terminalId: uuid, databaseId: uuid, authorId: uuid }).strict(),
     z.object({ terminalId: uuid, databaseId: uuid, authorId: uuid }).strict()]),
 }).strict().refine(pilot => pilot.previousBranchId !== pilot.branchId && pilot.marker === pilot.branchId.toUpperCase() &&
   pilot.tills[0].terminalId !== pilot.tills[1].terminalId && pilot.tills[0].databaseId !== pilot.tills[1].databaseId &&
   pilot.tills[0].authorId !== pilot.tills[1].authorId);
 
-function boundEnrollment(input: Extract<z.infer<typeof stocktakeCutoverSchema>, { action: "enroll" }>, project: string, requestUrl?: string) {
+function boundEnrollment(input: Extract<z.infer<typeof stocktakeCutoverSchema>, { action: "enroll" | "approve-financial" }>,
+  project: string, requestUrl?: string) {
   if (RELEASE_CHANNEL !== "beta" || !requestUrl) return null;
   const raw = runtimeEnvValue("POS_STOCK_HISTORY_STOCKTAKE_PILOT");
   if (!raw || raw.length > 2048) return null;
   try {
     const pilot = enrollmentPilot.safeParse(JSON.parse(raw));
     if (!pilot.success || pilot.data.projectOrigin !== project || pilot.data.backendOrigin !== new URL(requestUrl).origin ||
+        (input.action === "approve-financial" && pilot.data.allowFinancialApproval !== true) ||
         pilot.data.branchId !== input.branchId || !pilot.data.tills.some(till =>
           till.terminalId === input.terminalId && till.databaseId === input.databaseId)) return null;
     return pilot.data;
@@ -60,6 +65,7 @@ export async function stocktakeCutover(input: z.infer<typeof stocktakeCutoverSch
   const scope = { p_subject: subject, p_terminal: terminal.id, p_project: projectOrigin, p_branch: input.branchId };
   const names = {
     enroll: "enroll_stocktake_till",
+    "approve-financial": "approve_financial_till",
     prepare: "prepare_stocktake_pause",
     lease: "load_stocktake_lease",
     arm: "arm_stocktake_pause",
@@ -69,12 +75,13 @@ export async function stocktakeCutover(input: z.infer<typeof stocktakeCutoverSch
     release: "release_stocktake_pause",
     "release-status": "load_stocktake_release",
   };
-  let parameters: Record<string, unknown> = input.action === "enroll" ? scope : { ...scope, p_id: input.stocktakeId };
-  if (input.action === "enroll") {
+  const tillProof = input.action === "enroll" || input.action === "approve-financial";
+  let parameters: Record<string, unknown> = tillProof ? scope : { ...scope, p_id: input.stocktakeId };
+  if (tillProof) {
     const pilot = boundEnrollment(input, projectOrigin, requestUrl);
     if (!pilot) return Response.json({ ok: false, code: "STOCK_CUTOVER_SCOPE_DENIED" }, { status: 403 });
-    parameters = { ...scope, p_previous: pilot.previousBranchId, p_marker: pilot.marker, p_cohort: pilot.tills,
-      p_database: input.databaseId, p_challenge: input.challengeId };
+    parameters = { ...scope, p_database: input.databaseId, p_challenge: input.challengeId,
+      ...(input.action === "enroll" ? { p_previous: pilot.previousBranchId, p_marker: pilot.marker, p_cohort: pilot.tills } : {}) };
   }
   if (input.action === "lease") parameters = { ...parameters, p_database: input.databaseId, p_purpose: input.purpose };
   if (input.action === "release-status") parameters = { ...parameters, p_database: input.databaseId };
@@ -91,7 +98,7 @@ export async function stocktakeCutover(input: z.infer<typeof stocktakeCutoverSch
     return Response.json({ ok: false, code: "STOCK_CUTOVER_TOO_LARGE" }, { status: 413 });
   try {
     const response = await serviceRest("rpc/pos_stock_history_" + names[input.action],
-      { method: "POST", body: requestBytes, signal, ...(input.action === "enroll" ? { redirect: "error" as const } : {}) });
+      { method: "POST", body: requestBytes, signal, ...(tillProof ? { redirect: "error" as const } : {}) });
     const raw = await response.text();
     // An armed count returns the frozen roster. Review also includes each
     // recorded count, so both use the bounded full-stocktake response limit.
@@ -107,7 +114,7 @@ export async function stocktakeCutover(input: z.infer<typeof stocktakeCutoverSch
         : code === "STOCK_CUTOVER_UNAVAILABLE" ? 503 : 409;
       return Response.json({ ok: false, code }, { status });
     }
-    const verified = input.action === "enroll"
+    const verified = tillProof
       ? z.object({ branchId: z.literal(input.branchId), projectOrigin: z.literal(projectOrigin), terminalId: z.literal(terminal.id),
         databaseId: z.literal(input.databaseId), cohortReady: z.boolean() }).strict().parse(result)
       : z.object({ branchId: z.literal(input.branchId), [input.action === "publish" ? "baselineId" : "stocktakeId"]:

@@ -93,4 +93,40 @@ describe("verified Stock Report cutover transport", () => {
     serviceRest.mockResolvedValueOnce(Response.json({ ...result, databaseId: otherId }));
     expect((await request()).status).toBe(503);
   });
+
+  it("requires a separate trusted financial approval flag and forwards only the authenticated till proof", async () => {
+    const branchId = "codex-stock401-123abc";
+    const challengeId = "44444444-4444-4444-8444-444444444444";
+    const pilot = { backendOrigin: "https://relay.fixture", projectOrigin: "https://beta.fixture", branchId,
+      previousBranchId: "codex-stock401-456def", marker: branchId.toUpperCase(), tills: [
+        { terminalId, databaseId, authorId: stocktakeId },
+        { terminalId: challengeId, databaseId: stocktakeId, authorId: databaseId },
+      ] };
+    const input = { version: 1 as const, action: "approve-financial" as const, branchId, terminalId, databaseId, challengeId };
+    const request = (url = pilot.backendOrigin, physicalDatabase: string = databaseId) => stocktakeCutover(
+      { ...input, databaseId: physicalDatabase }, { ...terminal, branchId }, "verified-admin", signal, `${url}/api/v1/pos/sync`);
+    expect(stocktakeCutoverSchema.safeParse({ ...input, authorId: stocktakeId, allowFinancialApproval: true }).success).toBe(false);
+    for (const enabled of [undefined, false]) {
+      runtimeEnvValue.mockReturnValue(JSON.stringify({ ...pilot, allowFinancialApproval: enabled }));
+      expect((await request()).status).toBe(403);
+    }
+    runtimeEnvValue.mockReturnValue(JSON.stringify({ ...pilot, allowFinancialApproval: true }));
+    expect((await request("https://foreign.fixture")).status).toBe(403);
+    expect((await request(pilot.backendOrigin, stocktakeId)).status).toBe(403);
+    release.value = "stable";
+    expect((await request()).status).toBe(403);
+    expect(serviceRest).not.toHaveBeenCalled();
+
+    release.value = "beta";
+    const result = { projectOrigin: pilot.projectOrigin, branchId, terminalId, databaseId, cohortReady: false };
+    serviceRest.mockResolvedValueOnce(Response.json(result));
+    expect(await (await request()).json()).toMatchObject({ ok: true, result });
+    const [path, init] = serviceRest.mock.calls[0];
+    expect(path).toBe("rpc/pos_stock_history_approve_financial_till");
+    expect(init.redirect).toBe("error");
+    expect(JSON.parse(init.body)).toEqual({ p_subject: "verified-admin", p_terminal: terminalId, p_project: pilot.projectOrigin,
+      p_branch: branchId, p_database: databaseId, p_challenge: challengeId });
+    serviceRest.mockResolvedValueOnce(Response.json({ ...result, terminalId: challengeId }));
+    expect((await request()).status).toBe(503);
+  });
 });
