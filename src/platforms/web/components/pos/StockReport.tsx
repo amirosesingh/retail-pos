@@ -126,11 +126,15 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
   const after = useStockReportActivityPage(activityScope, activityBranch, activityCutoff, "after-cutoff");
   const itemBefore = useStockReportActivityPage(activityScope, activityProduct ? activityBranch : undefined, activityCutoff, "through-cutoff", activityProduct);
   const itemAfter = useStockReportActivityPage(activityScope, activityProduct ? activityBranch : undefined, activityCutoff, "after-cutoff", activityProduct);
+  const activityFailed = Boolean(before.error || after.error);
+  const itemActivityFailed = Boolean(itemBefore.error || itemAfter.error);
   const activityFormat = useMemo(() => new Intl.DateTimeFormat(undefined, {
     timeZone, year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
   }), [timeZone]);
-  const evidence = useMemo(() => reportActivityEvidence(before.evidence, after.evidence), [before.evidence, after.evidence]);
-  const itemEvidence = useMemo(() => reportActivityEvidence(itemBefore.evidence, itemAfter.evidence), [itemBefore.evidence, itemAfter.evidence]);
+  const evidence = useMemo(() => activityFailed ? reportActivityEvidence(null, null) : reportActivityEvidence(before.evidence, after.evidence),
+    [activityFailed, before.evidence, after.evidence]);
+  const itemEvidence = useMemo(() => itemActivityFailed ? reportActivityEvidence(null, null) : reportActivityEvidence(itemBefore.evidence, itemAfter.evidence),
+    [itemActivityFailed, itemBefore.evidence, itemAfter.evidence]);
   const activityProducts = useMemo(() => {
     const catalogue = new Map<string, StockActivityProduct>();
     if (!activityBranch) return catalogue;
@@ -141,22 +145,24 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
       }
     }
     for (const row of visiblePage?.rows ?? []) catalogue.set(row.productId, { productId: row.productId, name: row.name, sku: row.sku, barcode: row.barcode });
-    for (const records of [before.evidence, after.evidence, before.page, after.page, itemBefore.page, itemAfter.page]) {
+    const activityPages = activityFailed ? [] : [before.evidence, after.evidence, before.page, after.page];
+    if (!itemActivityFailed) activityPages.push(itemBefore.page, itemAfter.page);
+    for (const records of activityPages) {
       for (const row of records?.rows ?? []) {
         if (!catalogue.has(row.productId)) catalogue.set(row.productId, { productId: row.productId, name: row.productName || row.productId });
       }
     }
     return catalogue;
   }, [activityBranch, ready, loadPhase, state.currentStoreId, state.settings, state.stores, state.transfers, state.products, branchId,
-    visiblePage?.rows, before.evidence, after.evidence, before.page, after.page, itemBefore.page, itemAfter.page]);
+    visiblePage?.rows, activityFailed, itemActivityFailed, before.evidence, after.evidence, before.page, after.page, itemBefore.page, itemAfter.page]);
   const balances = useMemo(() => grade === "unavailable" ? [...activityProducts.values()].map(product => {
-    const selected = product.productId === activityProduct && Boolean(itemBefore.evidence);
+    const selected = product.productId === activityProduct && Boolean(itemBefore.evidence || itemActivityFailed);
     const observed = selected ? itemEvidence : evidence;
     const awaitingAfter = selected ? itemAfter.loading && !itemAfter.evidence : after.loading && !after.evidence;
     const balance = historicalCutoff && !awaitingAfter ? observed.balances.get(product.productId) : undefined;
     return { ...product, quantity: balance?.quantity ?? null, supportedAt: balance?.supportedAt, lastChange: observed.latest.get(product.productId) };
   }).sort((left, right) => left.name.localeCompare(right.name) || left.productId.localeCompare(right.productId)) : [],
-  [activityProduct, activityProducts, after.loading, after.evidence, evidence, itemBefore.evidence, itemAfter.loading, itemAfter.evidence, itemEvidence, grade, historicalCutoff]);
+  [activityProduct, activityProducts, after.loading, after.evidence, evidence, itemBefore.evidence, itemAfter.loading, itemAfter.evidence, itemEvidence, itemActivityFailed, grade, historicalCutoff]);
   function selectActivityProduct(productId: string) {
     setActivitySelection({ scope: activityScope, productId });
     activityHeading.current?.focus();
@@ -362,7 +368,7 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
           {visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.inQuantity}</TableCell>}
           {visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.outQuantity}</TableCell>}
           <TableCell className={`numeric whitespace-nowrap text-right ${row.negative ? "text-destructive" : ""}`}>{row.quantity}{row.negative && <span className="block text-xs">Negative stock</span>}</TableCell>
-          <TableCell className="whitespace-normal text-xs"><StockActivityTime format={activityFormat} value={(activityProduct === row.productId && itemBefore.evidence ? itemEvidence : evidence).latest.get(row.productId)} /></TableCell>
+          <TableCell className="whitespace-normal text-xs"><StockActivityTime format={activityFormat} value={(activityProduct === row.productId && (itemBefore.evidence || itemActivityFailed) ? itemEvidence : evidence).latest.get(row.productId)} /></TableCell>
           <TableCell className="text-xs">{grade === "verified" ? "Verified" : "Provisional"}</TableCell>
         </TableRow>) : <TableRow><TableCell colSpan={visiblePage.period ? 8 : 5}>{zeroOnly ? "No zero-stock products on this page." : "No products in the verified opening for this location."}</TableCell></TableRow>}
       </TableBody></Table></div>

@@ -40,7 +40,7 @@ export function useStockReportActivityPage(
     const sequence = ++generation.current;
     const epoch = sessionEpoch();
     const isCurrent = () => sequence === generation.current && current.current === key && sessionEpoch() === epoch;
-    setState(previous => ({ ...(previous.key === key ? previous : emptyPage(key, true)), loading: true, error: "" }));
+    setState(previous => ({ ...(previous.key === key ? previous : emptyPage(key, true)), loading: true }));
 
     try {
       const page = await loadStockActivityPage({ branchId, cutoff, side, productId, cursor, limit: activityPageSize });
@@ -58,8 +58,8 @@ export function useStockReportActivityPage(
       });
     } catch (failure) {
       if (!isCurrent()) return;
-      setState(previous => ({ ...previous, loading: false,
-        error: failure instanceof Error ? failure.message : "Inventory activity could not be loaded." }));
+      setState({ ...emptyPage(key, false),
+        error: failure instanceof Error ? failure.message : "Inventory activity could not be loaded." });
     }
   }, [branchId, cutoff, key, productId, side]);
 
@@ -85,11 +85,6 @@ export function useStockReportActivityPage(
     evidence: state.key === key ? evidence : null,
     evidenceLimit: visible.pages.length === evidencePages && evidence?.next ? evidencePages * activityPageSize : null,
     firstPage: () => { if (!openCachedPage(1)) void load(); },
-    retry: () => {
-      const page = visible.page;
-      if (page?.next) void load(page.next, visible.number + 1);
-      else void load();
-    },
     nextPage: () => {
       if (visible.page?.next && !openCachedPage(visible.number + 1)) void load(visible.page.next, visible.number + 1);
     },

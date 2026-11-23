@@ -7,7 +7,7 @@ async function main(){
  const root=process.cwd(),directory=path.join(root,'.tmp','stock-report-ui');fs.mkdirSync(directory,{recursive:true});
  fs.writeFileSync(path.join(directory,'index.html'),'<div id="root"></div><script type="module" src="/.tmp/stock-report-ui/main.tsx"></script>');
  fs.writeFileSync(path.join(directory,'fixture.ts'),`import{useMemo,useSyncExternalStore}from'react';
-export let model={branch:'a',name:'Fixture A',open:true,mount:true,inventory:true,export:true,shifts:true,zone:'Asia/Brunei',epoch:1,kind:'complete',liveQuantity:7,inventoryReady:true,inventoryPhase:'ready',movementKind:'complete',activity:false,pagedActivity:false};
+export let model={branch:'a',name:'Fixture A',open:true,mount:true,inventory:true,export:true,shifts:true,zone:'Asia/Brunei',epoch:1,kind:'complete',liveQuantity:7,inventoryReady:true,inventoryPhase:'ready',movementKind:'complete',activity:false,pagedActivity:false,failActivityContinuation:false};
 const listeners=new Set();export const calls=[],movementCalls=[],activityCalls=[],exports=[],pending=[],commits=[];let defer=false,deferMovement=false,deferActivity=false;
 export const set=next=>{model={...model,...next};listeners.forEach(fn=>fn());};export const watch=()=>useSyncExternalStore(fn=>{listeners.add(fn);return()=>listeners.delete(fn);},()=>model);
 export const useAuth=()=>{const m=watch();return{isAdmin:false,user:{staffId:'fixture-'+m.epoch},can:key=>key==='can_view_inventory'?m.inventory:key==='can_export_reports'?m.export:key==='can_shift_closing_history_view'?m.shifts:false};};
@@ -60,6 +60,7 @@ const activities=[
 export const loadStockActivityPage=async request=>{
  activityCalls.push(request);
  const {cursor,limit,...scope}=request;
+ if(cursor&&model.failActivityContinuation)throw Object.assign(new Error('Inventory permission is required.'),{code:'PERMISSION_DENIED'});
  const earlier=scope.side==='through-cutoff', extra=model.pagedActivity?Array.from({length:25},(_,index)=>({
   ...activities[0],id:'60000000-0000-4000-8000-'+String(index+1).padStart(12,'0'),reference:null,delta:0,before:null,after:null,
   occurredAt:'2026-11-05T02:00:'+String(index+1).padStart(2,'0')+'.0000000Z',kind:'stock_adjustment',
@@ -258,6 +259,13 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
    await target.getByText('Unverified',{exact:true}).waitFor();
    await target.getByRole('button',{name:'Filter activity for Recorded test item'}).click();
    const earlier=page.getByRole('region',{name:'Activity at or before the cutoff'});
+   await page.evaluate(()=>window.fixture.set({failActivityContinuation:true}));
+   await earlier.getByRole('button',{name:'Earlier activity'}).click();await earlier.getByRole('alert').getByText(/Inventory permission is required/).waitFor();
+   assert.equal(await earlier.getByRole('table').count(),0);
+   assert.equal(await page.getByRole('table',{name:'Activity after the cutoff'}).count(),0);
+   await target.getByText('Unverified',{exact:true}).waitFor();
+   await page.evaluate(()=>window.fixture.set({failActivityContinuation:false}));
+   await earlier.getByRole('button',{name:'Retry activity'}).click();
    await earlier.getByRole('button',{name:'Earlier activity'}).click();await target.getByText('7',{exact:true}).waitFor();
    await earlier.getByRole('button',{name:'First activity page'}).click();await target.getByText('7',{exact:true}).waitFor();
    await page.getByRole('combobox',{name:'Stock cutoff method'}).click();await page.getByRole('option',{name:'After a closed shift'}).click();

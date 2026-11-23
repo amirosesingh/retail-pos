@@ -51,18 +51,19 @@ export function StockRecordedBalances({ rows, zeroOnly, selected, selectProduct,
   </section>;
 }
 
-function TransactionTable({ title, navigation, view, products, format }: {
+function TransactionTable({ title, navigation, view, products, format, blocked }: {
   title: string;
   navigation: string;
   view: StockReportActivitySide;
   products: ReadonlyMap<string, StockActivityProduct>;
   format: Intl.DateTimeFormat;
+  blocked: boolean;
 }) {
   return <section className="min-w-0 space-y-2" aria-label={title} aria-busy={view.loading}>
     <h4 className="text-sm font-medium">{title}</h4>
-    {view.error && <p role="alert" className="text-xs text-destructive">{view.error} <Button variant="link" size="sm" className="h-auto px-1" onClick={view.retry}>Retry activity</Button></p>}
+    {view.error && <p role="alert" className="text-xs text-destructive">{view.error} <Button variant="link" size="sm" className="h-auto px-1" disabled={view.loading} onClick={view.firstPage}>Retry activity</Button></p>}
     {view.loading && <p role="status" className="text-xs text-muted-foreground">Loading inventory activity…</p>}
-    {view.page && (view.page.rows.length ? <div className="overflow-x-auto rounded-md border">
+    {!blocked && view.page && (view.page.rows.length ? <div className="overflow-x-auto rounded-md border">
       <Table aria-label={title}>
         <TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Product</TableHead><TableHead>Movement</TableHead>
           <TableHead className="text-right">Change</TableHead><TableHead className="text-right">Stock before</TableHead>
@@ -78,12 +79,12 @@ function TransactionTable({ title, navigation, view, products, format }: {
         </TableRow>)}</TableBody>
       </Table>
     </div> : <p className="text-xs text-muted-foreground">No recorded activity for this part of the report.</p>)}
-    {view.page && (view.page.next || view.number > 1) && <div className="flex flex-wrap items-center gap-2">
+    {!blocked && view.page && (view.page.next || view.number > 1) && <div className="flex flex-wrap items-center gap-2">
       <span className="text-xs text-muted-foreground">Page {view.number}</span>
       {view.number > 1 && <Button size="sm" variant="outline" disabled={view.loading} onClick={view.firstPage}>First activity page</Button>}
       {view.page.next && <Button size="sm" variant="outline" disabled={view.loading} onClick={view.nextPage}>{navigation}</Button>}
     </div>}
-    {view.evidenceLimit && <p className="text-xs text-muted-foreground">Activity balances use the {view.evidenceLimit} records closest to this cutoff on this side.</p>}
+    {!blocked && view.evidenceLimit && <p className="text-xs text-muted-foreground">Activity balances use the {view.evidenceLimit} records closest to this cutoff on this side.</p>}
   </section>;
 }
 
@@ -97,12 +98,13 @@ export function StockReportActivity({ before, after, products, selected, clearSe
   timeZone: string;
   heading?: Ref<HTMLHeadingElement>;
 }) {
+  const blocked = Boolean(before.error || after.error);
   return <section className="space-y-3 rounded-md border p-3" aria-label="Inventory activity">
     <div className="flex flex-wrap items-center justify-between gap-2"><div>
       <h3 ref={heading} tabIndex={-1} className="text-sm font-semibold">Inventory activity</h3>
       <p className="text-xs text-muted-foreground">Recorded movement times · {timeZone}{selected && ` · ${products.get(selected)?.name ?? selected}`}</p>
     </div>{selected && <Button type="button" variant="outline" size="sm" onClick={clearSelection}>All products</Button>}</div>
-    <TransactionTable title="Activity at or before the cutoff" navigation="Earlier activity" view={before} products={products} format={format} />
-    <TransactionTable title="Activity after the cutoff" navigation="Later activity" view={after} products={products} format={format} />
+    <TransactionTable title="Activity at or before the cutoff" navigation="Earlier activity" view={before} products={products} format={format} blocked={blocked} />
+    <TransactionTable title="Activity after the cutoff" navigation="Later activity" view={after} products={products} format={format} blocked={blocked} />
   </section>;
 }
