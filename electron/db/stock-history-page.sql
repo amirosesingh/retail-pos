@@ -9,13 +9,21 @@ DECLARE history_products CURSOR LOCAL FAST_FORWARD FOR
   o.quantity+COALESCE(movement.before_delta,0),COALESCE(movement.in_delta,0),COALESCE(movement.out_delta,0)
  FROM dbo.stock_history_openings o WITH(HOLDLOCK,NOWAIT)
  OUTER APPLY(SELECT SUM(m.quantity_delta) total_delta,
-   SUM(CASE WHEN m.effective_ticks<CONVERT(decimal(20,0),@history_period_start) THEN m.quantity_delta ELSE 0 END) before_delta,
-   SUM(CASE WHEN m.effective_ticks>=CONVERT(decimal(20,0),@history_period_start) AND m.quantity_delta>0 THEN m.quantity_delta ELSE 0 END) in_delta,
-   SUM(CASE WHEN m.effective_ticks>=CONVERT(decimal(20,0),@history_period_start) AND m.quantity_delta<0 THEN -m.quantity_delta ELSE 0 END) out_delta
+   SUM(CASE WHEN timeline.ticks<CONVERT(decimal(20,0),@history_period_start) THEN m.quantity_delta ELSE 0 END) before_delta,
+   SUM(CASE WHEN timeline.ticks>=CONVERT(decimal(20,0),@history_period_start) AND m.quantity_delta>0 THEN m.quantity_delta ELSE 0 END) in_delta,
+   SUM(CASE WHEN timeline.ticks>=CONVERT(decimal(20,0),@history_period_start) AND m.quantity_delta<0 THEN -m.quantity_delta ELSE 0 END) out_delta
   FROM dbo.stock_history_movements m WITH(HOLDLOCK,NOWAIT)
+   OUTER APPLY(SELECT MAX(leg.ingested_at) admitted_at FROM dbo.stock_history_movements leg WITH(HOLDLOCK,NOWAIT)
+    WHERE @history_recorded=1 AND leg.operation_id=m.operation_id AND leg.store_id=m.store_id
+     AND CONVERT(varbinary(max),leg.store_id)=CONVERT(varbinary(max),m.store_id)
+     AND leg.ingested_cursor>CONVERT(bigint,@history_opening_cursor) AND leg.ingested_cursor<=CONVERT(bigint,@history_cursor)) sale
+   CROSS APPLY(SELECT CASE WHEN @history_recorded=1 THEN
+    DATEDIFF_BIG(MICROSECOND,CONVERT(datetimeoffset(7),'1970-01-01T00:00:00+00:00'),sale.admitted_at)*10+DATEPART(NANOSECOND,sale.admitted_at)%1000/100
+    ELSE m.effective_ticks END ticks) timeline
    WHERE m.store_id=o.store_id AND CONVERT(varbinary(max),m.store_id)=CONVERT(varbinary(max),o.store_id) AND m.product_id=o.product_id
-    AND m.effective_ticks>CONVERT(decimal(20,0),@history_baseline_ticks)
-    AND m.effective_ticks<=CONVERT(decimal(20,0),@history_ticks)
+    AND (@history_recorded=0 OR m.ingested_cursor>CONVERT(bigint,@history_opening_cursor))
+    AND timeline.ticks>CONVERT(decimal(20,0),@history_baseline_ticks)
+    AND timeline.ticks<=CONVERT(decimal(20,0),@history_ticks)
     AND m.ingested_cursor<=CONVERT(bigint,@history_cursor)) movement
  WHERE o.store_id=@history_branch
   AND CONVERT(varbinary(max),o.store_id)=CONVERT(varbinary(max),@history_branch) AND o.baseline_id=@history_baseline

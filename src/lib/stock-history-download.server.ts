@@ -22,7 +22,7 @@ const manifestSchema = z.object({
   snapshotId: uuid,
   headCursor: sequence,
   coverageGeneration: sequence,
-  coverageState: z.literal("complete"),
+  coverageState: z.enum(["complete", "recorded"]),
   coverageFrom: ticks,
   coverageThrough: ticks,
   baseline: z.tuple([uuid, utc, utc, sequence, z.enum(["system_snapshot", "physical_count"]),

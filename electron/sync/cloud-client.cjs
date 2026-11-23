@@ -535,23 +535,26 @@ class CloudClient {
   }
   loadStocktakeLease(batch) { return this.loadStocktakeCutover("lease", batch); }
   loadStocktakeRelease(batch) { return this.loadStocktakeCutover("release-status", batch); }
+  enrollStocktake(batch) { return this.loadStocktakeCutover("enroll", batch); }
   async loadStocktakeCutover(action, batch) {
     const { identifier, fail } = require("../db/stock-history-contract.cjs");
-    const { branchId, terminalId, databaseId, stocktakeId, purpose } = batch ?? {};
+    const { branchId, terminalId, databaseId, stocktakeId, purpose, challengeId } = batch ?? {};
     const terminal = require("../verified-activation.cjs").binding(this.terminalStore.read() ?? {});
     if (terminal?.mode !== "operations" || terminal.platform !== "pc" ||
         terminal.branchId !== branchId || terminal.id !== terminalId ||
         (action === "lease" && !["arm", "confirm", "release"].includes(purpose)) ||
-        (action !== "lease" && action !== "release-status")) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
+        !["lease", "release-status", "enroll"].includes(action)) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
     const source = this.requestContext(true);
     const response = await this.request({ sqlServerStocktakeCutover: {
       version: 1, action, branchId, terminalId, databaseId: identifier(databaseId, true),
-      stocktakeId: identifier(stocktakeId, true), ...(action === "lease" ? { purpose } : {}),
+      ...(action === "enroll" ? { challengeId: identifier(challengeId, true) } : { stocktakeId: identifier(stocktakeId, true) }),
+      ...(action === "lease" ? { purpose } : {}),
     } });
     this.assertRequestContext(source, true);
     if (response?.ok !== true || response.version !== 1 || response.branchId !== branchId ||
         response.terminalId !== terminalId || response.projectOrigin !== source.project.projectOrigin ||
-        response.result?.stocktakeId !== stocktakeId || response.result.projectOrigin !== response.projectOrigin ||
+        !response.result || (action === "enroll" ? typeof response.result.cohortReady !== "boolean"
+          : response.result.stocktakeId !== stocktakeId) || response.result.projectOrigin !== response.projectOrigin ||
         response.result.branchId !== branchId || response.result.terminalId !== terminalId ||
         response.result.databaseId !== databaseId) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
     return response.result;

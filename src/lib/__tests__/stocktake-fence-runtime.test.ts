@@ -18,7 +18,7 @@ const expiresAt = "2026-11-21T04:05:00.0000000Z";
 const observedAt = "2026-11-21T04:00:02.1234567Z";
 const digest = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
 
-function setup() {
+function setup(enrolling = false) {
   const pair = generateKeyPairSync("ed25519");
   const publicKey = pair.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
   const state = {
@@ -98,6 +98,11 @@ function setup() {
       state: purpose === "confirm" ? "armed" : "draining", leaseIssuedAt: issuedAt, leaseExpiresAt: expiresAt };
   });
   const loadRelease = vi.fn<() => Promise<unknown>>(async () => null);
+  const enroll = vi.fn(async (_scope: { challengeId: string }) => {
+    assertOutsideTx();
+    events.push("enroll");
+    return { projectOrigin: project, branchId: "A", terminalId, databaseId: database, cohortReady: false };
+  });
   const readSnapshot = vi.fn(async (input: { transaction: Transaction; firstStocktake: boolean; assertCurrent(): void }) => {
     expect(input.transaction).toBe(transaction);
     expect(input.firstStocktake).toBe(true);
@@ -110,7 +115,8 @@ function setup() {
   const keys = {
     prepare: () => ({ enrolled: true, keyId, publicKey }),
     signStockCoverageFrontier: vi.fn((_binding, data) => {
-      expect(transaction).not.toBeNull();
+      if (enrolling) assertOutsideTx();
+      else expect(transaction).not.toBeNull();
       events.push("sign");
       const { challengeId } = JSON.parse(data.frontierJson);
       const fields = { version: 1, algorithm: "Ed25519", keyId, projectOrigin: project, terminalId, authorId: author,
@@ -145,14 +151,31 @@ function setup() {
   const runtime = createStockCoverageFrontierRuntime({
     manager, keys, session, terminal: () => ({ tokenId: terminalId, platform: "pc", mode: "operations", locationId: "A" }),
     branch: () => "A", project: () => project, context: () => state.context, cloud, readSnapshot, expectedDatabaseGuid: database,
-    stocktakeBackend: { drain, loadLease, loadRelease },
+    stocktakeBackend: { drain, enroll, loadLease, loadRelease },
   });
   const input = { assertLease: () => true, stocktakeId };
   const prove = (phase = "arm") => runtime.stocktake.prove({ ...input, phase });
-  return { state, events, input, runtime, prove, drain, loadLease, loadRelease, readSnapshot, wire, cloud, keys };
+  return { state, events, input, runtime, prove, drain, enroll, loadLease, loadRelease, readSnapshot, wire, cloud, keys };
 }
 
 describe("Main-only signed stocktake fence", () => {
+  it("enrolls from stable first-opening snapshots without starting a stocktake pause", async () => {
+    const f = setup(true);
+    await expect(f.runtime.stocktake.enroll({ assertLease: f.input.assertLease })).resolves.toEqual({
+      projectOrigin: project, branchId: "A", terminalId, databaseId: database, cohortReady: false,
+    });
+    expect(f.events).toEqual(["snapshot", "challenge", "snapshot", "sign", "snapshot", "submit", "enroll"]);
+    expect(f.enroll).toHaveBeenCalledWith({ branchId: "A", terminalId, databaseId: database,
+      challengeId: JSON.parse(f.wire[0].frontierJson).challengeId });
+    expect(f.state.armed).toBe(false);
+    expect(f.drain).not.toHaveBeenCalled();
+    f.state.sqlDatabase = stocktakeId;
+    await expect(f.runtime.stocktake.enroll({ assertLease: f.input.assertLease })).rejects.toMatchObject({
+      code: "ESTOCK_STOCKTAKE_SCOPE",
+    });
+    expect(f.enroll).toHaveBeenCalledTimes(1);
+  });
+
   it("commits the fence before final push, signs only clean SQL observations, and binds phase and generation", async () => {
     const f = setup();
     await expect(f.runtime.stocktake.arm(f.input)).resolves.toMatchObject({ stocktakeId, fenceGeneration: generation });

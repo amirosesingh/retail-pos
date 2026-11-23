@@ -27,6 +27,33 @@ export async function readStockHistoryPage(proof:CallerProof,input:StockHistoryR
  const request=stockHistoryRequestSchema.parse(input);
  const {scope,branchId}=await authorizeStockHistoryRead(proof,request);
  const {serviceRest}=await import('@/core/api/pos-relay.server');
+ const readRecorded=async():Promise<StockHistoryPage|null>=>{
+  const rpc='pos_stock_history_recorded_page';
+  const response=await serviceRest('rpc/'+rpc,{method:'POST',body:JSON.stringify({
+   p_actor:scope.staffUserId,p_terminal:scope.terminalId??null,p_branch:branchId,p_cutoff:request.cutoff,p_zone:request.timeZone,
+   p_after:request.after??null,p_limit:request.limit??100,p_source_revision:request.sourceRevision??null,p_period_start:request.periodStart??null,
+  })});
+  const result=await response.json().catch(()=>undefined) as unknown;
+  if(!response.ok){
+   const error=result as {code?:string;message?:string}|undefined;
+   if(response.status===404&&error?.code==='PGRST202'&&error.message?.includes(rpc))return null;
+   if(error?.message==='STOCK_HISTORY_SOURCE_CHANGED')throw Object.assign(new Error('Stock history changed. Refresh the report before continuing.'),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
+   if(response.status===401||response.status===403||error?.code==='42501')throw new Error('Your current account or terminal is not allowed to read this stock report.');
+   throw new Error('The recorded stock history could not be verified.');
+  }
+  if(result===null)return null;
+  const page=checkedStockHistoryPage(result,branchId);
+  if(page.cutoff!==request.cutoff||page.period?.start!==request.periodStart||(!page.recordedThrough&&
+     (page.coverage?.timeGrade!=='recorded'||page.coverage.balanceGrade!=='recorded_provisional')))
+   throw new Error('The recorded stock history returned unexpected evidence.');
+  return page;
+ };
+ const allowRecorded=!request.export&&!request.closedShiftId;
+ if(allowRecorded&&request.sourceRevision?.startsWith('stock-history-recorded.v1:')){
+  const page=await readRecorded();
+  if(page)return page;
+  throw Object.assign(new Error('Recorded stock history changed. Refresh the report before continuing.'),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
+ }
  const rpc=request.periodStart?'pos_stock_history_period_page':'pos_stock_history_page';
  const response=await serviceRest('rpc/'+rpc,{method:'POST',body:JSON.stringify({
   p_actor:scope.staffUserId,p_terminal:scope.terminalId??null,p_branch:branchId,p_cutoff:request.cutoff,p_zone:request.timeZone,
@@ -47,6 +74,10 @@ export async function readStockHistoryPage(proof:CallerProof,input:StockHistoryR
  const page=checkedStockHistoryPage(await response.json(),branchId);
  if(!request.closedShiftId&&page.cutoff!==request.cutoff)throw new Error('The stock report cutoff changed unexpectedly.');
  if(request.periodStart?(page.period?.start!==request.periodStart):page.period!==undefined)throw new Error('The stock report period changed unexpectedly.');
+ if(allowRecorded&&!request.sourceRevision&&!request.after&&page.status==='incomplete'&&
+    page.reasons.includes('INCOMPLETE_MOVEMENTS')&&page.reasons.every(reason=>
+     ['INCOMPLETE_MOVEMENTS','CLOCK_UNVERIFIED','BASELINE_PREHISTORY_CHANGED'].includes(reason)))
+  return await readRecorded()??page;
  return page;
 }
 

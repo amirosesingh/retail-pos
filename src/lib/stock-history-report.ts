@@ -27,6 +27,8 @@ export type StockHistoryPage={
  baselineAt?:string|null;
  readAt?:string;
  coverageThroughTicks?:string|null;
+ /** Last supported central-ledger admission cutoff, when recorded stock is available. */
+ recordedThrough?:string;
  sourceRevision?:string|null;
  pendingCount?:string;
  restatable?:true;

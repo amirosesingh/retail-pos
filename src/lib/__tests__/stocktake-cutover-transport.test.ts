@@ -1,9 +1,12 @@
 import { describe, beforeEach, expect, it, vi } from "vitest";
 import { stocktakeCutover, stocktakeCutoverSchema } from "../stocktake-cutover.server";
 
-const { serviceRest } = vi.hoisted(() => ({ serviceRest: vi.fn() }));
+const { serviceRest, runtimeEnvValue, release } = vi.hoisted(() => ({
+  serviceRest: vi.fn(), runtimeEnvValue: vi.fn(), release: { value: "beta" },
+}));
 vi.mock("@/core/api/pos-relay.server", () => ({ serviceRest }));
-vi.mock("../external-supabase-config", () => ({ supabaseConfig: () => ({ url: "https://beta.fixture" }) }));
+vi.mock("../external-supabase-config", () => ({ supabaseConfig: () => ({ url: "https://beta.fixture" }), runtimeEnvValue }));
+vi.mock("../release-channel", () => ({ get RELEASE_CHANNEL() { return release.value; } }));
 
 const terminalId = "11111111-1111-4111-8111-111111111111";
 const databaseId = "22222222-2222-4222-8222-222222222222";
@@ -11,7 +14,7 @@ const stocktakeId = "33333333-3333-4333-8333-333333333333";
 const scope = { version: 1 as const, branchId: "A", terminalId, stocktakeId };
 const terminal = { id: terminalId, branchId: "A", platform: "pc", mode: "operations" } as Parameters<typeof stocktakeCutover>[1];
 const signal = new AbortController().signal;
-beforeEach(() => { serviceRest.mockReset(); });
+beforeEach(() => { serviceRest.mockReset(); runtimeEnvValue.mockReset(); release.value = "beta"; });
 
 describe("verified Stock Report cutover transport", () => {
   it("uses the server-bound project, Administrator, terminal and exact database for a lease lookup", async () => {
@@ -55,5 +58,39 @@ describe("verified Stock Report cutover transport", () => {
     expect(await result.json()).toEqual({ ok: false, code: "STOCK_CUTOVER_RELEASE_UNCONFIRMED" });
     serviceRest.mockResolvedValueOnce(Response.json({ stocktakeId, branchId: "B" }));
     expect((await stocktakeCutover({ ...scope, action: "prepare" }, terminal, "admin", signal)).status).toBe(503);
+  });
+
+  it("pins the application enrollment to the configured Beta backend, project and two distinct physical tills", async () => {
+    const branchId = "codex-stock401-123abc";
+    const otherId = "44444444-4444-4444-8444-444444444444";
+    const pilot = { backendOrigin: "https://relay.fixture", projectOrigin: "https://beta.fixture", branchId,
+      previousBranchId: "codex-stock401-456def", marker: branchId.toUpperCase(), tills: [
+        { terminalId, databaseId, authorId: stocktakeId },
+        { terminalId: otherId, databaseId: stocktakeId, authorId: databaseId },
+      ] };
+    const input = { version: 1 as const, action: "enroll" as const, branchId, terminalId, databaseId, challengeId: otherId };
+    const verified = { ...terminal, branchId };
+    const request = (url = pilot.backendOrigin, payload: typeof input = input) =>
+      stocktakeCutover(payload, verified, "verified-admin", signal, `${url}/api/v1/pos/sync`);
+    expect(stocktakeCutoverSchema.safeParse({ ...input, p_cohort: pilot.tills }).success).toBe(false);
+    expect((await request()).status).toBe(403);
+    runtimeEnvValue.mockReturnValue(JSON.stringify(pilot));
+    expect((await request("https://other.fixture")).status).toBe(403);
+    expect((await request(pilot.backendOrigin, { ...input, databaseId: otherId })).status).toBe(403);
+    release.value = "stable";
+    expect((await request()).status).toBe(403);
+    expect(serviceRest).not.toHaveBeenCalled();
+    release.value = "beta";
+    const result = { branchId, terminalId, databaseId, projectOrigin: pilot.projectOrigin, cohortReady: false };
+    serviceRest.mockResolvedValueOnce(Response.json(result));
+    expect(await (await request()).json()).toMatchObject({ ok: true, result });
+    const [path, init] = serviceRest.mock.calls[0];
+    expect(path).toBe("rpc/pos_stock_history_enroll_stocktake_till");
+    expect(init.redirect).toBe("error");
+    expect(JSON.parse(init.body)).toEqual({ p_subject: "verified-admin", p_terminal: terminalId, p_project: pilot.projectOrigin,
+      p_branch: branchId, p_previous: pilot.previousBranchId, p_marker: pilot.marker, p_cohort: pilot.tills,
+      p_database: databaseId, p_challenge: otherId });
+    serviceRest.mockResolvedValueOnce(Response.json({ ...result, databaseId: otherId }));
+    expect((await request()).status).toBe(503);
   });
 });

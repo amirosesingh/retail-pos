@@ -1,3 +1,13 @@
+## 23 November — Stock Report application-owned enrollment and history
+
+The owner requires authorized application workflows for all record changes,
+including private test enrollment, stocktake and synthetic sales. Schema
+upgrades must preserve existing records. Use only the two isolated Retail POS
+Beta tills for live acceptance, including before/after sale reports and an
+offline restart. Keep PR #401 and the paired installer release conditional on
+those results and required checks. The prepared direct guard scope/enrollment
+SQL is superseded. See the task tracker for the current acceptance gates.
+
 ## 20 November — scoped feed performance authorization
 
 Use a separate Beta branch at 439a4c5a for the feed performance change.

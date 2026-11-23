@@ -48,7 +48,10 @@ function createStockHistoryReader({manager,session,terminal,branch,isPosSender,c
         const canExportReports = owner || (access.can_export_reports === true && access['page:reports'] !== false);
         const canViewShiftHistory = owner || (access.can_shift_closing_history_view === true && access['page:shifts'] !== false);
         if (!canViewInventory || (exporting && !canExportReports)) fail('PERMISSION_DENIED');
-        return {contextKey,branchId,canViewInventory,canExportReports,canViewShiftHistory};
+        let projectOrigin = null;
+        try { projectOrigin = new URL(context()[1]).origin; } catch { /* An unbound profile cannot read recorded replicas. */ }
+        return {contextKey,branchId,canViewInventory,canExportReports,canViewShiftHistory,
+          projectOrigin,terminalId:identifier(registered.tokenId)};
       };
       const store = new StockHistoryStore(manager,{assertCurrent,authorizeRead});
       const page = movements ? await store.readMovements(request) : await store.readPage(request);
@@ -76,11 +79,12 @@ function registerStocktakeControl({ ipcMain, session, isPosSender, coordinator, 
     try {
       if (!isPosSender(event) || !session.hasPosAuthority() || !session.hasLevel("admin")) fail("PERMISSION_DENIED");
       const { action, stocktakeId, phase, fenceGeneration } = input ?? {};
-      const expected = ["action", "stocktakeId"];
+      const expected = action === "enroll" ? ["action"] : ["action", "stocktakeId"];
       if (action === "prove") expected.push("phase");
       if (action === "release") expected.push("fenceGeneration");
-      if (!input || !["arm", "prove", "release"].includes(action) || Object.keys(input).length !== expected.length ||
-          expected.some(key => !Object.hasOwn(input, key)) || typeof stocktakeId !== "string" || !UUID.test(stocktakeId) ||
+      if (!input || !["enroll", "arm", "prove", "release"].includes(action) || Object.keys(input).length !== expected.length ||
+          expected.some(key => !Object.hasOwn(input, key)) ||
+          (action !== "enroll" && (typeof stocktakeId !== "string" || !UUID.test(stocktakeId))) ||
           (action === "prove" && phase !== "arm" && phase !== "confirm") ||
           (action === "release" && (typeof fenceGeneration !== "string" || !UUID.test(fenceGeneration)))) fail("ESTOCK_STOCKTAKE_INVALID");
       const epoch = session.epoch();
@@ -89,7 +93,7 @@ function registerStocktakeControl({ ipcMain, session, isPosSender, coordinator, 
       const result = await coordinator.withExclusive(() => {
         if (!assertLease()) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
         return run(action, {
-          stocktakeId: identifier(stocktakeId, true), assertLease,
+          assertLease, ...(action === "enroll" ? {} : { stocktakeId: identifier(stocktakeId, true) }),
           ...(phase ? { phase } : {}),
           ...(fenceGeneration ? { fenceGeneration: identifier(fenceGeneration, true) } : {}),
         });
@@ -98,7 +102,8 @@ function registerStocktakeControl({ ipcMain, session, isPosSender, coordinator, 
     } catch (error) {
       const code = typeof error?.code === "string" && /^(ESTOCK_[A-Z_]+|STOCK_CUTOVER_[A-Z_]+|PERMISSION_DENIED)$/.test(error.code)
         ? error.code : "ESTOCK_STOCKTAKE_UNAVAILABLE";
-      return { ok: false, code, error: "The stocktake pause could not be verified." };
+      return { ok: false, code, error: input?.action === "enroll"
+        ? "This terminal’s stocktake enrollment could not be verified." : "The stocktake pause could not be verified." };
     }
   });
 }

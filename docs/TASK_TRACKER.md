@@ -1,3 +1,30 @@
+## 23 November — Stock Report application enrollment and sale acceptance
+
+Continue PR #401 on Retail POS Beta only. Implement authorized enrollment for
+the two isolated tills and application-owned verification of history through an
+accepted sale. Use the app for all hosted test records. Schema-only changes
+are subject to the existing exact-target review. Preserve operator and
+production data.
+
+Acceptance requires recording a complete reviewed opening including zeros,
+verifying the known quantity on each side of a sale on both tills, installing
+the same evidence on both distinct SQL Server replicas, and confirming both
+cuts after offline restart. Merge and publish only after the live acceptance
+and exact-head required checks pass. Baseline: `d052d40d`.
+
+The disposable PostgreSQL 18.6 acceptance run passed 23 groups. It proved
+application receipt enrollment, a reviewed opening, and both ends of a real
+protected two-product sale (7/4 to 6/3). Both isolated SQL Server replicas
+returned the complete sale at its shared recorded cutoff after offline restart.
+The delayed second claim withheld the incomplete sale. The exact opening and
+its export remain available. The post-opening timeline labels central recording
+time as provisional while all writers' effective-time coverage is unproven.
+
+The guarded hosted schema artifact is ready for exact Retail POS Beta review
+at SHA-256 `b3785f4c324aa4d480a53ee7c113a242a4ed71f8c4825a7c02c0b4266999dcfc`.
+It installs schema only. Hosted enrollment, stocktake, sale, replica download,
+offline restart and release remain separate verification gates.
+
 ## 20 November — start the separate Stock Report beta
 
 The owner asked to resume Stock Report in PR #401 for a later beta. The booking

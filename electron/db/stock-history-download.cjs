@@ -48,7 +48,8 @@ function createStockHistoryInstaller(manager, databaseGuid) {
       text("generation", generation, 19);
       text("revision", revision, 64);
       text("provenance", JSON.stringify({ projectOrigin: scope.projectOrigin, terminalId: scope.terminalId,
-        coverageGeneration: generation, revision, snapshotId: manifest?.snapshotId ?? null }), sql.MAX);
+        coverageGeneration: generation, revision, snapshotId: manifest?.snapshotId ?? null,
+        ...(manifest?.coverageState === "recorded" ? { recorded: true, headCursor: manifest.headCursor } : {}) }), sql.MAX);
       if (manifest) {
         const [baselineId, cutoffAt, capturedAt, sourceCursor, kind, expectedPairs, verifiedBy, evidenceHash, watermarks] = manifest.baseline;
         text("baseline", baselineId, 36);
@@ -63,7 +64,7 @@ function createStockHistoryInstaller(manager, databaseGuid) {
         text("verified_by", verifiedBy);
         text("evidence_hash", evidenceHash, 64);
         text("baseline_watermarks", watermarks, sql.MAX);
-        text("coverage_state", manifest.coverageState, 16);
+        text("coverage_state", manifest.coverageState === "recorded" ? "incomplete" : manifest.coverageState, 16);
         text("coverage_from", manifest.coverageFrom, 21);
         text("coverage_through", manifest.coverageThrough, 21);
         text("openings", JSON.stringify(staged.openings), sql.MAX);

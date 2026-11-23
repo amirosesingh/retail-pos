@@ -23,8 +23,14 @@ export const isCurrentEpoch=value=>value===model.epoch;
 export const useReportShifts=(_seed,branch,_from,_to,enabled)=>({shifts:enabled?[{id:'30000000-0000-4000-8000-000000000001',storeId:branch,status:'CLOSED',closedAt:'2026-11-05T13:00:00.1234567Z',cashier:'Fixture cashier'}]:[],loading:false,error:''});
 const first='20000000-0000-4000-8000-000000000001',second='20000000-0000-4000-8000-000000000002';
 const response=(r)=>{const base={status:model.kind,reasons:[],cutoff:r.closedShiftId?'2026-11-05T13:00:00.1234567Z':r.cutoff,timeZone:r.timeZone,branchId:r.branchId,baselineAt:'2026-11-01T00:00:00.0000000Z',readAt:'2099-01-01T00:00:00.0000000Z',sourceRevision:'source-'+r.branchId,pendingCount:'0',restatable:true,next:null};
- if(model.kind!=='complete')return{...base,status:'incomplete',baselineAt:undefined,reasons:['NO_VERIFIED_OPENING'],rows:[]};
  const row=(id,qty)=>({productId:id,locationId:r.branchId,name:r.branchId==='a'?'Fixture A product':'Fixture B product',sku:'00001',barcode:'0000001',quantity:qty,negative:qty.startsWith('-')});
+ if(model.kind==='recorded'){
+  const recordedThrough='2026-11-12T03:04:05.6789010Z';
+  if(r.cutoff>recordedThrough)return{...base,status:'incomplete',reasons:['INCOMPLETE_MOVEMENTS'],recordedThrough,rows:[]};
+  return{...base,status:'incomplete',reasons:['WRITER_COVERAGE_UNKNOWN'],rows:[row(first,r.cutoff<recordedThrough?'7':'6')],
+   coverage:{acceptedLedger:'complete',writers:'unknown',balanceGrade:'recorded_provisional',timeGrade:'recorded'}};
+ }
+ if(model.kind!=='complete')return{...base,status:'incomplete',baselineAt:undefined,reasons:['NO_VERIFIED_OPENING'],rows:[]};
  return{...base,rows:r.after?[row(second,'-2')]:[row(first,'9007199254740993')],next:r.after?null:first};};
 export const loadStockHistoryPage=async(r)=>{calls.push(r);const page=response(r);if(defer){defer=false;return new Promise(resolve=>pending.push(()=>resolve(page)));}return page;};
 export const loadStockHistoryMovements=async()=>{throw new Error('Movement details are outside this fixture');};
@@ -66,6 +72,21 @@ window.fixture=f;function App(){return <StockAtTimeReport/>;}createRoot(document
       const page=await fresh(390);await page.evaluate(()=>window.fixture.set({kind:"incomplete"}));await page.getByRole("button",{name:"Show stock at selected time",exact:true}).click();
       await page.getByText("Historical quantities are not yet verified",{exact:true}).waitFor();assert(await page.getByRole("button",{name:"Export Excel"}).isDisabled());assert.equal(await page.getByRole("table").count(),0);
       passed++;console.log("PASS incomplete opening never becomes zero stock or export");await page.close();
+    }
+    {
+      const page=await fresh(390);await page.evaluate(()=>window.fixture.set({kind:"recorded"}));
+      const time=page.getByLabel("Stock report date and time");
+      await time.fill("2026-11-12T11:04:05");
+      await page.getByRole("button",{name:"Show stock at selected time",exact:true}).click();
+      await page.getByText("7",{exact:true}).waitFor();
+      await time.fill("2026-11-12T11:04:06");
+      await page.getByRole("button",{name:"Show stock at selected time",exact:true}).click();
+      await page.getByRole("button",{name:"View latest recorded stock"}).click();
+      await page.getByText("6",{exact:true}).waitFor();
+      await page.getByText(/Recorded cutoff: 2026-11-12T03:04:05.6789010Z/).waitFor();
+      assert(await page.getByRole("button",{name:"Export Excel"}).isDisabled());
+      assert.equal((await page.evaluate(()=>window.fixture.calls.at(-1))).cutoff,"2026-11-12T03:04:05.6789010Z");
+      passed++;console.log("PASS same-day recorded sale and precise cutoff shortcut do not promote verified export");await page.close();
     }
     {
       const page=await fresh(390);await page.evaluate(()=>window.fixture.deferNext());await page.getByRole("button",{name:"Show stock at selected time",exact:true}).click();

@@ -13,6 +13,7 @@ const responseSchema=z.object({
  status:z.enum(['unavailable','unsupported','incomplete','complete']),reasons:z.array(z.string().min(1).max(80)).max(20),
  cutoff:exactInstant,timeZone:z.string().min(1).max(100),branchId:z.string().min(1).max(128),
  baselineAt:exactInstant.nullable().optional(),readAt:exactInstant.optional(),coverageThroughTicks:z.string().regex(/^-?\d{1,20}$/).nullable().optional(),
+ recordedThrough:exactInstant.optional(),
  sourceRevision:z.string().min(1).max(512).nullable().optional(),pendingCount:z.string().regex(/^\d{1,20}$/).optional(),restatable:z.literal(true).optional(),
  period:z.object({start:exactInstant,endExclusive:exactInstant,through:exactInstant,fullDay:z.boolean()}).optional(),
  coverage:z.object({acceptedLedger:z.enum(['complete','incomplete']),writers:z.enum(['confirmed','pending','unknown']),
@@ -39,6 +40,10 @@ export function checkedStockHistoryPage(input:unknown,branchId?:string):StockHis
  if(page.period&&(page.period.through!==page.cutoff||stockInstant(page.period.start)>stockInstant(page.cutoff)||stockInstant(page.cutoff)>=stockInstant(page.period.endExclusive)||
   page.period.fullDay!==(stockInstant(page.cutoff)===stockInstant(page.period.endExclusive)-1n)))throw new Error('The stock report period changed unexpectedly.');
  if(page.next&&(!page.rows.length||page.next.toLowerCase()!==page.rows.at(-1)!.productId.toLowerCase()))throw new Error('The stock report cursor could not be verified.');
+ if(page.recordedThrough&&(!page.baselineAt||!page.readAt||page.status!=='incomplete'||page.rows.length||page.next||
+   !page.reasons.includes('INCOMPLETE_MOVEMENTS')||String(stockInstant(page.recordedThrough))!==page.coverageThroughTicks||
+   stockInstant(page.recordedThrough)<=stockInstant(page.baselineAt)||stockInstant(page.recordedThrough)>stockInstant(page.readAt)||
+   stockInstant(page.recordedThrough)>=stockInstant(page.cutoff)))throw new Error('The recorded stock cutoff could not be verified.');
  if(page.coverage){
   const provisional=page.coverage.acceptedLedger==='complete'&&page.coverage.balanceGrade==='recorded_provisional'&&page.coverage.writers!=='confirmed';
   if(page.coverage.balanceGrade==='recorded_provisional'&&!provisional||page.status==='complete'&&

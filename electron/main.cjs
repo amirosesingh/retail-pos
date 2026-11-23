@@ -102,6 +102,7 @@ const stockHistory = createStockHistoryRuntime({
   terminal:()=>terminalStore.read(), branch:localBranchId, project:()=>cloudCredentials.read({strict:true})?.url,
   stocktakeBackend: {
     drain: options => syncCoordinator.runFinal(options),
+    enroll: request => syncCloud.enrollStocktake(request),
     loadLease: ({ branchId, terminalId, databaseId, stocktakeId }, purpose) =>
       syncCloud.loadStocktakeLease({ branchId, terminalId, databaseId, stocktakeId, purpose }),
     loadRelease: ({ branchId, terminalId, databaseId, stocktakeId }) =>

@@ -1113,7 +1113,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     if (!body.sqlServerStocktakeCutover || scope.kind === "terminal" || !scope.staffUserId ||
         (scope.role !== "admin" && scope.roleSlug !== "admin"))
       return Response.json({ ok: false, code: "STOCK_CUTOVER_SCOPE_DENIED" }, { status: 403 });
-    return stocktakeCutover(body.sqlServerStocktakeCutover, verifiedTerminal, scope.staffUserId, request.signal);
+    return stocktakeCutover(body.sqlServerStocktakeCutover, verifiedTerminal, scope.staffUserId, request.signal, request.url);
   }
 
   if (body.sqlServerProductMerge) {

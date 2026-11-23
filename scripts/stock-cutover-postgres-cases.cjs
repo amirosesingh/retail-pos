@@ -16,10 +16,22 @@ module.exports = async function stockCutover({ control, one, two, f, bind, pass,
   const install = readFileSync("scripts/preparation/stock-history-stocktake-cutover.sql", "utf8");
   await control.query(`BEGIN;${install}COMMIT;`);
   const withReplica = process.env.STOCK_HISTORY_NATIVE_REPLICA_TEST === "1";
+  const secondProduct = withReplica ? randomUUID() : null;
+  const physicalCounts = [[f.product, "7"], ...(secondProduct ? [[secondProduct, "4"]] : [])].sort(([a], [b]) => a.localeCompare(b));
   if (withReplica) {
     assert.equal(process.platform, "win32");
     await control.query("ALTER TABLE public.terminal_tokens ADD COLUMN IF NOT EXISTS management_sync_enabled boolean;");
     await control.query(readFileSync("scripts/preparation/stock-history-replica-export.sql", "utf8"));
+    await control.query(readFileSync("supabase/migrations/20261106065813_stock_history_selected_time_period_reader.sql", "utf8"));
+    await control.query(readFileSync("scripts/preparation/stock-history-recorded-continuation.sql", "utf8"));
+    // A pre-existing second product in this disposable database. Establish its
+    // initial fixture stock before arming any stocktake or running a sale.
+    await control.query(bind(`BEGIN;
+      ALTER TABLE public.products DISABLE TRIGGER stock_history_accepted_products;
+      INSERT INTO public.products(id,name,barcode,owner_store_id,stock_by_store,stock_quantity)
+        VALUES($1,'Second Stock Fixture','stock-fixture-second','A','{"A":4}'::jsonb,4);
+      ALTER TABLE public.products ENABLE TRIGGER stock_history_accepted_products;
+      COMMIT;`, [secondProduct]));
   }
   await control.query(bind(`ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS parent_id text,ADD COLUMN IF NOT EXISTS archived_at timestamptz,
       ADD COLUMN IF NOT EXISTS code text;
@@ -97,12 +109,12 @@ module.exports = async function stockCutover({ control, one, two, f, bind, pass,
     await control.query("BEGIN");
     try {
       const sealed = await rpc("pos_stock_history_seal_stocktake($1,$2,$3,$4,$5,$6,$7::jsonb,'{}')", [f.admin, f.terminal, "A", id,
-        armed.rosterHash, armed.cutoff, JSON.stringify([[f.product, "7"]])]);
+        armed.rosterHash, armed.cutoff, JSON.stringify(physicalCounts)]);
       const review = await rpc("pos_stock_history_stocktake_for_review($1,$2,'A',$3)", [reviewer, peer.terminalId, id]);
       assert.equal(review.evidenceHash, sealed.evidenceHash);
       assert.equal(review.rosterHash, armed.rosterHash);
       assert.equal(review.cutoff, armed.cutoff);
-      assert.deepEqual(review.physicalCounts, [[f.product, "7"]]);
+      assert.deepEqual(review.physicalCounts, physicalCounts);
       const publish = (proofs, subject = reviewer) => rpc("pos_stock_history_publish_stocktake($1,$2,$3,$4,$5,$6,$7::jsonb)", [subject,
         ...reviewerArgs.slice(1), sealed.evidenceHash, JSON.stringify(proofs)]);
       const denied = async (work, pattern) => {
@@ -125,22 +137,29 @@ module.exports = async function stockCutover({ control, one, two, f, bind, pass,
       const quantities = JSON.parse(await read(control, `SELECT jsonb_build_array(b.opening_kind,b.verification_state,
         o.quantity::text,h.committed_cursor::text,h.coverage_from_ticks=h.coverage_through_ticks)
         FROM public.stock_history_baselines b JOIN public.stock_history_openings o ON o.baseline_id=b.id
-        JOIN public.stock_history_heads h ON h.baseline_id=b.id WHERE b.id=$1`, [id]));
+        JOIN public.stock_history_heads h ON h.baseline_id=b.id WHERE b.id=$1 AND o.product_id=$2`, [id,f.product]));
       assert.deepEqual(quantities, ["physical_count", "verified", "7", "1", true]);
       const exact = await rpc("pos_stock_history_page($1,$2,'A',$3,'UTC',NULL,100,NULL,false,NULL)", [reviewer, f.terminal, armed.cutoff]);
       assert.equal(exact.status, "complete");
+      const after = await read(control, `SELECT ${utc}(clock_timestamp())`);
+      const unsupportedAfter = await rpc("pos_stock_history_page($1,$2,'A',$3,'UTC',NULL,100,NULL,false,NULL)", [reviewer, f.terminal, after]);
+      assert(unsupportedAfter.reasons.includes("INCOMPLETE_MOVEMENTS"));
+      pass("immutable full physical count, independent review and same fresh fence publish exact coverage at one cutoff only");
       if (withReplica) {
         const { createLocal } = require("./lib/shift-protocol-integration-fixture.cjs");
         const { createStockHistoryDownloader } = require("../electron/sync/stock-history-download.cjs");
         const { createStockHistoryInstaller } = require("../electron/db/stock-history-download.cjs");
         const { createStockHistoryReader } = require("../electron/stock-history-ipc.cjs");
         const hash = text => createHash("sha256").update(text).digest("hex");
-        const replicas = new Map(), physicalDatabases = [];
+        const replicas = new Map(), physicalDatabases = [], installed = [];
         const tills = [{ terminalId: f.terminal, authorId: reviewer, role: "admin" },
           { terminalId: peer.terminalId, authorId: f.author, role: "staff" }];
+        try {
         for (const till of tills) {
           const local = await createLocal("A", { extraTables: ["products", "app_users"] });
-          try {
+          const fixture = { local };
+          installed.push(fixture);
+          {
             const scope = { branchId: "A", projectOrigin: project, terminalId: till.terminalId };
             const envelope = { ok: true, version: 1, ...scope };
             await local.manager.pool.request().batch(readFileSync("database/sqlserver/prepared/031_stock_history_effective_ledger.sql", "utf8"));
@@ -150,15 +169,15 @@ module.exports = async function stockCutover({ control, one, two, f, bind, pass,
               "SELECT LOWER(CONVERT(varchar(36),database_guid)) guid FROM sys.database_recovery_status WHERE database_id=DB_ID();")).recordset[0].guid;
             physicalDatabases.push(databaseGuid);
             const installer = createStockHistoryInstaller(local.manager, databaseGuid);
-            let downloadedPages = 0;
-            const download = createStockHistoryDownloader({ ...installer, request: async ({ action, index, snapshotId, revision }) => {
+            let downloadedPages = 0, now = 100_000;
+            const download = createStockHistoryDownloader({ ...installer, now: () => now, request: async ({ action, index, snapshotId, revision }) => {
               if (action === "manifest") {
                 const { manifest } = await rpc("pos_stock_history_replica_manifest('A',$1)", [till.terminalId]);
                 const { headCursor, coverageGeneration, coverageState, coverageFrom, coverageThrough, baseline, pages } = manifest;
                 manifest.revision = hash(JSON.stringify([manifest.snapshotId, project, "A", till.terminalId,
                   headCursor, coverageGeneration, coverageState, coverageFrom, coverageThrough, baseline, pages]));
                 const binding = { id: manifest.snapshotId, revision: manifest.revision };
-                if (replicas.has(till.terminalId)) assert.deepEqual(replicas.get(till.terminalId), binding);
+                if (!fixture.recorded && replicas.has(till.terminalId)) assert.deepEqual(replicas.get(till.terminalId), binding);
                 replicas.set(till.terminalId, binding);
                 return { ...envelope, manifest };
               }
@@ -171,14 +190,18 @@ module.exports = async function stockCutover({ control, one, two, f, bind, pass,
             const ownedFrame = {};
             const readReport = createStockHistoryReader({ manager: local.manager, branch: () => "A",
               terminal: () => ({ tokenId: till.terminalId, deviceUse: "operations" }), isPosSender: frame => frame === ownedFrame,
+              context: () => ["https://loopback.fixture", project],
               session: { hasPosAuthority: () => true, identity: () => ({ source: "pos", authorId: till.authorId, canonicalSubject: till.authorId }),
                 epoch: () => 1, touch: () => undefined } });
             const request = { cutoff: armed.cutoff, timeZone: "UTC" };
+            Object.assign(fixture, { till, checkCount: () => downloadedPages,
+              report: (cutoff, extra = {}) => readReport(ownedFrame, { ...request, cutoff, ...extra }),
+              recordedDownload: () => { fixture.recorded = true; now += 30_001; return download(scope, () => undefined); } });
             const checkReport = async () => {
               const result = await readReport(ownedFrame, request);
               assert.equal(result.ok, true, result.error);
               assert.equal(result.page.status, "complete");
-              assert.deepEqual(result.page.rows.map(row => [row.productId, row.quantity]), exact.rows.map(row => [row.productId, row.quantity]));
+              assert.deepEqual(result.page.rows.map(row => [row.productId, row.quantity]).sort(), exact.rows.map(row => [row.productId, row.quantity]).sort());
             };
             await checkReport();
             assert.equal((await readReport({}, request)).code, "PERMISSION_DENIED");
@@ -190,7 +213,7 @@ module.exports = async function stockCutover({ control, one, two, f, bind, pass,
             const existing = (await local.manager.pool.request().query(`SELECT (SELECT count(*) FROM dbo.products) products,
               (SELECT count(*) FROM dbo.sync_change_journal) pending;`)).recordset[0];
             assert.deepEqual(existing, { products: 0, pending: 0 });
-          } finally { await local.close(); }
+          }
         }
         assert.notEqual(physicalDatabases[0], physicalDatabases[1]);
         const [replicaA, replicaB] = tills.map(till => replicas.get(till.terminalId));
@@ -198,11 +221,73 @@ module.exports = async function stockCutover({ control, one, two, f, bind, pass,
         assert.notEqual(replicaA.revision, replicaB.revision);
         await denied(() => rpc("pos_stock_history_replica_manifest('B',$1)", [peer.terminalId]), /SCOPE|FORBIDDEN/);
         pass("two distinct SQL Server tills download the same verified opening and enforce authorized offline read and export after restart");
+
+        // Trade only after both fixtures hold the original baseline. The same
+        // guarded checkout as the focused protected-sale fixture owns the only
+        // stock change. No fixture writes the history/head to make this pass.
+        await release();
+        await control.query(bind(`UPDATE public.app_users SET permissions=permissions||'{"can_open_shift":true,"can_process_sale":true}'::jsonb
+          WHERE id=$1`, [f.author]));
+        await control.query(bind(`INSERT INTO fin62_rollout_preparation.approvals(organization_id,branch_id,terminal_id,revision,rollout_id,status)
+          VALUES('default','A',$1,1,$3,'approved'),('default','A',$2,1,$3,'approved')`, [f.terminal, peer.terminalId, randomUUID()]));
+        const { commitProtectedStockSale } = require("./lib/protected-stock-sale-fixture.cjs");
+        const { instant, utc: exactUtc } = require("../electron/db/stock-history-contract.cjs");
+        const recorded = await read(control, `SELECT ${utc}(clock_timestamp())`);
+        const recordedPage = async cutoff => {
+          const result = await read(control, `SELECT public.pos_stock_history_recorded_page($1,$2,'A',$3,'UTC',NULL,100,NULL,NULL)`, [reviewer, f.terminal, cutoff]);
+          return result == null ? null : JSON.parse(result);
+        };
+        let firstAt;
+        const { stockAck } = await commitProtectedStockSale(f, { pair: f.stockSourceFixture.pair, keyId: f.stockSourceFixture.key,
+          project, recorded, productIds: [f.product,secondProduct],
+          flushEffects: () => control.query('SET CONSTRAINTS private.stock_history_effect_source_link,private.stock_history_receipt_effect_link IMMEDIATE'),
+          afterFirstClaim: async receipt => {
+            firstAt = receipt.acceptedAt;
+            assert.equal(await recordedPage(firstAt), null, 'an interrupted claim prefix cannot display part of a sale');
+          } });
+        assert.equal(await f.stock(), "6");
+        const acceptedAt = stockAck.receipts.map(row => row.acceptedAt).sort().at(-1);
+        assert(firstAt < acceptedAt);
+        const prior = exactUtc(instant(acceptedAt) - 1n);
+        const beforeAndAfter = async (readReport, cutoff, quantities) => {
+          const page = await readReport(cutoff);
+          assert.equal(page.coverage.balanceGrade, "recorded_provisional");
+          assert.equal(page.coverage.timeGrade, "recorded");
+          const stock = new Map(page.rows.map(row => [row.productId, row.quantity]));
+          assert.deepEqual([stock.get(f.product),stock.get(secondProduct)],quantities);
+        };
+        await beforeAndAfter(recordedPage, firstAt, ["7","4"]);
+        await beforeAndAfter(recordedPage, prior, ["7","4"]);
+        await beforeAndAfter(recordedPage, acceptedAt, ["6","3"]);
+        const later = exactUtc(instant(acceptedAt) + 1n);
+        assert.equal((await recordedPage(later)).recordedThrough, acceptedAt);
+        const exactAfter = await rpc("pos_stock_history_page($1,$2,'A',$3,'UTC',NULL,100,NULL,true,NULL)", [reviewer, f.terminal, acceptedAt]);
+        assert.equal(exactAfter.status, "incomplete");
+        assert.equal((await rpc("pos_stock_history_page($1,$2,'A',$3,'UTC',NULL,100,NULL,true,NULL)", [reviewer, f.terminal, armed.cutoff])).status, "complete");
+        for (const fixture of installed) {
+          assert.equal(await fixture.recordedDownload(), "installed");
+          const checkSale = async () => {
+            for (const [cutoff, quantities] of [[firstAt,["7","4"]], [prior,["7","4"]], [acceptedAt,["6","3"]]]) {
+              const response = await fixture.report(cutoff);
+              assert.equal(response.ok, true, response.error);
+              await beforeAndAfter(async () => response.page, cutoff, quantities);
+            }
+            assert.equal((await fixture.report(later)).page.recordedThrough, acceptedAt);
+            assert.equal((await fixture.report(armed.cutoff)).page.status, "complete");
+            if (fixture.till.role === "admin") {
+              assert.equal((await fixture.report(acceptedAt, { export: true })).page.status, "incomplete");
+              assert.equal((await fixture.report(armed.cutoff, { export: true })).page.status, "complete");
+            }
+          };
+          await checkSale();
+          const pages = fixture.checkCount();
+          await fixture.local.restart();
+          await checkSale();
+          assert.equal(fixture.checkCount(), pages);
+        }
+        pass("protected two-product sale 7/4 to 6/3, no half-saved cutoff and exact opening retained on both SQL Server tills after offline restart");
+        } finally { for (const fixture of installed) await fixture.local.close(); }
       }
-      const after = await read(control, `SELECT ${utc}(clock_timestamp())`);
-      const unsupportedAfter = await rpc("pos_stock_history_page($1,$2,'A',$3,'UTC',NULL,100,NULL,false,NULL)", [reviewer, f.terminal, after]);
-      assert(unsupportedAfter.reasons.includes("INCOMPLETE_MOVEMENTS"));
-      pass("immutable full physical count, independent review and same fresh fence publish exact coverage at one cutoff only");
     } finally { await control.query("ROLLBACK"); }
   } finally { await one.query("ROLLBACK"); }
 
@@ -220,6 +305,11 @@ module.exports = async function stockCutover({ control, one, two, f, bind, pass,
   await assert.rejects(prepare(f.admin, f.terminal, project, "A", expiringId), /STOCK_CUTOVER_LEASE_CLOSED/);
   await two.query(bind(`UPDATE public.products SET name='Expired cutover fixture' WHERE id=$1`, [f.product]));
   await two.query(bind(`DELETE FROM public.terminal_tokens WHERE id=$1`, [peer.terminalId]));
+  if (secondProduct) await control.query(bind(`BEGIN;
+    ALTER TABLE public.products DISABLE TRIGGER stock_history_accepted_products;
+    DELETE FROM public.products WHERE id=$1;
+    ALTER TABLE public.products ENABLE TRIGGER stock_history_accepted_products;
+    COMMIT;`, [secondProduct]));
   assert.equal(await read(control, "SELECT count(*) FROM public.stock_history_baselines"), "0");
   pass("expiry and exact release restore ordinary writes and never reopen the same lease");
 };

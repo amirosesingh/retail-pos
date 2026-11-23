@@ -18,6 +18,23 @@ const call=(extra={})=>loadStockHistoryPageDirect({data:{terminalToken:terminal,
 const movementsRequest={...request,productId:product,sourceRevision:'source-1'};
 const callMovements=(extra={})=>loadStockHistoryMovementsDirect({data:{terminalToken:terminal,deviceBindingProof:'a'.repeat(64),cashierToken:'signed',request:{...movementsRequest,...extra}}});
 describe('actual stock-history function with existing current-account scope resolver',()=>{
+ it('reads a recorded-only timeline after strict history reports an unproved cutoff',async()=>{
+  const recordedRevision='stock-history-recorded.v1:exact-source';
+  const unavailable={...complete(),status:'incomplete',reasons:['INCOMPLETE_MOVEMENTS','CLOCK_UNVERIFIED'],rows:[]};
+  const recorded={...complete(),status:'incomplete',reasons:['WRITER_COVERAGE_UNKNOWN'],sourceRevision:recordedRevision,
+   coverage:{acceptedLedger:'complete',writers:'unknown',balanceGrade:'recorded_provisional',timeGrade:'recorded'}};
+  rest.mockImplementation(async(path:string)=>Response.json(path.startsWith('app_users?')?[row]:
+   path==='rpc/pos_stock_history_recorded_page'?recorded:unavailable));
+  expect(await call()).toMatchObject(recorded);
+  expect(rest.mock.calls.filter(([path])=>path.startsWith('rpc/')).map(([path])=>path)).toEqual(
+   ['rpc/pos_stock_history_page','rpc/pos_stock_history_recorded_page']);
+  rest.mockClear();
+  expect(await call({sourceRevision:recordedRevision})).toMatchObject(recorded);
+  expect(rest.mock.calls.filter(([path])=>path.startsWith('rpc/')).map(([path])=>path)).toEqual(['rpc/pos_stock_history_recorded_page']);
+  rest.mockClear();row={...row,role:'admin',role_slug:'admin'};
+  expect(await call({export:true})).toMatchObject(unavailable);
+  expect(rest.mock.calls.some(([path])=>path==='rpc/pos_stock_history_recorded_page')).toBe(false);
+ });
  it('propagates secure proof and resolves current actor rather than trusting request identity',async()=>{
   expect(await call()).toMatchObject({status:'complete',rows:[{quantity:'9007199254740993'}]});
   expect(verify).toHaveBeenCalledWith({terminalToken:terminal,deviceBindingProof:'a'.repeat(64),cashierToken:'signed'});

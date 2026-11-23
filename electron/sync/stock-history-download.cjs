@@ -47,7 +47,7 @@ function checkManifest(response, scope) {
   if (!fields(manifest, manifestFields)) fail();
   const { snapshotId, revision, headCursor, coverageGeneration, coverageState, coverageFrom, coverageThrough, baseline, pages } = manifest;
   if (!uuid(snapshotId) || !hash(revision) || !cursor(headCursor) || !cursor(coverageGeneration) ||
-      !["complete", "incomplete"].includes(coverageState) || !ticks(coverageFrom) || !ticks(coverageThrough) || BigInt(coverageThrough) < BigInt(coverageFrom) ||
+      !["complete", "incomplete", "recorded"].includes(coverageState) || !ticks(coverageFrom) || !ticks(coverageThrough) || BigInt(coverageThrough) < BigInt(coverageFrom) ||
       !tuple(baseline, 9) || !Array.isArray(pages) || pages.length > MAX_PAGES) fail();
   const [baselineId, cutoffAt, capturedAt, sourceCursor, kind, expectedPairs, verifiedBy, evidenceHash, watermarks] = baseline;
   if (!uuid(baselineId) || !iso(cutoffAt) || !iso(capturedAt) || capturedAt < cutoffAt || coverageFrom !== String(contract.instant(cutoffAt)) ||
@@ -66,6 +66,7 @@ function checkManifest(response, scope) {
     else fail();
   }
   if (openings !== expectedPairs || BigInt(movements) !== BigInt(headCursor) - BigInt(sourceCursor)) fail();
+  if (coverageState === "recorded" && (kind !== "physical_count" || movements === 0 || BigInt(coverageThrough) <= BigInt(coverageFrom))) fail();
   if (sha256(JSON.stringify([snapshotId, scope.projectOrigin, scope.branchId, scope.terminalId, headCursor, coverageGeneration,
     coverageState, coverageFrom, coverageThrough, baseline, pages])) !== revision) fail();
   return manifest;
@@ -107,6 +108,7 @@ function movementRow(value, scope) {
 
 function beginDownload(manifest) {
   return { manifest, openings: [], movements: [], index: 0, bytes: 0, lastProduct: "", cursor: BigInt(manifest.baseline[3]),
+    recordedThrough: BigInt(manifest.coverageFrom),
     openingIds: new Set(), openingProducts: new Set(), movementIds: new Set(), legs: new Set() };
 }
 
@@ -136,6 +138,11 @@ function appendPage(staged, response, scope) {
           !staged.openingProducts.has(row.productId) || (manifest.coverageState === "complete" &&
             (row.clockState !== "verified" || BigInt(row.effectiveTicks) <= BigInt(manifest.coverageFrom) ||
               BigInt(row.effectiveTicks) > BigInt(manifest.coverageThrough)))) fail();
+      if (manifest.coverageState === "recorded") {
+        const observed = contract.instant(row.ingestedAt);
+        if (row.kind !== "sale" || observed <= staged.recordedThrough || observed > BigInt(manifest.coverageThrough)) fail();
+        staged.recordedThrough = observed;
+      }
       staged.cursor++;
       staged.movementIds.add(row.id);
       staged.legs.add(leg);
@@ -187,7 +194,8 @@ function createStockHistoryDownloader({ request, current, install, withdraw, now
       assertCurrent();
       if (rechecked?.revision !== manifest.revision || rechecked.snapshotId !== manifest.snapshotId ||
         rechecked.coverageGeneration !== manifest.coverageGeneration || ready.cursor !== BigInt(manifest.headCursor) ||
-        ready.openings.length !== manifest.baseline[5]) fail();
+        ready.openings.length !== manifest.baseline[5] || (manifest.coverageState === "recorded" &&
+          ready.recordedThrough !== BigInt(manifest.coverageThrough))) fail();
       const checked = performance.now();
       const result = await runInstall(guard => {
         guard();

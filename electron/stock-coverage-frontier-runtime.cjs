@@ -110,6 +110,26 @@ function createStockCoverageFrontierRuntime({manager,keys,session,terminal,branc
   return {captured,lease:checkedLease(captured,request.stocktakeId,purpose,source),request};
  }
  const stocktake=fence&&Object.freeze({
+  async enroll({assertLease}){
+   if(typeof stocktakeBackend.enroll!=='function')fail('ESTOCK_STOCKTAKE_UNAVAILABLE');
+   const captured=capture(assertLease,true);
+   const before=await fence.enrollmentSnapshot(captured);
+   if(!before.available||before.databaseId!==captured.databaseId)fail('ESTOCK_STOCKTAKE_SCOPE');
+   const keyId=await originalKey(captured),challenge=await requestChallenge(captured,keyId);
+   const actual=await fence.enrollmentSnapshot(captured);
+   if(!sameSnapshot(before,actual))fail('ESTOCK_STOCKTAKE_SOURCE_CHANGED');
+   const signed=signSnapshot(captured,keyId,challenge,actual);
+   if(!sameSnapshot(actual,await fence.enrollmentSnapshot(captured)))fail('ESTOCK_STOCKTAKE_SOURCE_CHANGED');
+   const receipt=await acceptProof(captured,signed);
+   if(receipt.state!=='accepted')fail('ESTOCK_STOCKTAKE_SOURCE_CHANGED');
+   const result=await stocktakeBackend.enroll({branchId:captured.branchId,terminalId:captured.binding.terminalId,
+    databaseId:actual.databaseId,challengeId:challenge.challengeId});
+   captured.assertCurrent();
+   if(result?.projectOrigin!==captured.binding.projectOrigin||result.branchId!==captured.branchId||
+    result.terminalId!==captured.binding.terminalId||result.databaseId!==captured.databaseId||typeof result.cohortReady!=='boolean')
+    fail('ESTOCK_STOCKTAKE_ENROLLMENT_UNCONFIRMED');
+   return result;
+  },
   async arm({assertLease,stocktakeId}){
    const{captured,lease}=await resolveStocktake(assertLease,stocktakeId,'arm');
    return fence.arm(captured,lease);

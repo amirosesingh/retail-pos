@@ -280,6 +280,10 @@ class StockHistoryStore{
    const meta=(await request.query(`SELECT b.id baseline_id,h.coverage_state,CONVERT(nvarchar(30),h.committed_cursor) committed_cursor,
      CONVERT(nvarchar(30),h.local_committed_cursor) local_committed_cursor,CONVERT(nvarchar(30),h.coverage_generation) coverage_generation,
      CONVERT(nvarchar(30),h.coverage_from_ticks) coverage_from_ticks,CONVERT(nvarchar(30),h.coverage_through_ticks) coverage_through_ticks,
+     JSON_VALUE(h.terminal_watermarks,'$.stockHistoryDownload.recorded') recorded_history,
+     JSON_VALUE(h.terminal_watermarks,'$.stockHistoryDownload.headCursor') recorded_cursor,
+     JSON_VALUE(h.terminal_watermarks,'$.stockHistoryDownload.projectOrigin') download_project,
+     JSON_VALUE(h.terminal_watermarks,'$.stockHistoryDownload.terminalId') download_terminal,
      b.cutoff_at_raw,CONVERT(nvarchar(30),b.cutoff_ticks) cutoff_ticks,b.captured_at_raw,CONVERT(nvarchar(30),b.source_cursor) source_cursor,b.expected_pairs,b.verification_state,
      CONVERT(nvarchar(40),SYSUTCDATETIME(),127)+N'Z' read_at,
      (SELECT COUNT_BIG(*) FROM dbo.stock_history_movements m WITH(HOLDLOCK,NOWAIT) WHERE m.store_id=h.store_id AND CONVERT(varbinary(max),m.store_id)=CONVERT(varbinary(max),h.store_id) AND m.ingested_cursor IS NULL) pending_count,
@@ -299,36 +303,47 @@ class StockHistoryStore{
       ORDER BY prior.cutoff_ticks DESC,prior.id DESC) eligible
      LEFT JOIN dbo.stock_history_baselines b WITH(HOLDLOCK,NOWAIT) ON b.id=COALESCE(eligible.id,h.baseline_id) AND b.store_id=h.store_id AND CONVERT(varbinary(max),b.store_id)=CONVERT(varbinary(max),h.store_id)
      WHERE h.store_id=@history_branch AND CONVERT(varbinary(max),h.store_id)=CONVERT(varbinary(max),@history_branch);`)).recordset?.[0];
+   const recordedProof=Boolean(meta?.coverage_state==='incomplete'&&
+    meta.recorded_history==='true'&&meta.recorded_cursor===meta.committed_cursor&&meta.coverage_through_ticks!=null&&
+    scope.projectOrigin&&scope.terminalId&&meta.download_project===scope.projectOrigin&&meta.download_terminal===scope.terminalId);
+   const exactOpening=recordedProof&&!period&&meta.cutoff_ticks===cutoffTicks&&
+    BigInt(String(meta.baseline_changed_count??0))===0n;
+   const recorded=recordedProof&&!exactOpening&&!input.export&&!closedShift&&!movements;
+   const readAt=recorded?contract.utc(BigInt(meta.coverage_through_ticks)):meta?.read_at;
    const reasons=[];
-   if(meta?.read_at&&contract.instant(cutoff)>contract.instant(meta.read_at))reasons.push('FUTURE_CUTOFF');
+   if(!recorded&&readAt&&contract.instant(cutoff)>contract.instant(readAt))reasons.push('FUTURE_CUTOFF');
    if(!meta?.baseline_id||!meta.cutoff_at_raw)reasons.push('NO_VERIFIED_OPENING');
    else{
     if(meta.verification_state!=='verified'||String(meta.expected_pairs)!==String(meta.actual_pairs))reasons.push('UNVERIFIED_OPENING');
     if(contract.instant(cutoff)<contract.instant(meta.cutoff_at_raw)||(period&&contract.instant(period.start)<=contract.instant(meta.cutoff_at_raw)))reasons.push('BEFORE_BASELINE');
-    if(meta.coverage_state!=='complete'||meta.coverage_from_ticks==null||meta.coverage_through_ticks==null||
+    if((!recorded&&!exactOpening&&meta.coverage_state!=='complete')||meta.coverage_from_ticks==null||meta.coverage_through_ticks==null||
       BigInt(String(meta.coverage_from_ticks??0))>BigInt(String(meta.cutoff_ticks??0))||BigInt(String(meta.coverage_through_ticks??0))<BigInt(cutoffTicks))reasons.push('INCOMPLETE_MOVEMENTS');
     if(BigInt(String(meta.pending_count??0))>0n)reasons.push('PENDING_UPLOADS');
-    if(BigInt(String(meta.uncertain_count??0))>0n)reasons.push('CLOCK_UNVERIFIED');
-    if(BigInt(String(meta.baseline_changed_count??0))>0n)reasons.push('BASELINE_PREHISTORY_CHANGED');
-    if(BigInt(String(meta.missing_opening_count??0))>0n)reasons.push('MISSING_OPENING');
+    if(!recorded&&BigInt(String(meta.uncertain_count??0))>0n)reasons.push('CLOCK_UNVERIFIED');
+    if(!recorded&&BigInt(String(meta.baseline_changed_count??0))>0n)reasons.push('BASELINE_PREHISTORY_CHANGED');
+    if(!recorded&&BigInt(String(meta.missing_opening_count??0))>0n)reasons.push('MISSING_OPENING');
    }
    const interval=period?`period:${period.start}:${cutoff}`:`point:${cutoff}`;
-   const revision=meta?`${cap.databaseKey}:${branch}:${meta.committed_cursor}:${meta.local_committed_cursor}:${meta.coverage_generation}:${meta.baseline_id??''}:${interval}:${zone}`:null;
+   const revision=meta?`${recorded?'recorded:':''}${cap.databaseKey}:${branch}:${meta.committed_cursor}:${meta.local_committed_cursor}:${meta.coverage_generation}:${meta.baseline_id??''}:${interval}:${zone}`:null;
    if(input.sourceRevision!=null&&input.sourceRevision!==revision)contract.fail('ESTOCK_HISTORY_SOURCE_CHANGED');
    if(reasons.length){
+    const latestRecorded=recorded&&reasons.length===1&&reasons[0]==='INCOMPLETE_MOVEMENTS'&&BigInt(cutoffTicks)>BigInt(meta.coverage_through_ticks);
     return{status:reasons.some(reason=>['BEFORE_BASELINE','FUTURE_CUTOFF'].includes(reason))?'unsupported':'incomplete',reasons,cutoff,timeZone:zone,branchId:branch,
      baselineAt:meta?.cutoff_at_raw??null,coverageThroughTicks:meta?.coverage_through_ticks==null?null:String(meta.coverage_through_ticks),
-     pendingCount:String(meta?.pending_count??0),sourceRevision:revision,...(period?{period}:{}),rows:[],next:null};}
+     pendingCount:String(meta?.pending_count??0),sourceRevision:revision,...(period?{period}:{}),
+     ...(latestRecorded?{readAt,recordedThrough:readAt}:{}),rows:[],next:null};}
    if(movements){
     return {status:'complete',reasons:[],baselineAt:meta.cutoff_at_raw,...await readVerifiedMovements(this.request(tx),movements,meta)};
    }
-   request.input('history_baseline',meta.baseline_id).input('history_cursor',String(meta.committed_cursor)).input('history_baseline_ticks',String(meta.cutoff_ticks)).input('history_page_size',limit);
+   request.input('history_baseline',meta.baseline_id).input('history_cursor',String(meta.committed_cursor)).input('history_baseline_ticks',String(meta.cutoff_ticks)).input('history_page_size',limit)
+    .input('history_recorded',recorded?1:0).input('history_opening_cursor',String(meta.source_cursor));
    const result=await request.query(readPageSql),wire=result.recordset?.[0];
    if(!wire||typeof wire.rows_json!=='string'||Buffer.byteLength(wire.rows_json,'utf8')>245760)contract.fail('ESTOCK_HISTORY_OVERSIZED');
    const rows=JSON.parse(wire.rows_json);
    if(!Array.isArray(rows)||rows.length>limit)contract.fail();
-   return{status:'complete',reasons:[],cutoff,timeZone:zone,branchId:branch,baselineAt:meta.cutoff_at_raw,
-    readAt:contract.canonicalInstant(meta.read_at),sourceRevision:revision,pendingCount:'0',restatable:true,
+   return{status:recorded?'incomplete':'complete',reasons:recorded?['WRITER_COVERAGE_UNKNOWN']:[],cutoff,timeZone:zone,branchId:branch,baselineAt:meta.cutoff_at_raw,
+    readAt:contract.canonicalInstant(readAt),sourceRevision:revision,pendingCount:'0',restatable:true,
+    ...(recorded?{coverageThroughTicks:String(meta.coverage_through_ticks),coverage:{acceptedLedger:'complete',writers:'unknown',balanceGrade:'recorded_provisional',timeGrade:'recorded'}}:{}),
     ...(period?{period}:{}),rows,next:wire.next_id?String(wire.next_id).toLowerCase():null};
   });
   await recheckRead();return page;

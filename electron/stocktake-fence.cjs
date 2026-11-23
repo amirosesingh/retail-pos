@@ -197,7 +197,10 @@ function createStocktakeFence({manager,drain,readSnapshot=readStockHistoryFronti
   });
  }
 
- return Object.freeze({arm,drainBeforeProof,observe,release,suppressNormalObservation});
+ const enrollmentSnapshot=capture=>inTransaction(capture,transaction=>readSnapshot({manager,
+  transaction,firstStocktake:true,branchId:capture.branchId,terminalId:capture.binding.terminalId,
+  assertCurrent:capture.assertCurrent,assertLease:capture.assertLease}));
+ return Object.freeze({arm,drainBeforeProof,observe,release,suppressNormalObservation,enrollmentSnapshot});
 }
 
 module.exports={checkedLease,createStocktakeFence,stocktakeGapHash};
