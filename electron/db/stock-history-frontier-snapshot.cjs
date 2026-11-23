@@ -110,14 +110,14 @@ const journalSql=`/*stock-frontier:journal*/ SELECT TOP(${MAX_ROWS+1})
  * only pending/unsigned detail is materialized under the2000-row/byte bounds.
  * The verified031 immutable schema is required; summary counts or a highest
  * sequence alone never establish a linked source prefix or complete coverage. */
-async function readStockHistoryFrontierSnapshot({manager,branchId,terminalId,assertCurrent,assertLease,transaction=null,firstStocktake=false}={}){
+async function readStockHistoryFrontierSnapshot({manager,branchId,terminalId,assertCurrent,assertLease,transaction=null,firstStocktake=false,onContextChanged}={}){
  if(typeof assertCurrent!=='function'||typeof assertLease!=='function'||!manager?.pool||typeof manager.sql!=='function')fail();
  const branch=contract.identifier(branchId),terminal=contract.identifier(terminalId),pool=manager.pool,sql=manager.sql();
  if(/[\u0000-\u001f\u007f]/u.test(branch+terminal))fail();
  const started=performance.now();let connection,config,ownsTransaction=false,released=false,guardFailure=null;
  const guard=()=>{
   try{
-   if(manager.pool!==pool)fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+   if(manager.pool!==pool){onContextChanged?.('writer-pool');fail('ESTOCK_HISTORY_CONTEXT_CHANGED');}
    for(const check of [assertCurrent,assertLease]){const value=check();if(value===false||value&&typeof value.then==='function')fail('ESTOCK_HISTORY_CONTEXT_CHANGED');}
   }catch(error){guardFailure=error;throw error;}
   if(performance.now()-started>MAX_MILLISECONDS)fail('ESTOCK_FRONTIER_TIMEOUT');
@@ -274,7 +274,7 @@ async function readStockHistoryFrontierSnapshot({manager,branchId,terminalId,ass
   const last=streams.get(JSON.stringify([databaseId,terminal]));
   const clock=(await query("/*stock-frontier:clock*/ SELECT CONVERT(nvarchar(40),SYSUTCDATETIME(),127)+N'Z' observed_at;"))[0];
   const observedAt=contract.canonicalInstant(clock?.observed_at);
-  if(await store.identity(requestOwner)!==databaseKey)fail('ESTOCK_HISTORY_CONTEXT_CHANGED');guard();
+  if(await store.identity(requestOwner)!==databaseKey){onContextChanged?.('sql-identity');fail('ESTOCK_HISTORY_CONTEXT_CHANGED');}guard();
   const diagnostics=[...gaps.values()].sort((a,b)=>JSON.stringify(a)<JSON.stringify(b)?-1:JSON.stringify(a)>JSON.stringify(b)?1:0);
   const result=Object.freeze({available:true,databaseId,databaseKey,branchId:branch,terminalId:terminal,observedAt,
    sourceSequence:last?.sequence??'0',sourceRoot:last?.root??null,

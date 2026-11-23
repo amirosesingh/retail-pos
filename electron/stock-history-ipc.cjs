@@ -76,7 +76,16 @@ function registerStockHistoryRead(options) {
 }
 function registerStocktakeControl({ ipcMain, session, isPosSender, coordinator, run }) {
   ipcMain.handle("business:stocktake-control", async (event, input) => {
+    let stage, contextReason;
+    const trace = input?.action === "enroll" ? (kind, value) => {
+      if (kind === "stage" && ["admission", "snapshot-initial", "original-key", "challenge", "snapshot-after-challenge",
+        "sign", "snapshot-after-sign", "confirm-frontier", "enroll-relay"].includes(value)) stage = value;
+      if (kind === "context" && ["lease", "sender", "session", "session-epoch", "writer-pool", "branch", "author",
+        "runtime-unavailable", "terminal-binding", "project-origin", "source-fingerprint", "sql-identity"].includes(value))
+        contextReason ??= value;
+    } : undefined;
     try {
+      trace?.("stage", "admission");
       if (!isPosSender(event) || !session.hasPosAuthority() || !session.hasLevel("admin")) fail("PERMISSION_DENIED");
       const { action, stocktakeId, phase, fenceGeneration } = input ?? {};
       const expected = action === "enroll" ? ["action"] : ["action", "stocktakeId"];
@@ -88,12 +97,18 @@ function registerStocktakeControl({ ipcMain, session, isPosSender, coordinator, 
           (action === "prove" && phase !== "arm" && phase !== "confirm") ||
           (action === "release" && (typeof fenceGeneration !== "string" || !UUID.test(fenceGeneration)))) fail("ESTOCK_STOCKTAKE_INVALID");
       const epoch = session.epoch();
-      const assertLease = () => coordinator.ownsExclusive() && !coordinator.paused && session.epoch() === epoch &&
-        session.hasPosAuthority() && session.hasLevel("admin") && isPosSender(event);
+      const assertLease = () => {
+        const reason = !coordinator.ownsExclusive() || coordinator.paused ? "lease"
+          : session.epoch() !== epoch ? "session-epoch"
+          : !session.hasPosAuthority() || !session.hasLevel("admin") ? "session"
+          : !isPosSender(event) ? "sender" : null;
+        if (reason) trace?.("context", reason);
+        return reason === null;
+      };
       const result = await coordinator.withExclusive(() => {
         if (!assertLease()) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
         return run(action, {
-          assertLease, ...(action === "enroll" ? {} : { stocktakeId: identifier(stocktakeId, true) }),
+          assertLease, ...(action === "enroll" ? { trace } : { stocktakeId: identifier(stocktakeId, true) }),
           ...(phase ? { phase } : {}),
           ...(fenceGeneration ? { fenceGeneration: identifier(fenceGeneration, true) } : {}),
         });
@@ -102,7 +117,7 @@ function registerStocktakeControl({ ipcMain, session, isPosSender, coordinator, 
     } catch (error) {
       const code = typeof error?.code === "string" && /^(ESTOCK_[A-Z_]+|STOCK_CUTOVER_[A-Z_]+|PERMISSION_DENIED)$/.test(error.code)
         ? error.code : "ESTOCK_STOCKTAKE_UNAVAILABLE";
-      return { ok: false, code, error: input?.action === "enroll"
+      return { ok: false, code, ...(stage ? { stage } : {}), ...(contextReason ? { contextReason } : {}), error: input?.action === "enroll"
         ? "This terminal’s stocktake enrollment could not be verified." : "The stocktake pause could not be verified." };
     }
   });

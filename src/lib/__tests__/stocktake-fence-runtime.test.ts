@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const { createStockCoverageFrontierRuntime } = require("../../../electron/stock-coverage-frontier-runtime.cjs");
+const { registerStocktakeControl } = require("../../../electron/stock-history-ipc.cjs");
 const { stockCoverageFrontierMessage } = require("../../../electron/security/stock-event-author-protocol.cjs");
 const database = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const terminalId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -159,6 +160,28 @@ function setup(enrolling = false) {
 }
 
 describe("Main-only signed stocktake fence", () => {
+  it("reports only the allowlisted enrollment stage and context change when the session is replaced", async () => {
+    const f = setup(true);
+    const issueChallenge = f.cloud.requestStockFrontierChallenge.getMockImplementation()!;
+    f.cloud.requestStockFrontierChallenge.mockImplementationOnce(async input => {
+      f.state.epoch++;
+      return issueChallenge(input);
+    });
+    const handlers = new Map();
+    registerStocktakeControl({
+      ipcMain: { handle: (key: string, callback: unknown) => handlers.set(key, callback) },
+      session: { epoch: () => f.state.epoch, hasPosAuthority: () => true, hasLevel: () => true },
+      coordinator: { ownsExclusive: () => true, paused: false, withExclusive: (work: () => unknown) => work() },
+      isPosSender: () => true,
+      run: (action: string, request: unknown) => f.runtime.stocktake[action](request),
+    });
+    const result = await handlers.get("business:stocktake-control")({}, { action: "enroll" });
+    expect(result).toEqual({ ok: false, code: "ESTOCK_HISTORY_CONTEXT_CHANGED", stage: "challenge",
+      contextReason: "session-epoch", error: "This terminal’s stocktake enrollment could not be verified." });
+    expect(f.enroll).not.toHaveBeenCalled();
+    expect(f.cloud.acceptStockFrontier).not.toHaveBeenCalled();
+  });
+
   it("enrolls from stable first-opening snapshots without starting a stocktake pause", async () => {
     const f = setup(true);
     await expect(f.runtime.stocktake.enroll({ assertLease: f.input.assertLease })).resolves.toEqual({

@@ -199,7 +199,7 @@ function createStocktakeFence({manager,drain,readSnapshot=readStockHistoryFronti
 
  const enrollmentSnapshot=capture=>inTransaction(capture,transaction=>readSnapshot({manager,
   transaction,firstStocktake:true,branchId:capture.branchId,terminalId:capture.binding.terminalId,
-  assertCurrent:capture.assertCurrent,assertLease:capture.assertLease}));
+  assertCurrent:capture.assertCurrent,assertLease:capture.assertLease,onContextChanged:reason=>capture.trace?.('context',reason)}));
  return Object.freeze({arm,drainBeforeProof,observe,release,suppressNormalObservation,enrollmentSnapshot});
 }
 

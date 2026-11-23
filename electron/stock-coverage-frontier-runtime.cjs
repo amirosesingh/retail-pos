@@ -16,7 +16,7 @@ function createStockCoverageFrontierRuntime({manager,keys,session,terminal,branc
  readSnapshot=readStockHistoryFrontierSnapshot,now=()=>performance.now(),expectedDatabaseGuid=null,stocktakeBackend=null}){
  let active=null,nextAt=0,lastKey=null,lastPool=null,last=observed('unavailable','NOT_OBSERVED'),pending=null;
  const fence=stocktakeBackend&&createStocktakeFence({manager,drain:stocktakeBackend.drain,readSnapshot});
- function capture(assertLease,forStocktake=false){
+ function capture(assertLease,forStocktake=false,trace){
   if(typeof assertLease!=='function'||!session.hasPosAuthority?.())fail('ESTOCK_FRONTIER_AUTHOR_UNAVAILABLE');
   const person=session.identity(),device=terminalBinding(terminal()),branchId=contract.identifier(branch());
   if(!person||person.source!=='pos'||!person.authorId||!person.canonicalSubject||!device||device.platform!=='pc'||device.mode!=='operations'||
@@ -26,17 +26,29 @@ function createStockCoverageFrontierRuntime({manager,keys,session,terminal,branc
   if(forStocktake&&(person.level!=='admin'||!fence||!manager.pool||!context()||contract.identifier(device.id,true)!==binding.terminalId||
     /[\u0000-\u001f\u007f]/u.test(branchId)||binding.projectOrigin.length>255))
    fail('ESTOCK_STOCKTAKE_SCOPE');
-  const epoch=session.epoch(),pool=manager.pool,key=JSON.stringify([binding,person.canonicalSubject,branchId,epoch,terminal(),project(),context()]);
+  const epoch=session.epoch(),pool=manager.pool,terminalAtStart=terminal(),projectAtStart=project(),sourceAtStart=context();
+  const key=JSON.stringify([binding,person.canonicalSubject,branchId,epoch,terminalAtStart,projectAtStart,sourceAtStart]);
+  const terminalFingerprintAtStart=trace?JSON.stringify(terminalAtStart):null;
+  const contextChanged=reason=>{trace?.('context',reason);fail('ESTOCK_HISTORY_CONTEXT_CHANGED');};
   const assertCurrent=()=>{
    const current=session.identity(),lease=assertLease();
-   if(lease===false||lease&&typeof lease.then==='function'||!session.hasPosAuthority?.()||!current||current.source!=='pos'||manager.pool!==pool||
-    contract.identifier(branch())!==branchId||
-    current.authorId!==binding.authorId||current.canonicalSubject!==person.canonicalSubject||session.epoch()!==epoch||
-    (forStocktake&&(current.level!=='admin'||!context()))||
-    (current.branchId&&contract.identifier(current.branchId)!==branchId)||
-    JSON.stringify([binding,current.canonicalSubject,branchId,epoch,terminal(),project(),context()])!==key)fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+   if(lease===false||lease&&typeof lease.then==='function')contextChanged('lease');
+   if(!session.hasPosAuthority?.()||!current||current.source!=='pos')contextChanged('session');
+   if(manager.pool!==pool)contextChanged('writer-pool');
+   if(contract.identifier(branch())!==branchId)contextChanged('branch');
+   if(current.authorId!==binding.authorId||current.canonicalSubject!==person.canonicalSubject)contextChanged('author');
+   if(session.epoch()!==epoch)contextChanged('session-epoch');
+   if(forStocktake&&current.level!=='admin')contextChanged('session');
+   if(forStocktake&&!context())contextChanged('runtime-unavailable');
+   if(current.branchId&&contract.identifier(current.branchId)!==branchId)contextChanged('branch');
+   const currentTerminal=terminal(),currentProject=project(),currentSource=context();
+   if(JSON.stringify([binding,current.canonicalSubject,branchId,epoch,currentTerminal,currentProject,currentSource])!==key){
+    if(trace&&JSON.stringify(currentTerminal)!==terminalFingerprintAtStart)contextChanged('terminal-binding');
+    if(currentProject!==projectAtStart)contextChanged('project-origin');
+    contextChanged('source-fingerprint');
+   }
   };
-  assertCurrent();return{binding,branchId,key,pool,subject:person.canonicalSubject,assertCurrent,assertLease,databaseId};
+  assertCurrent();return{binding,branchId,key,pool,subject:person.canonicalSubject,assertCurrent,assertLease,databaseId,trace};
  }
  async function snapshot(capture){
   capture.assertCurrent();const result=await readSnapshot({manager,branchId:capture.branchId,terminalId:capture.binding.terminalId,assertCurrent:capture.assertCurrent,assertLease:capture.assertLease});
@@ -110,18 +122,27 @@ function createStockCoverageFrontierRuntime({manager,keys,session,terminal,branc
   return {captured,lease:checkedLease(captured,request.stocktakeId,purpose,source),request};
  }
  const stocktake=fence&&Object.freeze({
-  async enroll({assertLease}){
+  async enroll({assertLease,trace}){
    if(typeof stocktakeBackend.enroll!=='function')fail('ESTOCK_STOCKTAKE_UNAVAILABLE');
-   const captured=capture(assertLease,true);
+   const captured=capture(assertLease,true,trace);
+   trace?.('stage','snapshot-initial');
    const before=await fence.enrollmentSnapshot(captured);
    if(!before.available||before.databaseId!==captured.databaseId)fail('ESTOCK_STOCKTAKE_SCOPE');
-   const keyId=await originalKey(captured),challenge=await requestChallenge(captured,keyId);
+   trace?.('stage','original-key');
+   const keyId=await originalKey(captured);
+   trace?.('stage','challenge');
+   const challenge=await requestChallenge(captured,keyId);
+   trace?.('stage','snapshot-after-challenge');
    const actual=await fence.enrollmentSnapshot(captured);
    if(!sameSnapshot(before,actual))fail('ESTOCK_STOCKTAKE_SOURCE_CHANGED');
+   trace?.('stage','sign');
    const signed=signSnapshot(captured,keyId,challenge,actual);
+   trace?.('stage','snapshot-after-sign');
    if(!sameSnapshot(actual,await fence.enrollmentSnapshot(captured)))fail('ESTOCK_STOCKTAKE_SOURCE_CHANGED');
+   trace?.('stage','confirm-frontier');
    const receipt=await acceptProof(captured,signed);
    if(receipt.state!=='accepted')fail('ESTOCK_STOCKTAKE_SOURCE_CHANGED');
+   trace?.('stage','enroll-relay');
    const result=await stocktakeBackend.enroll({branchId:captured.branchId,terminalId:captured.binding.terminalId,
     databaseId:actual.databaseId,challengeId:challenge.challengeId});
    captured.assertCurrent();
