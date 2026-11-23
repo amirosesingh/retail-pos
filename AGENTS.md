@@ -1,3 +1,19 @@
+## Application-owned data changes
+
+- Create, edit, delete, import, correct, reconcile, restore and backfill records
+  through authorized application workflows or their existing service interfaces.
+  The application owns scope, permissions, validation, atomic writes, retries,
+  synchronization and audit evidence. Apply this rule to Supabase and local
+  SQL Server, including Beta and saved operator profiles.
+- Limit SQL migrations to reviewed schema changes that preserve existing records.
+  Use read-only SQL for live diagnostics. Handle seeding, backfills, repairs
+  and test enrollment through the application. If the application lacks the
+  operation, implement and verify the authorized workflow before changing records.
+- Use synthetic transactions through the normal UI or approved application
+  interfaces for hosted smoke tests. Verify the expected effects through the
+  app and read-only database checks. Keep direct fixture setup confined to
+  disposable databases owned by automated tests.
+
 ## Beta-first changes and production approval
 
 - Start feature/fix branches from the current `beta` branch and open PRs into
