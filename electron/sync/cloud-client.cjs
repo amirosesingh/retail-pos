@@ -144,6 +144,7 @@ const DEVICE_COLUMN_ALLOWLIST = {
     "membership_revision", "membership_status", "membership_member_id",
   ]),
 };
+const INTERNAL_TERMINAL_EMAIL = /^[^\s@]+@(?:pos-internal|pos)\.local$/i;
 
 // Configuration is edited from both hosted Web and offline-capable tills.
 // Row versions can diverge when two writers start from the same snapshot, so
@@ -799,15 +800,16 @@ class CloudClient {
         continue;
       }
       const deviceColumns = DEVICE_COLUMN_ALLOWLIST[table.cloudTable];
-      const deviceRow = table.cloudTable === "app_users"
-        ? {
-            ...row,
-            // Staff email is not needed by the till, but the compatibility
-            // SQL schema requires a non-null value. Keep PII out of the device
-            // while allowing a fresh bootstrap to complete reliably.
-            email: `${String(row.user_id ?? row.id ?? "staff").replace(/[^a-z0-9._-]/gi, "_")}@terminal.invalid`,
-          }
-        : row;
+      let deviceRow = row;
+      if (table.cloudTable === "app_users") {
+        // Keep the authoritative sign-in credential type without storing
+        // the original address. An unknown or already-redacted source
+        // must never make an old cashier PIN eligible for a named user.
+        const domain = typeof row.email === "string" && INTERNAL_TERMINAL_EMAIL.test(row.email)
+          ? "pos-internal.local" : "terminal.invalid";
+        const alias = String(row.user_id ?? row.id ?? "staff").replace(/[^a-z0-9._-]/gi, "_");
+        deviceRow = { ...row, email: `${alias}@${domain}` };
+      }
       const entries = Object.entries(deviceRow)
         .filter(([name]) => allowed.has(name) && (!deviceColumns || deviceColumns.has(name)))
         .map(([name, value]) => {
