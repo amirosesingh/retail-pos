@@ -20,7 +20,10 @@ describe('transaction-local sale stock preimage',()=>{
   const captured=await f.repo.captureSaleStock({},f.table,f.op,f.scope,'sale');expect(captured.before).toBe(f.before);expect(f.query()).toContain('WITH(UPDLOCK,HOLDLOCK)');expect(f.query()).toContain('AND (');
  });
  it('accepts actual zero stock after a verified last unit despite expired transient stock proof',async()=>{
-  const f=fixture(),captured=await f.repo.captureSaleStock({},f.table,f.op,f.scope,'sale');await expect(f.repo.confirmSaleStock({},f.table,f.op,f.scope,captured,1)).resolves.toBeUndefined();
+  const f=fixture(),captured=await f.repo.captureSaleStock({},f.table,f.op,f.scope,'sale');
+  await expect(f.repo.confirmSaleStock({},f.table,f.op,f.scope,captured,1)).resolves.toEqual({
+   ...f.before,stock_quantity:'0',stock_by_store:'{"a":0}',
+  });
  });
  it.each([0,2])('requires exactly one affected row even without requireMatch (%s)',async affected=>{
   const f=fixture(),captured=await f.repo.captureSaleStock({},f.table,f.op,f.scope,'sale');await expect(f.repo.confirmSaleStock({},f.table,f.op,f.scope,captured,affected)).rejects.toMatchObject({code:'SYNC_BRANCH_FORBIDDEN',table:'products'});
@@ -32,7 +35,12 @@ describe('transaction-local sale stock preimage',()=>{
   for(const patch of [{stock_by_store:'{"a":0,"c":1}'},{stock_quantity:'7'}]){const f=fixture(),captured=await f.repo.captureSaleStock({},f.table,f.op,f.scope,'sale');f.change(patch);await expect(f.repo.confirmSaleStock({},f.table,f.op,f.scope,captured,1)).rejects.toMatchObject({code:'PERMISSION_DENIED'});}
  });
  it('preserves existing SQL-owned archive lifecycle fields',async()=>{
-  const f=fixture(),captured=await f.repo.captureSaleStock({},f.table,f.op,f.scope,'sale');f.change({is_archived:true,archived_at:'2026-11-05T00:00:00Z',row_version:'3',updated_at:'2026-11-05T00:00:00Z'});await expect(f.repo.confirmSaleStock({},f.table,f.op,f.scope,captured,1)).resolves.toBeUndefined();
+  const f=fixture(),captured=await f.repo.captureSaleStock({},f.table,f.op,f.scope,'sale');
+  const lifecycle={is_archived:true,archived_at:'2026-11-05T00:00:00Z',row_version:'3',updated_at:'2026-11-05T00:00:00Z'};
+  f.change(lifecycle);
+  await expect(f.repo.confirmSaleStock({},f.table,f.op,f.scope,captured,1)).resolves.toEqual({
+   ...f.before,stock_quantity:'0',stock_by_store:'{"a":0}',...lifecycle,
+  });
  });
 });
 

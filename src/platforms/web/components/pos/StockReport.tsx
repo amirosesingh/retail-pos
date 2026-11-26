@@ -341,15 +341,12 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
     {shownError && <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{shownError}</p>}
     {showCurrent && <CurrentStock key={branchId} branchId={branchId} zeroOnly={zeroOnly} />}
     {visiblePage && <div className="space-y-3" aria-live="polite">
-      {grade === "provisional" && <div role="alert" className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-foreground"><p className="font-semibold">Provisional recorded stock</p>{visiblePage.coverage?.timeGrade === "recorded" && <p>Movements are counted when the central stock ledger recorded them.</p>}<p>Some terminals have not confirmed uploads; this recorded balance may change.</p><p className="mt-1 text-xs">This report is not eligible for complete-report export.</p></div>}
-      <div className="rounded-md border p-3 text-sm"><p className="font-medium">{grade === "unavailable" ? "Historical quantities are not yet verified" : grade === "provisional" ? "Stock recorded through the selected time" : "Stock available at selected time"}</p><p className="break-words text-xs text-muted-foreground">{unresolvedShift ? "The saved closing time could not be resolved." : <>{grade === "provisional" ? "Recorded cutoff" : "Exact cutoff"}: {visiblePage.cutoff} · {visiblePage.timeZone}</>}</p>
-        {visiblePage.baselineAt && <p className="break-words text-xs text-muted-foreground">Verified opening: {visiblePage.baselineAt}</p>}
-        {visiblePage.period && <p className="break-words text-xs text-muted-foreground">Inventory changes from {visiblePage.period.start} through the selected time (inclusive).</p>}
-        {visiblePage.coverage && visiblePage.coverage.timeGrade !== "recorded" && <p className="mt-1 text-xs text-muted-foreground">Movement times include authorized arrival-time entries.</p>}
-        {visiblePage.reasons.filter(reason => grade !== "provisional" || !["WRITER_COVERAGE_PENDING", "WRITER_COVERAGE_UNKNOWN"].includes(reason)).map(reason => <p key={reason} className="mt-1 text-sm">{stockHistoryExplanation(reason)}</p>)}
-        {visiblePage.recordedThrough && <Button type="button" size="sm" variant="outline" className="mt-2" disabled={shownBusy || shownExporting}
-          onClick={() => void read({ cutoff: visiblePage.recordedThrough!, timeZone, branchId })}>View latest recorded stock</Button>}
-      </div>
+      <header>
+        <h2 className="text-lg font-semibold">Stock at selected time</h2>
+        <p className="break-words text-xs text-muted-foreground">{unresolvedShift ? "The saved closing time could not be resolved." : <>
+          <StockActivityTime value={visiblePage.cutoff} format={activityFormat} /> · {visiblePage.timeZone}
+        </>}</p>
+      </header>
       {grade === "unavailable" && !unresolvedShift && <StockRecordedBalances rows={balances} zeroOnly={zeroOnly} selected={activityProduct}
         selectProduct={selectActivityProduct} format={activityFormat} />}
       {grade !== "unavailable" && <><div className="overflow-x-auto rounded-md border"><Table aria-label="Stock at selected time"><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>SKU / barcode</TableHead>{visiblePage.period && <TableHead className="text-right">Opening stock</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock in</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock out</TableHead>}<TableHead className="text-right">Stock available</TableHead><TableHead>Last recorded change</TableHead><TableHead>Balance status</TableHead></TableRow></TableHeader><TableBody>
@@ -369,11 +366,15 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
           {visiblePage.period && <TableCell className="numeric whitespace-nowrap text-right">{row.outQuantity}</TableCell>}
           <TableCell className={`numeric whitespace-nowrap text-right ${row.negative ? "text-destructive" : ""}`}>{row.quantity}{row.negative && <span className="block text-xs">Negative stock</span>}</TableCell>
           <TableCell className="whitespace-normal text-xs"><StockActivityTime format={activityFormat} value={(activityProduct === row.productId && (itemBefore.evidence || itemActivityFailed) ? itemEvidence : evidence).latest.get(row.productId)} /></TableCell>
-          <TableCell className="text-xs">{grade === "verified" ? "Verified" : "Provisional"}</TableCell>
+          <TableCell className="text-xs">{grade === "verified" ? "Verified" : "Recorded"}</TableCell>
         </TableRow>) : <TableRow><TableCell colSpan={visiblePage.period ? 8 : 5}>{zeroOnly ? "No zero-stock products on this page." : "No products in the verified opening for this location."}</TableCell></TableRow>}
       </TableBody></Table></div>
-      {visiblePage.next && visibleRequest && <Button variant="outline" disabled={shownBusy || shownExporting} onClick={() => void read({ ...visibleRequest, after: visiblePage.next })}>Next products</Button>}
-      <p className="break-all text-[11px] text-muted-foreground">Read at {visiblePage.readAt} · Source {visiblePage.sourceRevision}</p></>}
+      {visiblePage.next && visibleRequest && <Button variant="outline" disabled={shownBusy || shownExporting} onClick={() => void read({ ...visibleRequest, after: visiblePage.next })}>Next products</Button>}</>}
+      {grade !== "verified" && !unresolvedShift && <p className="text-xs text-muted-foreground">
+        Recorded balances can change as more data arrives. Items without a recorded balance can still have activity.
+      </p>}
+      {visiblePage.recordedThrough && <Button type="button" size="sm" variant="outline" disabled={shownBusy || shownExporting}
+        onClick={() => void read({ cutoff: visiblePage.recordedThrough!, timeZone, branchId })}>View latest recorded stock</Button>}
       {visibleMovement && <section id={`${movementHeadingId}-panel`} className="space-y-3 rounded-md border p-3" aria-labelledby={movementHeadingId} aria-busy={shownBusy}>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <h3 ref={movementHeading} id={movementHeadingId} tabIndex={-1} className="break-words text-sm font-semibold">Stock movements · {visibleMovement.product.name}</h3>
@@ -402,6 +403,19 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
       {!unresolvedShift && <StockReportActivity before={activityProduct ? itemBefore : before} after={activityProduct ? itemAfter : after}
         products={activityProducts} selected={activityProduct} clearSelection={() => setActivitySelection(null)}
         timeZone={timeZone} format={activityFormat} heading={activityHeading} />}
+      <details className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+        <summary className="cursor-pointer font-medium text-foreground">Report coverage details</summary>
+        <div className="mt-2 space-y-1 break-words">
+          {!unresolvedShift && <p>{grade === "provisional" ? "Recorded cutoff" : "Exact cutoff"}: {visiblePage.cutoff} · {visiblePage.timeZone}</p>}
+          {visiblePage.baselineAt && <p>Verified opening: {visiblePage.baselineAt}</p>}
+          {visiblePage.period && <p>Inventory changes from {visiblePage.period.start} through the selected time (inclusive).</p>}
+          {visiblePage.coverage?.timeGrade === "recorded" && <p>Movements are counted when the central stock ledger recorded them.</p>}
+          {visiblePage.coverage && visiblePage.coverage.timeGrade !== "recorded" && <p>Movement times include authorized arrival-time entries.</p>}
+          {grade !== "verified" && <p>Recorded balances are provisional. Excel export requires verified balances.</p>}
+          {visiblePage.reasons.map(reason => <p key={reason}>{stockHistoryExplanation(reason)}</p>)}
+          {grade !== "unavailable" && <p className="break-all">Read at {visiblePage.readAt} · Source {visiblePage.sourceRevision}</p>}
+        </div>
+      </details>
     </div>}
   </section>;
 }

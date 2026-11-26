@@ -92,6 +92,8 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
    await page.route('**/*',route=>route.request().url().startsWith(origin)?route.continue():route.abort());await page.goto(origin+'/.tmp/stock-report-ui/index.html',{waitUntil:'domcontentloaded',timeout:60000});
    if(dark)await page.evaluate(()=>document.documentElement.classList.add('dark'));await page.getByRole('region',{name:'Stock report data'}).waitFor();return page;};
   const show=page=>page.getByRole('button',{name:'Show stock at selected time',exact:true}),explain=page=>page.getByRole('switch',{name:/Show inventory changes for this day/});
+  const stockHeading=page=>page.getByRole('heading',{name:'Stock at selected time',exact:true});
+  const coverageDetails=page=>page.getByText('Report coverage details',{exact:true});
   const details=page=>page.getByRole('button',{name:/View movements for Fixture A product/});
   for(const width of[1440,390])for(const dark of[false,true]){
    const page=await fresh(width,dark);assert.equal(await page.evaluate(()=>window.fixture.calls.length),0);
@@ -111,18 +113,25 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
   }
   for(const kind of['incomplete','ungraded','error']){
    const page=await fresh();await page.evaluate(kind=>window.fixture.set({kind}),kind);await show(page).click();
-   if(kind==='error')await page.getByRole('alert').getByText('Synthetic stock reader unavailable').waitFor();else await page.getByText('Historical quantities are not yet verified',{exact:true}).waitFor();
+   if(kind==='error')await page.getByRole('alert').getByText('Synthetic stock reader unavailable').waitFor();else await stockHeading(page).waitFor();
    if(kind==='error')assert.equal(await page.getByRole('table').count(),0);else{
     const balances=page.getByRole('table',{name:'Stock at selected time'});
-    await balances.getByRole('row',{name:/Current branch A stock/}).getByText('Unverified',{exact:true}).waitFor();
+    await balances.getByRole('row',{name:/Current branch A stock/}).getByText('No recorded balance',{exact:true}).waitFor();
     assert.equal(await balances.getByText('9007199254740993',{exact:true}).count(),0);
+    const opening=page.getByText(/This location needs a verified opening stocktake/);assert.equal(await opening.isVisible(),false);
+    assert.equal(await page.getByRole('alert').count(),0);
+    await coverageDetails(page).click();await opening.waitFor();
    }
    assert(await page.getByRole('button',{name:'Export Excel'}).isDisabled());passed++;console.log('PASS '+kind+' cannot display unsupported stock or export');await page.close();
   }
   for(const width of[1440,390]){
    const page=await fresh(width);await page.evaluate(()=>window.fixture.set({kind:'provisional'}));await show(page).click();
-   await page.getByRole('alert').getByText('Provisional recorded stock',{exact:true}).waitFor();await page.getByText('9007199254740993',{exact:true}).waitFor();
-   assert.equal(await page.getByText('Some terminals have not confirmed uploads; this recorded balance may change.',{exact:true}).count(),1);assert(await page.getByRole('button',{name:'Export Excel'}).isDisabled());
+   await stockHeading(page).waitFor();await page.getByText('9007199254740993',{exact:true}).waitFor();
+   await page.getByRole('table',{name:'Stock at selected time'}).getByText('Recorded',{exact:true}).waitFor();
+   assert.equal(await page.getByRole('alert').count(),0);
+   const pendingUploads=page.getByText('Some terminals have not confirmed uploads; this recorded balance may change.',{exact:true});
+   assert.equal(await pendingUploads.isVisible(),false);await coverageDetails(page).click();await pendingUploads.waitFor();
+   assert(await page.getByRole('button',{name:'Export Excel'}).isDisabled());
    assert.equal(await details(page).count(),0);assert.equal(await page.evaluate(()=>window.fixture.movementCalls.length),0);
    assert.equal(await page.evaluate(()=>window.fixture.exports.length),0);passed++;console.log('PASS explicit provisional recorded stock visible with warning/no export '+width);await page.close();
   }
@@ -148,7 +157,7 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
    const page=await fresh();await page.evaluate(()=>window.fixture.set({zone:'America/New_York'}));await page.getByLabel('Stock report date and time').fill(displayedTime);
    await page.getByRole('combobox',{name:'Stock cutoff method'}).click();await page.getByRole('option',{name:'After a closed shift'}).click();assert.equal(await explain(page).count(),0);
    await page.getByRole('combobox',{name:'Closed shift stock cutoff'}).click();await page.getByRole('option',{name:/Fixture cashier/}).click();await show(page).click();
-   await page.getByText(/Exact cutoff: 2026-11-05T13:00:00.1234567Z/).waitFor();const request=await page.evaluate(()=>window.fixture.calls[0]);assert.equal(request.closedShiftId,'30000000-0000-4000-8000-000000000001');assert.equal(request.periodStart,undefined);assert.equal(request.cutoff,'1970-01-01T00:00:00.0000000Z');
+   await stockHeading(page).locator('..').locator('time[datetime="2026-11-05T13:00:00.1234567Z"]').waitFor();const request=await page.evaluate(()=>window.fixture.calls[0]);assert.equal(request.closedShiftId,'30000000-0000-4000-8000-000000000001');assert.equal(request.periodStart,undefined);assert.equal(request.cutoff,'1970-01-01T00:00:00.0000000Z');
    assert.equal(await page.getByRole('combobox',{name:'Stock cutoff UTC offset'}).count(),0);assert.equal(await page.getByRole('columnheader',{name:/^Opening stock/}).count(),0);passed++;console.log('PASS saved shift bypasses displayed DST gap/repetition '+displayedTime);await page.close();
   }
   for(const width of [1440,390]){
@@ -215,7 +224,7 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
    await page.evaluate(()=>window.fixture.set({liveQuantity:11,kind:'incomplete'}));
    await current.getByRole('row',{name:/Current branch A stock/}).getByText('11',{exact:true}).waitFor();
    await date.fill('2026-11-06T09:15:12');await date.press('Enter');
-   await page.getByText('Historical quantities are not yet verified',{exact:true}).waitFor();
+   await stockHeading(page).waitFor();
    assert.equal((await page.evaluate(()=>window.fixture.calls[0])).cutoff,'2026-11-06T01:15:12.0000000Z');
    assert.equal(await current.count(),0);
    await page.getByRole('button',{name:'Return to current stock'}).click();
@@ -235,10 +244,13 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
    const balances=page.getByRole('table',{name:'Stock at selected time'}), before=page.getByRole('table',{name:'Activity at or before the cutoff'}), after=page.getByRole('table',{name:'Activity after the cutoff'});
    const target=balances.getByRole('row',{name:/Recorded test item/}), zero=balances.getByRole('row',{name:/Recorded zero item/});
    await date.fill('2026-11-05T10:30');await show(page).click();
-   await target.getByText('7',{exact:true}).waitFor();await target.getByText('Provisional',{exact:true}).waitFor();
+   await target.getByText('7',{exact:true}).waitFor();await target.getByText('Recorded',{exact:true}).waitFor();
    await zero.getByText('0',{exact:true}).waitFor();
-   await balances.getByRole('row',{name:/Current branch A stock/}).getByText('Unverified',{exact:true}).waitFor();
+   await balances.getByRole('row',{name:/Current branch A stock/}).getByText('No recorded balance',{exact:true}).waitFor();
    await before.getByText('RECEIVE-1',{exact:true}).waitFor();await after.getByText('SALE-1',{exact:true}).waitFor();
+   const resultOrder=await page.getByRole('region',{name:'Stock report data'}).locator('table, details > summary').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-label')??node.textContent));
+   assert.deepEqual(resultOrder.slice(0,4),['Stock at selected time','Activity at or before the cutoff','Activity after the cutoff','Report coverage details']);
+   await page.getByText('Items without a recorded balance can still have activity.',{exact:false}).waitFor();
    assert.equal(await after.locator('time').getAttribute('datetime'),'2026-11-05T03:00:00.1234567Z');
    await target.getByRole('button',{name:'Filter activity for Recorded test item'}).click();
    await before.getByText('RECEIVE-1',{exact:true}).waitFor();assert.equal(await before.getByText('ADJUST-1',{exact:true}).count(),0);
@@ -254,16 +266,17 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
   {
    const page=await fresh();await page.evaluate(()=>window.fixture.set({kind:'schema',activity:true,pagedActivity:true}));
    await page.getByLabel('Stock report date and time').fill('2026-11-05T10:30');await explain(page).check();await show(page).click();
-   await page.getByText(/needs the reviewed stock-history upgrade/).waitFor();
+   await stockHeading(page).waitFor();const schemaMessage=page.getByText(/needs the reviewed stock-history upgrade/);
+   assert.equal(await schemaMessage.isVisible(),false);await coverageDetails(page).click();await schemaMessage.waitFor();
    const target=page.getByRole('table',{name:'Stock at selected time'}).getByRole('row',{name:/Recorded test item/});
-   await target.getByText('Unverified',{exact:true}).waitFor();
+   await target.getByText('No recorded balance',{exact:true}).waitFor();
    await target.getByRole('button',{name:'Filter activity for Recorded test item'}).click();
    const earlier=page.getByRole('region',{name:'Activity at or before the cutoff'});
    await page.evaluate(()=>window.fixture.set({failActivityContinuation:true}));
    await earlier.getByRole('button',{name:'Earlier activity'}).click();await earlier.getByRole('alert').getByText(/Inventory permission is required/).waitFor();
    assert.equal(await earlier.getByRole('table').count(),0);
    assert.equal(await page.getByRole('table',{name:'Activity after the cutoff'}).count(),0);
-   await target.getByText('Unverified',{exact:true}).waitFor();
+   await target.getByText('No recorded balance',{exact:true}).waitFor();
    await page.evaluate(()=>window.fixture.set({failActivityContinuation:false}));
    await earlier.getByRole('button',{name:'Retry activity'}).click();
    await earlier.getByRole('button',{name:'Earlier activity'}).click();await target.getByText('7',{exact:true}).waitFor();

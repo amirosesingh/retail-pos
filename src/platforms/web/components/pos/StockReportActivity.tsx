@@ -29,8 +29,6 @@ export function StockRecordedBalances({ rows, zeroOnly, selected, selectProduct,
   const { pageItems, setPage, setPageSize, ...pagination } = usePagination(filtered, 50);
 
   return <section className="space-y-2" aria-label="Balances from inventory activity">
-    <h3 className="text-sm font-semibold">Stock at selected time</h3>
-    <p className="text-xs text-muted-foreground">Recorded balances are provisional. Missing or conflicting activity leaves an item's balance unverified.</p>
     <div className="overflow-x-auto rounded-md border"><Table aria-label="Stock at selected time">
       <TableHeader><TableRow><TableHead>Product</TableHead><TableHead>SKU / barcode</TableHead><TableHead className="text-right">Recorded stock</TableHead>
         <TableHead>Last recorded change</TableHead><TableHead>Balance status</TableHead></TableRow></TableHeader>
@@ -42,7 +40,7 @@ export function StockRecordedBalances({ rows, zeroOnly, selected, selectProduct,
         <TableCell className="max-w-52 whitespace-normal break-all text-xs">{row.sku || "—"}<br />{row.barcode || "—"}</TableCell>
         <TableCell className={`numeric whitespace-nowrap text-right ${row.quantity !== null && row.quantity < 0 ? "text-destructive" : ""}`}>{row.quantity ?? "—"}</TableCell>
         <TableCell className="whitespace-normal text-xs"><StockActivityTime value={row.lastChange} format={format} /></TableCell>
-        <TableCell className="whitespace-normal text-xs">{row.quantity === null ? "Unverified" : "Provisional"}
+        <TableCell className="whitespace-normal text-xs">{row.quantity === null ? "No recorded balance" : "Recorded"}
           {row.supportedAt && row.supportedAt !== row.lastChange && <span className="block text-muted-foreground">Balance recorded <StockActivityTime value={row.supportedAt} format={format} /></span>}
         </TableCell>
       </TableRow>) : <TableRow><TableCell colSpan={5}>{zeroOnly ? "No recorded zero-stock balances for this selection." : "No products with available inventory activity or catalogue information."}</TableCell></TableRow>}</TableBody>
