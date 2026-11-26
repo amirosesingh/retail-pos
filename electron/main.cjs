@@ -159,6 +159,11 @@ const refreshPinApprovalActivity = require("./sync/approval-activity-wake.cjs").
   publish: publishBusinessChange, runApply: work => closeWriteBarrier.run(work),
   capture: capturePinApprovalActivity,
 });
+const refreshOfflineStaff = require("./sync/offline-staff-refresh.cjs").createOfflineStaffRefresh({
+  cloud: syncCloud, manager: databaseManager, coordinator: syncCoordinator, registry: syncRegistry,
+  reader: changeReader, runApply: work => closeWriteBarrier.run(() =>
+    !jobManager.running && !localDataPreparePromise ? work() : false),
+});
 // Main-private ownership evidence for retaining, not executing, an interrupted
 // history-only v1 job. No renderer flag or job timestamp can supply this proof.
 async function ownsHistoryRecoveryExecution({jobId,source,requestParent=null}={}){
@@ -389,6 +394,40 @@ function localBranchId(){
 }
 function rememberVerifiedBranch(){ /* Account scope never assigns a physical terminal. */ }
 function authorizedLocalBranch(){return activationBoundary.authorizedBranch(terminalStore.read(),adminSession.branchId());}
+function captureOfflineStaffReplica(cashier, backendUrl, proof) {
+  const ready = () => {
+    const state = databaseService.snapshot();
+    return process.platform === "win32" && !safeMode && !quitting && !closeWriteBarrier.sealed &&
+      state.enabled && state.configured && state.connected && state.tradingReady;
+  };
+  if (!ready()) return null;
+  const source = syncCloud.requestContext(true);
+  const registration = activationBoundary.binding(source.terminal);
+  const actor = adminSession.identity();
+  const id = recordId(cashier.id);
+  const { sessionToken, cashierToken } = source.personProof;
+  const branchId = registration?.branchId;
+  if (registration?.mode !== "operations" || registration.platform !== "pc" || !branchId ||
+      !/^[a-f0-9]{64}$/i.test(source.terminal.deviceBindingProof ?? "") ||
+      branchId !== recordId(cashier.store_id) || branchId !== recordId(source.project?.branchId) ||
+      branchId !== recordId(actor?.branchId) || actor?.source !== "pos" || !actor.authorId || actor.authorId !== id ||
+      actor.canonicalSubject !== cashier.username || !source.pool || !source.profile || source.base !== backendUrl ||
+      !/^https:\/\//i.test(source.base) || !/^https:\/\//i.test(source.project?.projectOrigin ?? "") ||
+      typeof sessionToken !== "string" || !sessionToken || sessionToken !== proof.sessionToken ||
+      typeof cashierToken !== "string" || !cashierToken || cashierToken !== proof.cashierToken) return null;
+  const epoch = adminSession.epoch();
+  const adoption = sessionAdoptionRevision;
+  const expiresAt = Date.now() + 45_000;
+  return Object.freeze({ pool: source.pool, branchId, id, username: actor.canonicalSubject,
+    role: cashier.role, roleSlug: cashier.role_slug, permissions: cashier.permissions,
+    assertCurrent() {
+      if (!ready() || Date.now() >= expiresAt || !adminSession.hasPosAuthority() ||
+          adminSession.epoch() !== epoch || sessionAdoptionRevision !== adoption)
+        throw new Error("The hosted sign-in for offline staff refresh changed.");
+      syncCloud.assertRequestContext(source, true);
+    },
+  });
+}
 function capturePinApprovalActivity() {
   const ready = () => {
     const state = databaseService.snapshot();
@@ -2981,6 +3020,23 @@ function registerIpc() {
       syncCloud.setAuthorizationProof(proof);
       enrollCurrentShiftAuthor(proof);
       rememberVerifiedBranch(branchId);
+      // The ordinary feed may be waiting for an unrelated pending transaction.
+      // Reuse its scoped app_users projection for this freshly verified staff row.
+      if (!response.redirected && response.url === `${authorizationUrl}/api/public/cashier-login`) {
+        void Promise.resolve().then(async () => {
+          const scope = captureOfflineStaffReplica(cashier, authorizationUrl, proof);
+          if (scope && localDataPreparePromise) await localDataPreparePromise.catch(() => undefined);
+          return refreshOfflineStaff(scope, pin);
+        })
+          .then(refreshed => {
+            if (refreshed) diagnostics.logConnection("staff.offline-replica-refresh.succeeded",
+              { category: "synchronization", table: "app_users", stage: "refresh" });
+          })
+          .catch(error => diagnostics.logConnection("staff.offline-replica-refresh.failed", {
+            category: "synchronization", table: "app_users", stage: "refresh",
+            ...diagnostics.sqlErrorDiagnostic(error), message: "The offline staff row could not be refreshed.",
+          }));
+      }
     }
     return { ...result, status: response.status };
   }));

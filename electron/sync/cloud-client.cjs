@@ -146,6 +146,13 @@ const DEVICE_COLUMN_ALLOWLIST = {
 };
 const INTERNAL_TERMINAL_EMAIL = /^[^\s@]+@(?:pos-internal|pos)\.local$/i;
 
+function staffReplicaEmail(row) {
+  const domain = typeof row.email === "string" && INTERNAL_TERMINAL_EMAIL.test(row.email)
+    ? "pos-internal.local" : "terminal.invalid";
+  const alias = String(row.user_id ?? row.id ?? "staff").replace(/[^a-z0-9._-]/gi, "_");
+  return `${alias}@${domain}`;
+}
+
 // Configuration is edited from both hosted Web and offline-capable tills.
 // Row versions can diverge when two writers start from the same snapshot, so
 // they are only a deterministic tie-breaker. The actual last-write-wins clock
@@ -805,10 +812,7 @@ class CloudClient {
         // Keep the authoritative sign-in credential type without storing
         // the original address. An unknown or already-redacted source
         // must never make an old cashier PIN eligible for a named user.
-        const domain = typeof row.email === "string" && INTERNAL_TERMINAL_EMAIL.test(row.email)
-          ? "pos-internal.local" : "terminal.invalid";
-        const alias = String(row.user_id ?? row.id ?? "staff").replace(/[^a-z0-9._-]/gi, "_");
-        deviceRow = { ...row, email: `${alias}@${domain}` };
+        deviceRow = { ...row, email: staffReplicaEmail(row) };
       }
       const entries = Object.entries(deviceRow)
         .filter(([name]) => allowed.has(name) && (!deviceColumns || deviceColumns.has(name)))
@@ -980,4 +984,4 @@ function assertStoreSettingsEditReceipt(witness, command) {
   saved.assertSource();
   return { commandSha256: saved.commandSha256, receipt: saved.receipt };
 }
-module.exports = { CloudClient,readVerifiedFinancialBasis,readVerifiedFinancialCapability,assertStoreSettingsEditReceipt };
+module.exports = { CloudClient,readVerifiedFinancialBasis,readVerifiedFinancialCapability,assertStoreSettingsEditReceipt,staffReplicaEmail };
