@@ -112,7 +112,7 @@ describe("offline PIN refresh after verified hosted sign-in", () => {
   it("reprojects just the matching branch staff alias without changing the stored PIN", async () => {
     const f = fixture();
     await expect(f.refresh(f.scope, pin)).resolves.toBe(true);
-    expect(f.cloud.bootstrapPage).toHaveBeenCalledWith(expect.objectContaining({ table: "app_users", branchId }));
+    expect(f.cloud.bootstrapPage).toHaveBeenCalledWith({ table: "app_users", branchId, historyDays: 90, cursor: null, limit: 100 });
     expect(f.cloud.applyLocalBatch).toHaveBeenCalledTimes(1);
     expect(f.reader.unacknowledged).toHaveBeenCalledWith(expect.objectContaining({ cloudTable: "app_users" }),
       [JSON.stringify({ id })], expect.anything(), expect.objectContaining({ branchId }));

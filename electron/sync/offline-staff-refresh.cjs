@@ -41,7 +41,7 @@ async function readHostedStaff(cloud, scope) {
   for (let page = 0; page < MAX_PAGES; page++) {
     const { batch, limit, nextLimit } = await readPage(pageLimit => {
       scope.assertCurrent();
-      return cloud.bootstrapPage({ table: TABLE, branchId: scope.branchId, cursor, limit: pageLimit });
+      return cloud.bootstrapPage({ table: TABLE, branchId: scope.branchId, historyDays: 90, cursor, limit: pageLimit });
     }, size, { table: TABLE });
     scope.assertCurrent();
     if (!Array.isArray(batch?.rows) || batch.rows.length > Math.max(100, limit) ||
