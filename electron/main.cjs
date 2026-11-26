@@ -423,7 +423,7 @@ function captureOfflineStaffReplica(cashier, backendUrl, proof) {
     assertCurrent() {
       if (!ready() || Date.now() >= expiresAt || !adminSession.hasPosAuthority() ||
           adminSession.epoch() !== epoch || sessionAdoptionRevision !== adoption)
-        throw new Error("The hosted sign-in for offline staff refresh changed.");
+        throw Object.assign(new Error("The hosted sign-in for offline staff refresh changed."), { code: "EOFFLINE_STAFF_CONTEXT" });
       syncCloud.assertRequestContext(source, true);
     },
   });
@@ -3034,6 +3034,9 @@ function registerIpc() {
           })
           .catch(error => diagnostics.logConnection("staff.offline-replica-refresh.failed", {
             category: "synchronization", table: "app_users", stage: "refresh",
+            code: typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{1,59}$/.test(error.code)
+              ? error.code : "EOFFLINE_STAFF_REFRESH",
+            ...diagnostics.bootstrapDiagnostic(error, ["app_users"]),
             ...diagnostics.sqlErrorDiagnostic(error), message: "The offline staff row could not be refreshed.",
           }));
       }

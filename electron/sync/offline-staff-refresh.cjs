@@ -5,6 +5,7 @@ const { staffReplicaEmail } = require("./cloud-client.cjs");
 const { readDatabaseGuid } = require("./grouped-store-settings.cjs");
 const { readPage } = require("./page-policy.cjs");
 const { recordId } = require("./uuid-fields.cjs");
+const { tagBootstrapDiagnostic } = require("../diagnostics.cjs");
 
 const TABLE = "app_users";
 const MAX_PAGES = 5;
@@ -47,9 +48,10 @@ async function readHostedStaff(cloud, scope) {
     if (!Array.isArray(batch?.rows) || batch.rows.length > Math.max(100, limit) ||
         (batch.cursor !== null && (typeof batch.cursor !== "string" || !batch.cursor || batch.cursor.length > 512 ||
           !batch.rows.length || seen.has(batch.cursor))))
-      throw new Error("The offline staff download returned an invalid page.");
+      throw Object.assign(new Error("The offline staff download returned an invalid page."), { code: "EOFFLINE_STAFF_PAGE" });
     const matches = batch.rows.filter(row => recordId(row?.id) === scope.id);
-    if (matches.length > 1) throw new Error("The offline staff download returned a duplicate account.");
+    if (matches.length > 1)
+      throw Object.assign(new Error("The offline staff download returned a duplicate account."), { code: "EOFFLINE_STAFF_PAGE" });
     if (matches.length === 1) return matches[0];
     if (batch.cursor === null) return null;
     cursor = batch.cursor;
@@ -69,7 +71,9 @@ function createOfflineStaffRefresh({ cloud, manager, coordinator, registry, read
     const saved = await readSavedStaff(scope.pool.request(), scope);
     if (!legacyStaff(saved, scope)) return false;
     const databaseGuid = await readDatabaseGuid(scope.pool.request());
-    const row = await readHostedStaff(cloud, scope);
+    const row = await readHostedStaff(cloud, scope).catch(error => {
+      throw tagBootstrapDiagnostic(error, { table: TABLE, phase: "download" });
+    });
     if (!matchesStaff(row, scope) || !matchesHostedAuthority(row, scope) ||
         !Number.isSafeInteger(row.row_version) || row.row_version < Number(saved.row_version) ||
         typeof row.pin_hash !== "string" || typeof row.offline_login_pin_hash !== "string")
@@ -101,13 +105,13 @@ function createOfflineStaffRefresh({ cloud, manager, coordinator, registry, read
               Number(refreshed.row_version) !== row.row_version ||
               !matchesHostedAuthority({ ...refreshed, permissions: typeof refreshed.permissions === "string"
                 ? JSON.parse(refreshed.permissions) : refreshed.permissions }, scope))
-            throw new Error("The scoped offline staff update could not be verified.");
+            throw Object.assign(new Error("The scoped offline staff update could not be verified."), { code: "EOFFLINE_STAFF_APPLY" });
           scope.assertCurrent();
           await transaction.commit();
           return true;
         } catch (error) {
           await Promise.resolve(transaction.rollback()).catch(() => undefined);
-          throw error;
+          throw tagBootstrapDiagnostic(error, { table: TABLE, phase: "local_apply" });
         }
       }) === true,
     );
