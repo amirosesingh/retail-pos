@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { createOfflineStaffRefresh } = require("../../../electron/sync/offline-staff-refresh.cjs");
+const { createOfflineStaffRefresh, matchesHostedStaffSession } = require("../../../electron/sync/offline-staff-refresh.cjs");
 const { loadRegistry } = require("../../../electron/db/schema-registry.cjs");
 const registry = loadRegistry();
 const id = "7022f977-83e5-478e-bf78-3a3e3505516b";
@@ -15,6 +15,7 @@ const permissions = { can_process_sale: true };
 const pin = "test-only-current-pin";
 const currentHash = bcrypt.hashSync(pin, 4);
 const previousHash = bcrypt.hashSync("test-only-previous-pin", 4);
+const hostedProof = { sessionToken: "test-hosted-session", cashierToken: "test-hosted-cashier" };
 const authoritativeAccount = {
   id, user_id: username, store_id: branchId, role: "staff", role_slug: "staff",
   permissions, row_version: 17, is_active: true, email: "different@pos-internal.local",
@@ -24,6 +25,20 @@ const authoritativeAccount = {
 type RemoteAccount = typeof authoritativeAccount;
 type Snapshot = { rows: RemoteAccount[]; cursor: string | null };
 type CloudChange = { row_data: RemoteAccount };
+
+it("allows the same hosted PIN session after desktop permission normalization", () => {
+  const raw = { can_process_sale: true, "page:register": false };
+  const expected = { ...hostedProof, id, username, branchId, level: "admin", permissions: raw };
+  const actor = { authorId: id, canonicalSubject: username, branchId, source: "pos", level: "admin", permissions: raw };
+  const adopted = { ...actor, permissions: { can_process_sale: false, "page:register": false, can_manage_sync_backup: true } };
+  expect(matchesHostedStaffSession(actor, hostedProof, expected)).toBe(true);
+  expect(matchesHostedStaffSession(adopted, { ...hostedProof, accessToken: "test-auth-enrichment" }, expected)).toBe(true);
+  expect(matchesHostedStaffSession({ ...adopted, permissions: { ...adopted.permissions, can_process_refund: true } }, hostedProof, expected)).toBe(false);
+  expect(matchesHostedStaffSession({ ...actor, branchId: foreignBranch }, hostedProof, expected)).toBe(false);
+  expect(matchesHostedStaffSession(actor, { ...hostedProof, sessionToken: "test-new-session" }, expected)).toBe(false);
+  expect(matchesHostedStaffSession(actor, { ...hostedProof, cashierToken: "test-different-cashier" }, expected)).toBe(false);
+  expect(matchesHostedStaffSession(null, hostedProof, expected)).toBe(false);
+});
 
 function fixture() {
   let local = {

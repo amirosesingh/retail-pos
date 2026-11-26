@@ -6,9 +6,29 @@ const { readDatabaseGuid } = require("./grouped-store-settings.cjs");
 const { readPage } = require("./page-policy.cjs");
 const { recordId } = require("./uuid-fields.cjs");
 const { tagBootstrapDiagnostic } = require("../diagnostics.cjs");
+const permissionPages = require("../permission-pages.json");
 
 const TABLE = "app_users";
 const MAX_PAGES = 5;
+
+function matchesHostedStaffSession(actor, proof, expected) {
+  if (actor?.source !== "pos" || actor.level !== expected.level || actor.authorId !== expected.id ||
+      actor.canonicalSubject !== expected.username || recordId(actor.branchId) !== expected.branchId ||
+      typeof proof?.sessionToken !== "string" || !proof.sessionToken || proof.sessionToken !== expected.sessionToken ||
+      typeof proof.cashierToken !== "string" || !proof.cashierToken || proof.cashierToken !== expected.cashierToken) return false;
+  if (isDeepStrictEqual(actor.permissions, expected.permissions)) return true;
+  // IPC adoption applies the desktop authority's page permission checks to
+  // the same signed-in account. Compare that policy as well as the raw row.
+  const flags = Object.fromEntries(Object.entries(expected.permissions ?? {}).filter(([, flag]) => typeof flag === "boolean"));
+  if (expected.level === "admin") flags.can_manage_sync_backup = true;
+  const adopted = Object.fromEntries(Object.entries(flags).map(([key, allowed]) => {
+    const owners = permissionPages.filter(page => page.keys.includes(key));
+    const pageAllowed = key === "can_use_management_mobile" || key === "can_use_management_pc" ||
+      !owners.length || owners.some(page => flags[`page:${page.id}`] !== false);
+    return [key, allowed && pageAllowed];
+  }));
+  return isDeepStrictEqual(actor.permissions, adopted);
+}
 
 async function readSavedStaff(request, scope) {
   const result = await request.input("id", scope.id).input("branch", scope.branchId).query(`
@@ -118,4 +138,4 @@ function createOfflineStaffRefresh({ cloud, manager, coordinator, registry, read
   };
 }
 
-module.exports = { createOfflineStaffRefresh };
+module.exports = { createOfflineStaffRefresh, matchesHostedStaffSession };

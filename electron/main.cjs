@@ -56,6 +56,7 @@ const { discoverLocalSqlServers } = require("./db/local-server-discovery.cjs");
 const ipcPrivilege = require("./ipc-privilege.cjs");
 const adminSession = require("./admin-session.cjs");
 let sessionAdoptionRevision = 0;
+let offlineStaffLoginWitness = null;
 const { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin } = require("./synced-staff-login.cjs");
 
 const databaseManager = new ConnectionManager();
@@ -159,7 +160,8 @@ const refreshPinApprovalActivity = require("./sync/approval-activity-wake.cjs").
   publish: publishBusinessChange, runApply: work => closeWriteBarrier.run(work),
   capture: capturePinApprovalActivity,
 });
-const refreshOfflineStaff = require("./sync/offline-staff-refresh.cjs").createOfflineStaffRefresh({
+const { createOfflineStaffRefresh, matchesHostedStaffSession } = require("./sync/offline-staff-refresh.cjs");
+const refreshOfflineStaff = createOfflineStaffRefresh({
   cloud: syncCloud, manager: databaseManager, coordinator: syncCoordinator, registry: syncRegistry,
   reader: changeReader, runApply: work => closeWriteBarrier.run(() =>
     !jobManager.running && !localDataPreparePromise ? work() : false),
@@ -394,38 +396,37 @@ function localBranchId(){
 }
 function rememberVerifiedBranch(){ /* Account scope never assigns a physical terminal. */ }
 function authorizedLocalBranch(){return activationBoundary.authorizedBranch(terminalStore.read(),adminSession.branchId());}
-function captureOfflineStaffReplica(cashier, backendUrl, proof) {
+function captureOfflineStaffReplica(cashier, backendUrl, proof, level) {
   const ready = () => {
     const state = databaseService.snapshot();
     return process.platform === "win32" && !safeMode && !quitting && !closeWriteBarrier.sealed &&
       state.enabled && state.configured && state.connected && state.tradingReady;
   };
   if (!ready()) return null;
-  const source = syncCloud.requestContext(true);
+  const source = syncCloud.requestContext(false);
   const registration = activationBoundary.binding(source.terminal);
-  const actor = adminSession.identity();
-  const id = recordId(cashier.id);
-  const { sessionToken, cashierToken } = source.personProof;
   const branchId = registration?.branchId;
+  const id = recordId(cashier.id);
+  const expected = { ...proof, id, username: cashier.username, level, branchId, permissions: cashier.permissions };
+  // Renderer re-adoption can reverify the same hosted session while startup
+  // settles. Require the same two proofs and the exact current POS authority.
+  const sameSession = () => matchesHostedStaffSession(adminSession.identity(), syncCloud.requestContext(true).personProof, expected);
   if (registration?.mode !== "operations" || registration.platform !== "pc" || !branchId ||
       !/^[a-f0-9]{64}$/i.test(source.terminal.deviceBindingProof ?? "") ||
       branchId !== recordId(cashier.store_id) || branchId !== recordId(source.project?.branchId) ||
-      branchId !== recordId(actor?.branchId) || actor?.source !== "pos" || !actor.authorId || actor.authorId !== id ||
-      actor.canonicalSubject !== cashier.username || !source.pool || !source.profile || source.base !== backendUrl ||
+      !id || !sameSession() || !source.pool || !source.profile || source.base !== backendUrl ||
       !/^https:\/\//i.test(source.base) || !/^https:\/\//i.test(source.project?.projectOrigin ?? "") ||
-      typeof sessionToken !== "string" || !sessionToken || sessionToken !== proof.sessionToken ||
-      typeof cashierToken !== "string" || !cashierToken || cashierToken !== proof.cashierToken) return null;
-  const epoch = adminSession.epoch();
-  const adoption = sessionAdoptionRevision;
+      typeof cashier.username !== "string" || !cashier.username) return null;
   const expiresAt = Date.now() + 45_000;
-  return Object.freeze({ pool: source.pool, branchId, id, username: actor.canonicalSubject,
+  offlineStaffLoginWitness = expected;
+  return Object.freeze({ pool: source.pool, branchId, id, username: cashier.username,
     role: cashier.role, roleSlug: cashier.role_slug, permissions: cashier.permissions,
     assertCurrent() {
-      if (!ready() || Date.now() >= expiresAt || !adminSession.hasPosAuthority() ||
-          adminSession.epoch() !== epoch || sessionAdoptionRevision !== adoption)
+      if (!ready() || Date.now() >= expiresAt || offlineStaffLoginWitness !== expected || !sameSession())
         throw Object.assign(new Error("The hosted sign-in for offline staff refresh changed."), { code: "EOFFLINE_STAFF_CONTEXT" });
-      syncCloud.assertRequestContext(source, true);
+      syncCloud.assertRequestContext(source, false);
     },
+    release() { if (offlineStaffLoginWitness === expected) offlineStaffLoginWitness = null; },
   });
 }
 function capturePinApprovalActivity() {
@@ -2284,7 +2285,10 @@ function registerIpc() {
   });
   recoveryMetadataGate.install(ipcMain);
   ipcMain.handle("admin:status", () => adminSession.status());
-  ipcMain.handle("admin:lock", () => { sessionAdoptionRevision++; adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status(); });
+  ipcMain.handle("admin:lock", () => {
+    sessionAdoptionRevision++; offlineStaffLoginWitness = null;
+    adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status();
+  });
   ipcMain.handle("admin:recovery-unlock", async (_event, username, pin) => guard.guarded(async () => {
     const user = guard.text(username, { name: "username", max: 160 });
     const secret = guard.text(pin, { name: "password or PIN", max: 128 });
@@ -2422,6 +2426,9 @@ function registerIpc() {
     const response=await fetch(`${authorizationUrl}/api/v1/pos/ipc-adopt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(proof),signal:AbortSignal.timeout(8_000)});
     const result=await response.json().catch(()=>null);
     if(!response.ok||result?.ok!==true){
+      if ((response.status === 401 || response.status === 403) && offlineStaffLoginWitness && current() &&
+          proof.sessionToken === offlineStaffLoginWitness.sessionToken && proof.cashierToken === offlineStaffLoginWitness.cashierToken)
+        offlineStaffLoginWitness = null;
       if(response.status===401||response.status===403)return failed("EAUTH_DENIED",response.status);
       if(response.status===426||result?.code==="EBACKEND_UPGRADE_REQUIRED")return failed("EBACKEND_UPGRADE_REQUIRED",426);
       if(result?.code==="EAUTH_DENIED"&&response.status<500)return failed("EAUTH_DENIED",403);
@@ -2452,6 +2459,8 @@ function registerIpc() {
     adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId);
     adminSession.bindVerifiedAuthor(result.authorId,result.subject,result.settingsPersonId);
     syncCloud.setAuthorizationProof(proof);
+    if (offlineStaffLoginWitness && !matchesHostedStaffSession(adminSession.identity(), proof, offlineStaffLoginWitness))
+      offlineStaffLoginWitness = null;
     enrollCurrentShiftAuthor(proof);
     rememberVerifiedBranch(result.branchId);
     if (result.settingsPersonId && groupedSettingsPilot?.mode === "run") scheduleAutomaticSync(250);
@@ -2475,6 +2484,7 @@ function registerIpc() {
     });
     const result = await response.json().catch(() => ({ ok: false, error: "Authorization failed." }));
     if (!response.ok || !result.ok) return { ok: false, error: result.error ?? "Authorization failed." };
+    offlineStaffLoginWitness = null;
     adminSession.grant(result.level, result.subject, result.permissions, "manual", result.branchId);
     return { ok: true, level: result.level };
   }));
@@ -2892,6 +2902,7 @@ function registerIpc() {
         const staff = result.staff;
         const role = staff.role || staff.role_slug;
         const level = role === "admin" ? "admin" : ["manager", "supervisor"].includes(role) ? "supervisor" : "staff";
+        offlineStaffLoginWitness = null;
         adminSession.grant(level, staff.username, staff.permissions ?? {}, "pos", staff.store_id ?? localBranchId());
         // verifySyncedStaffPin selects a.user_id, independent of the login alias.
         adminSession.bindVerifiedAuthor(staff.id,staff.username);
@@ -2968,6 +2979,7 @@ function registerIpc() {
   }));
   ipcMain.handle("auth:cashier-login", (_e, value) => guard.guarded(async () => {
     const current=captureSessionAdoption();
+    offlineStaffLoginWitness = null;
     const input = guard.options(value, { name: "cashier sign in", max: 2 });
     const username = guard.text(input.username, { name: "username", max: 120 });
     const pin = guard.text(input.pin, { name: "PIN or passcode", max: 32 });
@@ -3023,11 +3035,14 @@ function registerIpc() {
       // The ordinary feed may be waiting for an unrelated pending transaction.
       // Reuse its scoped app_users projection for this freshly verified staff row.
       if (!response.redirected && response.url === `${authorizationUrl}/api/public/cashier-login`) {
-        void Promise.resolve().then(async () => {
-          const scope = captureOfflineStaffReplica(cashier, authorizationUrl, proof);
-          if (scope && localDataPreparePromise) await localDataPreparePromise.catch(() => undefined);
-          return refreshOfflineStaff(scope, pin);
-        })
+        void (async () => {
+          const scope = captureOfflineStaffReplica(cashier, authorizationUrl, proof, level);
+          if (!scope) return false;
+          try {
+            if (localDataPreparePromise) await localDataPreparePromise.catch(() => undefined);
+            return await refreshOfflineStaff(scope, pin);
+          } finally { scope.release(); }
+        })()
           .then(refreshed => {
             if (refreshed) diagnostics.logConnection("staff.offline-replica-refresh.succeeded",
               { category: "synchronization", table: "app_users", stage: "refresh" });
