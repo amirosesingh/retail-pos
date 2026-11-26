@@ -316,6 +316,20 @@
   an unexplained error. Revoked permissions hold work for review, not silent loss.
   Keep one coordinated recovery attempt per retry cycle and one persistent
   status for an unchanged review hold. Preserve raw diagnostics and manual retry.
+- Reuse the exact acceptance receipt for a matching operation on reconnect or
+  after a lost reply. Retain unmatched work with its original evidence. A cached
+  review hold consumes no upload turn. Allow unrelated eligible stock-history
+  work to proceed while that hold backs off without advancing its checkpoint.
+- Keep **Needs verification** in the existing Database connection sync view.
+  Verify a selected case read-only in Main against the current POS operator,
+  registered till, branch and local database. Bound the read and recheck that
+  context after waiting for SQL or authority. Show original evidence, queued
+  work and the exact saved receipt separately. A metadata receipt never proves
+  acceptance of a complete sale. Confirm a stock receipt only against the
+  original payload and acknowledged journal. Attach a fresh sale rejection to
+  its exact pending operation and scope so it opens the right verification
+  case. Keep ordinary retry and authorized corrections in their existing
+  application workflows.
 
 ## Fleet recovery, checkout and presentation isolation
 
@@ -396,6 +410,11 @@
   report incomplete coverage rather than inventing historical stock or valuation
   from today's quantities/prices. Resolve effective-time versus recorded-time
   semantics before implementing historical reconstruction.
+- Bind every historical export page, including a single-page export, to the
+  report's location, displayed cutoff, timezone, period and source revision.
+  Cancel pending exports when the report closes or its session or scope
+  changes. Do not release files from an earlier authorized view after that
+  change.
 
 ### Stock Report integrity and the first Beta stocktake
 
@@ -410,12 +429,27 @@
   Keep alternate barcodes as search aliases. Treat current data separately from
   dated evidence. Show partial coverage and use only dated evidence for
   historical cost and selling prices. Keep unsupported valuations unavailable.
+- Verify movement totals from the first selected business-day boundary through
+  the final inclusive cutoff, up to 31 local calendar days. Pin a supported
+  opening and complete movement coverage to the same source revision. Keep
+  recorded activity available independently, with page totals labeled by scope.
+- Management Electron reports must read its verified local SQL replica through
+  dedicated Main admission. Recheck the active operator, terminal, physical
+  database and authorized location. A previously verified session can read its
+  ready replica during a disconnect. Keep cold offline sign-in and unverified
+  locations gated under existing authority rules. Download proven history via
+  the existing Management coordinator and retain the scoped source proof.
 - Use reporting-only baselines and existing authorized application workflows.
   Bind any baseline to a consistent inventory cutoff and correlate committed
   effects with existing durable identities and original effective timestamps.
   A reconciled or nonphysical snapshot does not imply a physical count. Keep
   source reconciliation read-only and route any inventory correction through
   the existing authorized stock adjustment workflow.
+- Show Stock As of Date in one product, barcode and quantity table. Read
+  authorized, revision-pinned pages. Use supported activity balances internally
+  when coverage is incomplete and leave unknown quantities unavailable.
+  Record a rollout snapshot once at its actual observation time. Certify
+  subsequent history only when opening and writer coverage evidence supports it.
 
 - Use the owner-approved brief pause only for the first stocktake on the isolated
   Retail POS Beta test branch. Verify the project, branch, terminal registrations

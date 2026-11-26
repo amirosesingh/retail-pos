@@ -129,4 +129,44 @@ describe("verified Stock Report cutover transport", () => {
     serviceRest.mockResolvedValueOnce(Response.json({ ...result, terminalId: challengeId }));
     expect((await request()).status).toBe(503);
   });
+
+  it("allows a rollout opening only for the enabled Beta pilot and its complete pair of physical till proofs", async () => {
+    const branchId = "codex-stock401-123abc";
+    const peerId = "44444444-4444-4444-8444-444444444444";
+    const pilot = { backendOrigin: "https://relay.fixture", projectOrigin: "https://beta.fixture", branchId,
+      previousBranchId: "codex-stock401-456def", marker: branchId.toUpperCase(), tills: [
+        { terminalId, databaseId, authorId: stocktakeId },
+        { terminalId: peerId, databaseId: stocktakeId, authorId: databaseId },
+      ] };
+    const cutoff = "2026-11-21T00:01:00.0000000Z";
+    const first = { terminalId, databaseId, challengeId: peerId, fenceGeneration: stocktakeId,
+      localFencedAt: cutoff, localExpiresAt: "2026-11-21T00:05:00.0000000Z" };
+    const peer = { ...first, terminalId: peerId, databaseId: stocktakeId, challengeId: terminalId };
+    const input = { ...scope, branchId, action: "activate-rollout" as const, proofs: [first, peer] };
+    const request = (payload = input, url = pilot.backendOrigin) =>
+      stocktakeCutover(payload, { ...terminal, branchId }, "verified-admin", signal, `${url}/api/v1/pos/sync`);
+    expect(stocktakeCutoverSchema.safeParse({ ...input, cutoff }).success).toBe(false);
+    runtimeEnvValue.mockReturnValue(JSON.stringify(pilot));
+    expect((await request()).status).toBe(403);
+    runtimeEnvValue.mockReturnValue(JSON.stringify({ ...pilot, allowRolloutActivation: true }));
+    expect((await request(input, "https://other.fixture")).status).toBe(403);
+    expect((await request({ ...input, proofs: [first] })).status).toBe(403);
+    expect((await request({ ...input, proofs: [first, first] })).status).toBe(403);
+    expect((await request({ ...input, proofs: [first, { ...peer, databaseId }] })).status).toBe(403);
+    release.value = "stable";
+    expect((await request()).status).toBe(403);
+    expect(serviceRest).not.toHaveBeenCalled();
+    release.value = "beta";
+    const result = { branchId, baselineId: stocktakeId, cutoff, openingKind: "system_snapshot",
+      verificationState: "verified", productCount: 2 };
+    serviceRest.mockResolvedValueOnce(Response.json(result));
+    expect(await (await request()).json()).toMatchObject({ ok: true, result });
+    const [path, init] = serviceRest.mock.calls[0];
+    expect(path).toBe("rpc/pos_stock_history_activate_rollout");
+    expect(init.redirect).toBe("error");
+    expect(JSON.parse(init.body)).toEqual({ p_subject: "verified-admin", p_terminal: terminalId, p_project: pilot.projectOrigin,
+      p_branch: branchId, p_id: stocktakeId, p_proofs: input.proofs });
+    serviceRest.mockResolvedValueOnce(Response.json({ ...result, cutoff: "2026-11-21" }));
+    expect((await request()).status).toBe(503);
+  });
 });

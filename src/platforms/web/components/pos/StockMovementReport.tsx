@@ -18,7 +18,8 @@ import { loadStockHistoryMovements } from "@/lib/stock-history-movements-client"
 import { STOCK_MOVEMENT_PAGE_SIZE, type StockHistoryMovementCursor, type StockHistoryMovementPage } from "@/lib/stock-history-movements";
 import { stockHistoryExplanation, type StockHistoryPage, type StockHistoryRow } from "@/lib/stock-history-report";
 import { stockDateTimeInput } from "@/lib/stock-history-selection";
-import { movementActivityWithinRange, stockMovementRange, verifiedMovementBreakdown, verifiedMovementSummary, verifiedMovementTimeline,
+import { usesLocalStockHistory } from "@/lib/stock-report-desktop-reader";
+import { STOCK_MOVEMENT_MAX_CALENDAR_DAYS, movementActivityWithinRange, stockMovementRange, verifiedMovementBreakdown, verifiedMovementSummary, verifiedMovementTimeline,
   type StockMovementDateRange } from "@/lib/stock-movement-report";
 import { posTimeZone } from "@/lib/time-zone";
 import { StatCard } from "./report-kit";
@@ -38,7 +39,7 @@ const kindLabel = (kind: string) => kinds[kind] ?? kind.replace(/[_-]/g, " ");
 const showUnits = (value: string | number | bigint | null | undefined) => value == null ? "—" : number.format(BigInt(value));
 const change = (value: string | number | null) => value === null ? "—" : `${BigInt(value) > 0n ? "+" : ""}${showUnits(value)}`;
 const message = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
-const unavailableOnDevice = () => hasFeature("localDb") && (effectiveDatabaseMode() !== "local" || isManagementDevice());
+const unavailableOnDevice = () => hasFeature("localDb") && !usesLocalStockHistory();
 const readLocalFirstActivity: typeof loadStockActivityPage = request => unavailableOnDevice()
   ? Promise.reject(new Error("This terminal’s local stock activity is unavailable.")) : loadStockActivityPage(request);
 
@@ -57,7 +58,7 @@ export function StockMovementReport({ branchId: branch, branchName, refreshToken
   const bound = canonicalBranchId(terminalStoreId || user?.storeId);
   const allowed = can("can_view_inventory") && Boolean(branchId) && (!bound || bound === branchId);
   const management = isManagementDevice();
-  const blocked = hasFeature("localDb") && (mode !== "local" || management);
+  const blocked = unavailableOnDevice();
   const identity = JSON.stringify([branchId, timeZone, mode, management, allowed, blocked, sessionEpoch(),
     authUserId, appUser?.id, terminalUser?.cashierId, user?.staffId]);
   const current = useRef(identity); current.current = identity;
@@ -146,9 +147,7 @@ export function StockMovementReport({ branchId: branch, branchName, refreshToken
   }, [branchId, detail, detailKey, identity, timeZone, verified]);
 
   if (!allowed) return <p role="status" className="text-sm text-muted-foreground">Inventory permission is required for this location.</p>;
-  if (blocked) return <p role="status" className="rounded-lg border p-4 text-sm text-muted-foreground">{management
-    ? "Movement history is unavailable on this Management terminal until a supported local history replica is ready."
-    : "Connect the saved local SQL Server database to read Stock Movement on this terminal."}</p>;
+  if (blocked) return <p role="status" className="rounded-lg border p-4 text-sm text-muted-foreground">Connect the saved local SQL Server database to read Stock Movement on this terminal.</p>;
 
   function generate() {
     const selectedId = product.identity === identity ? product.id : allProducts;
@@ -183,18 +182,20 @@ export function StockMovementReport({ branchId: branch, branchName, refreshToken
     {selection?.error && <p role="alert" className="text-sm text-destructive">{selection.error}</p>}
     {range && selected && <>
       <p className="text-sm text-muted-foreground" data-stock-report-locations={branchName}
-        data-stock-report-filters={`${selected.dates.from} through ${selected.dates.to} · ${timeZone}${selected.productId ? ` · ${productNames.get(selected.productId) ?? selected.productId}` : ""}`}>
+        data-stock-report-filters={`${selected.dates.from} through ${selected.dates.to} · ${timeZone} · Inclusive cutoff ${range.cutoff}${selected.productId ? ` · ${productNames.get(selected.productId) ?? selected.productId}` : ""}`}>
         {branchName} · {selected.dates.from} through {selected.dates.to} · {timeZone}</p>
       {totals ? <div className="grid gap-3 sm:grid-cols-2" data-stock-report-print-summary>
         <StatCard label="Total stock in" value={showUnits(totals.incoming)} />
         <StatCard label="Total stock out" value={showUnits(totals.outgoing)} />
-      </div> : <p className="sr-only" data-stock-report-print-summary>{verified ? "Verified product balances" : "Recorded activity, incomplete coverage"}</p>}
+      </div> : verified && !selected.productId && (cursor || verified.next)
+        ? <p className="text-sm text-muted-foreground" data-stock-report-print-summary>Location totals require a complete product set. Verified product totals are available on each page.</p>
+        : <p className="sr-only" data-stock-report-print-summary>{verified ? "Verified product balances" : "Recorded activity, incomplete coverage"}</p>}
       {range.aggregateRequest ? <section className="space-y-3" aria-label="Verified movement balances">
         <h3 className="font-semibold">Verified movement balances</h3>
         {!result && <p role="status" className="text-sm text-muted-foreground">Loading verified movement balances…</p>}
         {result?.error && <p role="alert" className="text-sm text-destructive">{result.error}</p>}
         {result?.data && !verified && <p role="status" className="rounded-lg border p-4 text-sm text-muted-foreground">
-          {result.data.reasons.map(stockHistoryExplanation).join(" ") || "Verified balances are unavailable for this date."}</p>}
+          {result.data.reasons.map(stockHistoryExplanation).join(" ") || "Verified balances are unavailable for this date range."}</p>}
         {verified && <>
           <div className="max-h-[28rem] overflow-auto rounded-lg border"><Table aria-label="Verified product movement balances"
             data-stock-report-print-table={reportRows.length ? true : undefined}>
@@ -216,7 +217,9 @@ export function StockMovementReport({ branchId: branch, branchName, refreshToken
             {verified.next && verified.sourceRevision && <Button type="button" variant="outline" size="sm" onClick={() => setPosition({ key: rangeKey, after: verified.next!, revision: verified.sourceRevision! })}>Next balances page</Button>}
           </div>}
         </>}
-      </section> : <p role="status" className="rounded-lg border p-4 text-sm text-muted-foreground">Verified opening, closing, and totals are available for a single business date. This date range shows the activity on record.</p>}
+      </section> : <p role="status" className="rounded-lg border p-4 text-sm text-muted-foreground">
+        Choose up to {STOCK_MOVEMENT_MAX_CALENDAR_DAYS} calendar days to verify balances and totals. You can browse activity recorded for the selected dates below.
+      </p>}
       {detail && <section className="space-y-3 rounded-lg border p-4" aria-labelledby={movementHeading}>
         <div className="flex flex-wrap items-center justify-between gap-2"><h3 id={movementHeading} className="font-semibold">Movements for {detail.product.name}</h3>
           <Button type="button" variant="ghost" size="sm" onClick={() => setMovement(null)}>Close details</Button></div>
@@ -240,7 +243,7 @@ export function StockMovementReport({ branchId: branch, branchName, refreshToken
             <TableHeader className="sticky top-0 z-10 bg-card"><TableRow><TableHead>Effective time</TableHead><TableHead>Recorded time</TableHead><TableHead>Type</TableHead><TableHead className="text-right">Change</TableHead></TableRow></TableHeader>
             <TableBody>{detailResult.data.rows.map(row => <TableRow key={row.id}><TableCell><StockActivityTime value={row.effectiveAt} format={format} /></TableCell>
               <TableCell><StockActivityTime value={row.recordedAt} format={format} /></TableCell><TableCell>{kindLabel(row.kind)}</TableCell><TableCell className="numeric text-right">{change(row.delta)}</TableCell></TableRow>)}</TableBody>
-          </Table></div> : <p className="text-sm text-muted-foreground">No verified movements for this product and date.</p>}
+          </Table></div> : <p className="text-sm text-muted-foreground">No verified movements for this product in the date range.</p>}
           <div className="flex flex-wrap gap-2">
             {detail.number > 1 && <Button type="button" variant="outline" size="sm" onClick={() => setMovement({ ...detail, after: null, number: 1 })}>First movements page</Button>}
             {detailResult.data.next && <Button type="button" variant="outline" size="sm" onClick={() => setMovement({ ...detail, after: detailResult.data?.next ?? null, number: detail.number + 1 })}>Next movements page</Button>}

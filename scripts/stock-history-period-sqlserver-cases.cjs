@@ -68,4 +68,19 @@ module.exports=async({pool,sql,pass})=>{
  await assert.rejects(store.readMovements({...details,after:{effectiveAt:start,id:baseline}}),{code:'ESTOCK_HISTORY_MOVEMENT_CURSOR_INVALID'});
  await assert.rejects(store.readMovements({...details,sourceRevision:page.sourceRevision}),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
  pass('exact report-scoped native movement pages keep the inclusive last tick, UUID order, stable revision and authorized product');
+
+ const rangeCutoff='2026-11-07T23:59:59.9999999Z',rangeEnd='2026-11-08T00:00:00.0000000Z';
+ await movement(7n,rangeCutoff);await movement(9n,rangeEnd);
+ await pool.request().input('branch',branch).input('ticks',String(c.instant(rangeEnd))).query(
+  'UPDATE dbo.stock_history_heads SET coverage_through_ticks=CONVERT(decimal(20,0),@ticks) WHERE store_id=@branch;');
+ const range={...request,cutoff:rangeCutoff},rangePage=await store.readPage(range),rangeRow=rangePage.rows.find(row=>row.productId===product);
+ assert.equal(rangePage.status,'complete');
+ assert.deepEqual(rangePage.period,{start,endExclusive:rangeEnd,through:rangeCutoff,fullDay:true});
+ assert.equal(rangeRow.openingQuantity,String(initial+3n));
+ assert.equal(rangeRow.inQuantity,'15');assert.equal(rangeRow.outQuantity,'5');
+ assert.equal(rangeRow.quantity,String(initial+13n));
+ const rangeDetails=await store.readMovements({...range,branchId:branch,productId:product,sourceRevision:rangePage.sourceRevision});
+ assert.equal(rangeDetails.rows.at(-1).effectiveAt,rangeCutoff);
+ await assert.rejects(store.readPage({...request,sourceRevision:rangePage.sourceRevision}),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
+ pass('native multiday period reconciles opening and stock movements through the last tick, keeping the next day out');
 };

@@ -1,9 +1,11 @@
 import { canonicalStockInstant } from "./stock-as-of";
 import { stockDateTimeInput, stockEndOfDay } from "./stock-history-selection";
+import { STOCK_MOVEMENT_MAX_CALENDAR_DAYS } from "../../electron/shared/stock-report-day.mjs";
 import type { StockActivityPage } from "./stock-activity-query";
 import type { StockHistoryMovementPage } from "./stock-history-movements";
 import type { StockHistoryPage, StockHistoryRequest, StockHistoryRow } from "./stock-history-report";
 
+export { STOCK_MOVEMENT_MAX_CALENDAR_DAYS };
 export type StockMovementDateRange = { from: string; to: string };
 export type StockMovementRange = {
   opening: string;
@@ -17,10 +19,8 @@ export function stockMovementRange(dates: StockMovementDateRange, branchId: stri
   if (dates.to > today) throw new Error("Choose an end date that has already started.");
   const { start: opening } = stockEndOfDay(dates.from, timeZone);
   const cutoff = dates.to === today ? canonicalStockInstant(now.toISOString()) : stockEndOfDay(dates.to, timeZone).cutoff;
-  // The verified period reader accepts one business day. Activity can expose
-  // a wider range, but its records do not certify an opening or movement totals.
-  const aggregateRequest = dates.from === dates.to ? { branchId, timeZone, cutoff, periodStart: opening } : null;
-  return { opening, cutoff, aggregateRequest };
+  const withinLimit = Date.parse(dates.to) - Date.parse(dates.from) < STOCK_MOVEMENT_MAX_CALENDAR_DAYS * 86_400_000;
+  return { opening, cutoff, aggregateRequest: withinLimit ? { branchId, timeZone, cutoff, periodStart: opening } : null };
 }
 
 export function movementActivityWithinRange(page: StockActivityPage | null, range: StockMovementRange | null) {
@@ -32,6 +32,7 @@ export function movementActivityWithinRange(page: StockActivityPage | null, rang
 }
 
 export function verifiedMovementSummary(page: StockHistoryPage | null, startedAfter: string | null) {
+  // A keyset page is only a product subset when either cursor is present.
   if (page?.status !== "complete" || !page.period || page.next || startedAfter) return null;
   let incoming = 0n;
   let outgoing = 0n;

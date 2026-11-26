@@ -12,11 +12,12 @@ import { useAuth } from "@/lib/pos-auth";
 import { usePos } from "@/lib/pos-store";
 import { sessionEpoch } from "@/lib/session-epoch";
 import { canonicalStockInstant } from "@/lib/stock-as-of";
-import { loadStockHistoryPage } from "@/lib/stock-history-client";
-import { stockHistoryExplanation, type StockHistoryPage, type StockHistoryRequest } from "@/lib/stock-history-report";
+import { loadStockHistoryPage, readStockRolloutReadiness, recordStockRolloutOpening } from "@/lib/stock-history-client";
+import { stockHistoryExplanation, type StockHistoryPage, type StockHistoryRequest, type StockRolloutOpening, type StockRolloutReadiness } from "@/lib/stock-history-report";
 import { stockDateTimeInput, stockEndOfDay } from "@/lib/stock-history-selection";
 import { posTimeZone } from "@/lib/time-zone";
-import { isWindowsShell } from "@/platform-config/features";
+import { currentPlatform, isWindowsShell } from "@/platform-config/features";
+import { RELEASE_CHANNEL } from "@/lib/release-channel";
 
 type Inspection = { request: StockHistoryRequest; running: boolean; report?: StockHistoryPage; error?: string };
 
@@ -53,22 +54,51 @@ function CoverageReadout({ report }: { report: StockHistoryPage }) {
   </div>;
 }
 
-function VerificationForm({ branchId, branchName, timeZone }: {
-  branchId: string; branchName: string; timeZone: string;
+function VerificationForm({ branchId, branchName, timeZone, mayRecordOpening }: {
+  branchId: string; branchName: string; timeZone: string; mayRecordOpening: boolean;
 }) {
   const inputId = useId();
   const today = stockDateTimeInput(new Date(), timeZone).slice(0, 10);
   const [date, setDate] = useState(today);
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [dateError, setDateError] = useState("");
+  const [recording, setRecording] = useState(false);
+  const [opening, setOpening] = useState<StockRolloutOpening | null>(null);
+  const [openingError, setOpeningError] = useState("");
+  const [rolloutReadiness, setRolloutReadiness] = useState<StockRolloutReadiness | null>(null);
+  const [rolloutReadinessError, setRolloutReadinessError] = useState("");
   const sequence = useRef(0);
   useEffect(() => () => { sequence.current++; }, []);
+  const recordSequence = useRef(0);
+  useEffect(() => () => { recordSequence.current++; }, []);
+
+  async function recordOpening() {
+    if (!mayRecordOpening || recording) return;
+    const attempt = ++recordSequence.current, epoch = sessionEpoch();
+    const current = () => recordSequence.current === attempt && sessionEpoch() === epoch;
+    setRecording(true); setOpening(null); setOpeningError("");
+    try {
+      const result = await recordStockRolloutOpening(branchId);
+      if (current()) setOpening(result);
+    } catch (failure) {
+      if (current()) setOpeningError(failure instanceof Error ? failure.message : "The rollout opening could not be recorded.");
+    } finally {
+      if (current()) setRecording(false);
+    }
+  }
 
   async function read(request: StockHistoryRequest) {
     if (!desktopHistoryAvailable()) return;
     const attempt = ++sequence.current, epoch = sessionEpoch();
     const stillCurrent = () => sequence.current === attempt && sessionEpoch() === epoch && desktopHistoryAvailable();
     setInspection({ request, running: true });
+    setRolloutReadiness(null);
+    setRolloutReadinessError("");
+    if (mayRecordOpening) void readStockRolloutReadiness(branchId).then(result => {
+      if (stillCurrent()) setRolloutReadiness(result);
+    }, failure => {
+      if (stillCurrent()) setRolloutReadinessError(failure instanceof Error ? failure.message : "The rollout writer evidence could not be checked.");
+    });
     try {
       const report = await loadStockHistoryPage(request);
       if (!stillCurrent()) return;
@@ -99,7 +129,7 @@ function VerificationForm({ branchId, branchName, timeZone }: {
       <div className="space-y-1.5">
         <Label htmlFor={inputId}>Verification date · {timeZone}</Label>
         <Input id={inputId} type="date" value={date} max={today} onChange={event => {
-          sequence.current++; setInspection(null); setDateError(""); setDate(event.target.value);
+          sequence.current++; setInspection(null); setRolloutReadiness(null); setRolloutReadinessError(""); setDateError(""); setDate(event.target.value);
         }} />
       </div>
       <Button type="submit" disabled={!date || inspection?.running}><ClipboardCheck aria-hidden="true" /> Run Verification</Button>
@@ -110,11 +140,30 @@ function VerificationForm({ branchId, branchName, timeZone }: {
     {inspection?.running && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Checking coverage…</p>}
     {inspection?.error && <p role="alert" className="text-sm text-destructive">{inspection.error}</p>}
     {inspection?.report && <CoverageReadout report={inspection.report} />}
+    {mayRecordOpening && rolloutReadinessError && <p role="status" className="text-sm text-muted-foreground">{rolloutReadinessError}</p>}
+    {mayRecordOpening && rolloutReadiness && <div className="space-y-1 text-sm text-muted-foreground" role="status">
+      {rolloutReadiness.writers > 0 && <p>{rolloutReadiness.confirmed} of {rolloutReadiness.writers} enrolled tills have a current accepted upload check.</p>}
+      {rolloutReadiness.reasons.length ? rolloutReadiness.reasons.map(reason => <p key={reason}>{stockHistoryExplanation(reason)}</p>)
+        : <p>The current writer checks passed. Activation still needs an exact opening cutoff.</p>}
+    </div>}
+    {mayRecordOpening && <div className="space-y-2 border-t pt-4">
+      <p className="text-sm text-muted-foreground">Record the location’s database quantities once at rollout. Movement coverage and till uploads are verified separately.</p>
+      <Button type="button" variant="outline" disabled={recording || opening?.status === "recorded" || opening?.status === "already_verified"}
+        onClick={() => void recordOpening()}>{recording ? "Recording opening…" : "Record rollout opening"}</Button>
+      {openingError && <p role="alert" className="text-sm text-destructive">{openingError}</p>}
+      {opening && <p role="status" className="text-sm text-muted-foreground">
+        {opening.status === "waiting" ? opening.reasons.map(stockHistoryExplanation).join(" ")
+          : opening.status === "already_verified" ? "This location already has a verified opening."
+            : <>Recorded {opening.productCount.toLocaleString()} products at <time dateTime={opening.cutoff}>
+              {new Intl.DateTimeFormat(undefined, { timeZone, dateStyle: "medium", timeStyle: "long" }).format(new Date(opening.cutoff))}
+            </time>. Writer coverage is still unconfirmed.</>}
+      </p>}
+    </div>}
   </div>;
 }
 
 export function StockHistoryVerification() {
-  const { can, authUserId, appUser, terminalUser, user, terminalStoreId } = useAuth();
+  const { can, isAdmin, authUserId, appUser, terminalUser, user, terminalStoreId } = useAuth();
   const { currentStore } = usePos();
   const mode = useSyncExternalStore(subscribeDatabaseMode, effectiveDatabaseMode, preferredDatabaseMode);
   const timeZone = posTimeZone() || "Asia/Brunei";
@@ -123,6 +172,7 @@ export function StockHistoryVerification() {
   const bound = canonicalBranchId(terminalStoreId || user?.storeId);
   if (!can("can_manage_sync_backup") || !can("can_view_inventory")) return null;
   const scopeReady = Boolean(branchId && (!bound || sameBranchId(bound, branchId)));
+  const mayRecordOpening = RELEASE_CHANNEL === "beta" && currentPlatform() === "web" && isAdmin && Boolean(authUserId);
   const scopeKey = JSON.stringify([branchId, timeZone, mode, sessionEpoch(), authUserId, appUser?.id, terminalUser?.cashierId, user?.staffId]);
   return <section className="mt-4 space-y-4 rounded-2xl border border-border/70 bg-card p-4 sm:p-5" aria-labelledby={heading}>
     <header className="flex flex-wrap items-start justify-between gap-3">
@@ -132,6 +182,6 @@ export function StockHistoryVerification() {
     </header>
     {!scopeReady ? <p role="status" className="text-sm text-muted-foreground">Choose an authorized location to check its stock history.</p>
       : !desktopHistoryAvailable() ? <p role="status" className="text-sm text-muted-foreground">Verification on Electron requires the authorized local SQL Server stock-history reader.</p>
-        : <VerificationForm key={scopeKey} branchId={branchId} branchName={currentStore.name} timeZone={timeZone} />}
+        : <VerificationForm key={scopeKey} branchId={branchId} branchName={currentStore.name} timeZone={timeZone} mayRecordOpening={mayRecordOpening} />}
   </section>;
 }

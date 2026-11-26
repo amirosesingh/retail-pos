@@ -19,6 +19,7 @@ export const stocktakeCutoverSchema = z.discriminatedUnion("action", [
   z.object({ ...identity, action: z.literal("prepare") }).strict(),
   z.object({ ...identity, action: z.literal("lease"), databaseId: uuid, purpose: z.enum(["arm", "confirm", "release"]) }).strict(),
   z.object({ ...identity, action: z.literal("arm"), proofs }).strict(),
+  z.object({ ...identity, action: z.literal("activate-rollout"), proofs }).strict(),
   z.object({ ...identity, action: z.literal("seal"), rosterHash: digest, cutoff: instant, counts }).strict(),
   z.object({ ...identity, action: z.literal("review") }).strict(),
   z.object({ ...identity, action: z.literal("publish"), evidenceHash: digest, proofs }).strict(),
@@ -35,23 +36,21 @@ const enrollmentPilot = z.object({
   backendOrigin: exactOrigin, projectOrigin: exactOrigin, previousBranchId: syntheticBranch, branchId: syntheticBranch,
   marker: z.string().regex(/^CODEX-STOCK401-[A-F0-9]{6,64}$/),
   allowFinancialApproval: z.boolean().optional(),
+  allowRolloutActivation: z.boolean().optional(),
   tills: z.tuple([z.object({ terminalId: uuid, databaseId: uuid, authorId: uuid }).strict(),
     z.object({ terminalId: uuid, databaseId: uuid, authorId: uuid }).strict()]),
 }).strict().refine(pilot => pilot.previousBranchId !== pilot.branchId && pilot.marker === pilot.branchId.toUpperCase() &&
   pilot.tills[0].terminalId !== pilot.tills[1].terminalId && pilot.tills[0].databaseId !== pilot.tills[1].databaseId &&
   pilot.tills[0].authorId !== pilot.tills[1].authorId);
 
-function boundEnrollment(input: Extract<z.infer<typeof stocktakeCutoverSchema>, { action: "enroll" | "approve-financial" }>,
-  project: string, requestUrl?: string) {
+function boundPilot(branchId: string, project: string, requestUrl?: string) {
   if (RELEASE_CHANNEL !== "beta" || !requestUrl) return null;
   const raw = runtimeEnvValue("POS_STOCK_HISTORY_STOCKTAKE_PILOT");
   if (!raw || raw.length > 2048) return null;
   try {
     const pilot = enrollmentPilot.safeParse(JSON.parse(raw));
     if (!pilot.success || pilot.data.projectOrigin !== project || pilot.data.backendOrigin !== new URL(requestUrl).origin ||
-        (input.action === "approve-financial" && pilot.data.allowFinancialApproval !== true) ||
-        pilot.data.branchId !== input.branchId || !pilot.data.tills.some(till =>
-          till.terminalId === input.terminalId && till.databaseId === input.databaseId)) return null;
+        pilot.data.branchId !== branchId) return null;
     return pilot.data;
   } catch { return null; }
 }
@@ -69,6 +68,7 @@ export async function stocktakeCutover(input: z.infer<typeof stocktakeCutoverSch
     prepare: "prepare_stocktake_pause",
     lease: "load_stocktake_lease",
     arm: "arm_stocktake_pause",
+    "activate-rollout": "activate_rollout",
     seal: "seal_stocktake",
     review: "stocktake_for_review",
     publish: "publish_stocktake",
@@ -76,16 +76,26 @@ export async function stocktakeCutover(input: z.infer<typeof stocktakeCutoverSch
     "release-status": "load_stocktake_release",
   };
   const tillProof = input.action === "enroll" || input.action === "approve-financial";
+  const rollout = input.action === "activate-rollout";
   let parameters: Record<string, unknown> = tillProof ? scope : { ...scope, p_id: input.stocktakeId };
-  if (tillProof) {
-    const pilot = boundEnrollment(input, projectOrigin, requestUrl);
+  if (tillProof || rollout) {
+    const pilot = boundPilot(input.branchId, projectOrigin, requestUrl);
     if (!pilot) return Response.json({ ok: false, code: "STOCK_CUTOVER_SCOPE_DENIED" }, { status: 403 });
-    parameters = { ...scope, p_database: input.databaseId, p_challenge: input.challengeId,
-      ...(input.action === "enroll" ? { p_previous: pilot.previousBranchId, p_marker: pilot.marker, p_cohort: pilot.tills } : {}) };
+    const admitted = rollout
+      ? pilot.allowRolloutActivation === true && pilot.tills.some(till => till.terminalId === input.terminalId) &&
+        input.proofs.length === pilot.tills.length && pilot.tills.every(till =>
+          input.proofs.some(proof => proof.terminalId === till.terminalId && proof.databaseId === till.databaseId))
+      : (input.action !== "approve-financial" || pilot.allowFinancialApproval === true) &&
+        pilot.tills.some(till => till.terminalId === input.terminalId && till.databaseId === input.databaseId);
+    if (!admitted) return Response.json({ ok: false, code: "STOCK_CUTOVER_SCOPE_DENIED" }, { status: 403 });
+    if (tillProof) {
+      parameters = { ...scope, p_database: input.databaseId, p_challenge: input.challengeId,
+        ...(input.action === "enroll" ? { p_previous: pilot.previousBranchId, p_marker: pilot.marker, p_cohort: pilot.tills } : {}) };
+    }
   }
   if (input.action === "lease") parameters = { ...parameters, p_database: input.databaseId, p_purpose: input.purpose };
   if (input.action === "release-status") parameters = { ...parameters, p_database: input.databaseId };
-  if (input.action === "arm") parameters = { ...parameters, p_proofs: input.proofs };
+  if (input.action === "arm" || rollout) parameters = { ...parameters, p_proofs: input.proofs };
   if (input.action === "publish") parameters = { ...parameters, p_evidence_hash: input.evidenceHash, p_proofs: input.proofs };
   if (input.action === "seal") parameters = {
     p_subject: subject, p_terminal: terminal.id, p_branch: input.branchId, p_id: input.stocktakeId,
@@ -98,7 +108,7 @@ export async function stocktakeCutover(input: z.infer<typeof stocktakeCutoverSch
     return Response.json({ ok: false, code: "STOCK_CUTOVER_TOO_LARGE" }, { status: 413 });
   try {
     const response = await serviceRest("rpc/pos_stock_history_" + names[input.action],
-      { method: "POST", body: requestBytes, signal, ...(tillProof ? { redirect: "error" as const } : {}) });
+      { method: "POST", body: requestBytes, signal, ...(tillProof || rollout ? { redirect: "error" as const } : {}) });
     const raw = await response.text();
     // An armed count returns the frozen roster. Review also includes each
     // recorded count, so both use the bounded full-stocktake response limit.
@@ -117,8 +127,12 @@ export async function stocktakeCutover(input: z.infer<typeof stocktakeCutoverSch
     const verified = tillProof
       ? z.object({ branchId: z.literal(input.branchId), projectOrigin: z.literal(projectOrigin), terminalId: z.literal(terminal.id),
         databaseId: z.literal(input.databaseId), cohortReady: z.boolean() }).strict().parse(result)
-      : z.object({ branchId: z.literal(input.branchId), [input.action === "publish" ? "baselineId" : "stocktakeId"]:
-        z.literal(input.stocktakeId) }).passthrough().parse(result);
+      : rollout
+        ? z.object({ branchId: z.literal(input.branchId), baselineId: z.literal(input.stocktakeId), cutoff: instant,
+          verificationState: z.literal("verified"), openingKind: z.literal("system_snapshot"), productCount: z.number().int().min(0).max(10000),
+        }).strict().parse(result)
+        : z.object({ branchId: z.literal(input.branchId), [input.action === "publish" ? "baselineId" : "stocktakeId"]:
+          z.literal(input.stocktakeId) }).passthrough().parse(result);
     return Response.json({ ok: true, version: 1, projectOrigin, branchId: input.branchId, terminalId: terminal.id, result: verified });
   } catch {
     return Response.json({ ok: false, code: "STOCK_CUTOVER_UNAVAILABLE" }, { status: 503 });

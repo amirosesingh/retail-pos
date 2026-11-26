@@ -305,9 +305,15 @@ class StockHistoryStore{
       ORDER BY prior.cutoff_ticks DESC,prior.id DESC) eligible
      LEFT JOIN dbo.stock_history_baselines b WITH(HOLDLOCK,NOWAIT) ON b.id=COALESCE(eligible.id,h.baseline_id) AND b.store_id=h.store_id AND CONVERT(varbinary(max),b.store_id)=CONVERT(varbinary(max),h.store_id)
      WHERE h.store_id=@history_branch AND CONVERT(varbinary(max),h.store_id)=CONVERT(varbinary(max),@history_branch);`)).recordset?.[0];
+   const downloadMatches=Boolean(scope.projectOrigin&&scope.terminalId&&
+    meta?.download_project===scope.projectOrigin&&meta.download_terminal===scope.terminalId);
+   if(scope.requiresReplicaProof&&!downloadMatches)return{
+    status:'unavailable',reasons:[meta?.baseline_id?'UNVERIFIED_OPENING':'NO_VERIFIED_OPENING'],cutoff,timeZone:zone,
+    branchId:branch,...(period?{period}:{}),rows:[],next:null,
+   };
    const recordedProof=Boolean(meta?.coverage_state==='incomplete'&&
     meta.recorded_history==='true'&&meta.recorded_cursor===meta.committed_cursor&&meta.coverage_through_ticks!=null&&
-    scope.projectOrigin&&scope.terminalId&&meta.download_project===scope.projectOrigin&&meta.download_terminal===scope.terminalId);
+    downloadMatches);
    const exactOpening=recordedProof&&!period&&meta.cutoff_ticks===cutoffTicks&&
     BigInt(String(meta.baseline_changed_count??0))===0n;
    const recorded=recordedProof&&!exactOpening&&!input.export&&!closedShift&&!movements;

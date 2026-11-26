@@ -18,6 +18,13 @@ class StockHistoryUploader{
   catch{/* Its original movement remains pending; required business/financial ACKs are separate. */}
  }
  async reviewHeldCount(remaining,branchId,terminalId){this.assertCurrent();const count=await this.outbox.reviewHeldCount(remaining,branchId,terminalId);this.assertCurrent();return count;}
+ retryMissingAuthorReview(branchId,terminalId){
+  for(const [key,held] of this.holds){
+   if(held.code!=='ESTOCK_HISTORY_AUTHOR_REQUIRED')continue;
+   const[,heldBranch,heldTerminal]=JSON.parse(key);
+   if(heldBranch===branchId&&heldTerminal===terminalId)this.holds.delete(key);
+  }
+ }
  async upload(aggregate,branchId,terminalId){
   try{
    this.assertCurrent();

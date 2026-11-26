@@ -10,6 +10,7 @@ const callerProofSchema=z.object({
 const inputSchema=callerProofSchema.extend({request:stockHistoryRequestSchema});
 const movementInputSchema=callerProofSchema.extend({request:stockHistoryMovementRequestSchema});
 const activityInputSchema=callerProofSchema.extend({request:stockActivityRequestSchema});
+const openingInputSchema=callerProofSchema.extend({branchId:z.string().min(1).max(128)});
 export const loadStockHistoryPageDirect=createServerFn({method:'POST'}).validator((input:unknown)=>inputSchema.parse(input))
  .handler(async({data})=>{
   const {request,...proof}=data;
@@ -24,4 +25,14 @@ export const loadStockActivityPageDirect=createServerFn({method:'POST'}).validat
  .handler(async({data})=>{
   const {request,...proof}=data;
   return(await import('./stock-activity.server')).readStockActivityPage(proof,request);
+ });
+export const recordStockRolloutOpeningDirect=createServerFn({method:'POST'}).validator((input:unknown)=>openingInputSchema.parse(input))
+ .handler(async({data})=>{
+  const {branchId,...proof}=data;
+  return(await import('./stock-history.server')).recordStockRolloutOpening(proof,branchId);
+ });
+export const readStockRolloutReadinessDirect=createServerFn({method:'POST'}).validator((input:unknown)=>openingInputSchema.parse(input))
+ .handler(async({data})=>{
+  const {branchId,...proof}=data;
+  return(await import('./stock-history.server')).readStockRolloutReadiness(proof,branchId);
  });

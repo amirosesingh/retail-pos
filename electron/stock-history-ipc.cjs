@@ -17,15 +17,32 @@ function safeRequest(value, movements) {
   return { ...value };
 }
 /** Dedicated read admission; no SQL text, ledger writes or renderer-selected identity. */
-function createStockHistoryReader({manager,session,terminal,branch,isPosSender,context=()=>[]}, mode=false) {
+function createStockHistoryReader({manager,session,terminal,branch,isPosSender,context=()=>[],managementHistoryAdmission}, mode=false) {
   const activity = mode === 'activity';
   return async (event,raw) => {
     try {
       if (!isPosSender(event) || !session.hasPosAuthority()) fail('PERMISSION_DENIED');
       const request = activity ? activityRequest(raw) : safeRequest(raw,mode === true), pool = manager.pool, epoch = session.epoch();
-      const actor = session.identity(), registered = terminal(), registeredBranch = branch();
+      const actor = session.identity(), registered = terminal();
+      if (registered?.deviceUse === 'management') {
+        const branchId = identifier(request.branchId);
+        const admission = await managementHistoryAdmission?.(event, {
+          branchId, exporting: request.export === true,
+          ...(request.closedShiftId ? { requiredPermission: 'can_shift_closing_history_view' } : {}),
+        });
+        if (!pool || manager.pool !== pool || admission?.branchId !== branchId) fail('PERMISSION_DENIED');
+        const page = await readPage(pool, request, {
+          ...admission,
+          authorizeRead: async exporting => ({
+            ...await admission.authorizeRead(exporting), requiresReplicaProof: true,
+          }),
+        });
+        admission.assertCurrent(); session.touch();
+        return {ok:true,page};
+      }
+      const registeredBranch = branch();
       if (!pool || !actor || actor.source !== 'pos' || !UUID.test(actor.authorId ?? '') || !registered?.tokenId ||
-          registered.deviceUse === 'management' || !registeredBranch) fail('PERMISSION_DENIED');
+          !registeredBranch) fail('PERMISSION_DENIED');
       const branchId = identifier(registeredBranch), authorId = identifier(actor.authorId,true);
       const binding = () => JSON.stringify([terminal(),context()]);
       const original = binding();
@@ -55,21 +72,16 @@ function createStockHistoryReader({manager,session,terminal,branch,isPosSender,c
         return {contextKey,branchId,canViewInventory,canExportReports,canViewShiftHistory,
           projectOrigin,terminalId:identifier(registered.tokenId)};
       };
-      let page;
-      if (activity) {
-        if (request.branchId !== branchId) fail('SYNC_BRANCH_FORBIDDEN');
-        await authorizeRead(false);
-        page = await readStockActivity(pool, request);
-        await authorizeRead(false);
-      } else {
-        const store = new StockHistoryStore(manager,{assertCurrent,authorizeRead});
-        page = mode === true ? await store.readMovements(request) : await store.readPage(request);
-      }
+      const page = await readPage(pool, request, {branchId, assertCurrent, authorizeRead});
       assertCurrent(); session.touch();
       return {ok:true,page};
     } catch (error) {
       const code = typeof error?.code === 'string' && /^(?:ESTOCK_HISTORY_|PERMISSION_DENIED$|SYNC_BRANCH_FORBIDDEN$)/.test(error.code) ? error.code : 'ESTOCK_HISTORY_READ';
       return {ok:false,code,error:code === 'PERMISSION_DENIED' ? 'Your current account or terminal cannot read this stock report.' :
+        code === 'SYNC_BRANCH_FORBIDDEN' ? 'Choose a location authorized for this account and terminal.' :
+        code === 'ESTOCK_HISTORY_MANAGEMENT_SQL' ? 'The Management local SQL Server database is not ready.' :
+        code === 'ESTOCK_HISTORY_MANAGEMENT_SCOPE' ? 'Connect and synchronize this Management terminal to verify its location access.' :
+        code === 'ESTOCK_HISTORY_MANAGEMENT_INCOMPLETE' ? 'This location has not completed its local inventory download.' :
         code === 'ESTOCK_HISTORY_SOURCE_CHANGED' ? 'Stock history changed. Refresh the report before continuing.' :
         code === 'ESTOCK_HISTORY_MOVEMENT_CURSOR_INVALID' ? 'The movement page is no longer available. Open the report again.' :
         code === 'ESTOCK_HISTORY_CONTEXT_CHANGED' ? 'The signed-in account, terminal or database changed. Open the report again.' :
@@ -77,6 +89,23 @@ function createStockHistoryReader({manager,session,terminal,branch,isPosSender,c
         'The local stock-history report could not be verified. Existing stock has not been changed.'};
     }
   };
+
+  async function readPage(pool, request, {branchId, assertCurrent, authorizeRead}) {
+    if (activity) {
+      if (request.branchId !== branchId) fail('SYNC_BRANCH_FORBIDDEN');
+      assertCurrent();
+      const before = await authorizeRead(false);
+      if (!before?.canViewInventory || before.branchId !== branchId) fail('PERMISSION_DENIED');
+      const page = await readStockActivity(pool, request);
+      const after = await authorizeRead(false);
+      if (!after?.canViewInventory || after.branchId !== branchId || after.contextKey !== before.contextKey) {
+        fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+      }
+      return page;
+    }
+    const store = new StockHistoryStore(manager,{assertCurrent,authorizeRead});
+    return mode === true ? store.readMovements(request) : store.readPage(request);
+  }
 }
 function registerStockHistoryRead(options) {
   const handler = createStockHistoryReader(options);

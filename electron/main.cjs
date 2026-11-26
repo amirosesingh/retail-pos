@@ -200,7 +200,25 @@ async function ownsHistoryRecoveryExecution({jobId,source,requestParent=null}={}
   }catch{return false;}
 }
 const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader,publish:publishBusinessChange,historyExecutionProof:ownsHistoryRecoveryExecution,recoverHeldStatuses:recoverLocalHeldStatuses });
-const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({ cloud:syncCloud, databaseService, connectionManager:databaseManager, lifecycle:localDataLifecycle, jobs:jobRepository, coordinator:syncCoordinator });
+function managementStockReplicaReady() {
+  const state = databaseService.snapshot();
+  return process.platform === "win32" && app.hasSingleInstanceLock() && !safeMode && !quitting &&
+    !syncCoordinator.paused && state.enabled && state.configured && state.connected && state.tradingReady &&
+    !state.localRecoveryPending;
+}
+const managementInventorySource = require("./sync/management-inventory-source.cjs").createManagementInventorySource({
+  manager: databaseManager, cloud: syncCloud, registry: syncRegistry, ready: managementStockReplicaReady,
+});
+const downloadManagementStockHistory = require("./sync/management-stock-history.cjs").createManagementStockHistory({
+  manager: databaseManager, cloud: syncCloud, ready: managementStockReplicaReady,
+});
+const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({
+  cloud: syncCloud, databaseService, connectionManager: databaseManager, lifecycle: localDataLifecycle,
+  jobs: jobRepository, coordinator: syncCoordinator,
+  verifyCurrentInventory: () => managementInventorySource.verifyNext(),
+  downloadStockHistory: () => downloadManagementStockHistory(work =>
+    syncCoordinator.withExclusive(() => work(() => syncCoordinator.ownsExclusive() && !syncCoordinator.paused))),
+});
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry, { stockHistory:stockHistory.capture });
 const heldStatusRecovery = new HeldStatusRecovery({manager:databaseManager,registry:syncRegistry,cloud:syncCloud,publish:publishBusinessChange});
@@ -2656,10 +2674,15 @@ function registerIpc() {
     const snapshot = await operationsRepository.snapshot(authorizedLocalBranch(), terminalStore.read()?.tokenId ?? null, { salesOnly: options?.salesOnly === true, onProgress: (progress) => { if (!_e.sender.isDestroyed()) _e.sender.send("business:read-progress", progress); } });
     return require("./read-snapshot-policy.cjs").filterSnapshot({ ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) }, adminSession);
   }));
+  const isStockReportSender=event=>event.sender===mainWindow?.webContents&&event.senderFrame===event.sender.mainFrame;
+  const {createManagementInventoryAdmission,createManagementInventoryReader}=require("./management-inventory-ipc.cjs");
+  const managementHistoryAdmission=createManagementInventoryAdmission({manager:databaseManager,databaseService,
+    session:adminSession,terminal:()=>terminalStore.read(),cloud:syncCloud,isPosSender:isStockReportSender});
+  ipcMain.handle("business:management-inventory",createManagementInventoryReader(managementHistoryAdmission,adminSession,syncRegistry,managementInventorySource));
   require("./stock-history-ipc.cjs").registerStockHistoryRead({
     ipcMain, manager:databaseManager, session:adminSession, terminal:()=>terminalStore.read(),
     branch:()=>authorizedLocalBranch(), context:()=>[authorizationServerUrl(),cloudCredentials.read()?.url],
-    isPosSender:event=>event.sender===mainWindow?.webContents&&event.senderFrame===event.sender.mainFrame,
+    isPosSender:isStockReportSender,managementHistoryAdmission,
   });
   require("./stock-history-ipc.cjs").registerStocktakeControl({
     ipcMain, session: adminSession, coordinator: syncCoordinator, run: stockHistory.stocktake,
@@ -2845,7 +2868,7 @@ function registerIpc() {
     const branchId=localBranchId();
     if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});
     return observedDatabaseOperation("synchronization","manual",async()=>{
-      const result=await syncCoordinator.runNow({...input,branchId});
+      const result=await syncCoordinator.runNow({...input,branchId,retryReviewHolds:true});
       if(result.code!=="ECHANGEGAP"){
         if(result.ok&&localDataLifecycle.historyPending(branchId))return {...result,historyPending:true,syncReady:false};
         return result;
@@ -2868,6 +2891,19 @@ function registerIpc() {
   });
   ipcMain.handle("sync:pause", () => syncCoordinator.pause());
   ipcMain.handle("sync:resume", () => syncCoordinator.resume());
+  require("./sync/recovery-evidence.cjs").installRecoveryEvidenceIpc({
+    ipcMain, manager: databaseManager, session: adminSession,
+    isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
+    canCheck: () => {
+      const state = databaseService.snapshot();
+      return !quitting && state.enabled && state.connected && !state.localRecoveryPending;
+    },
+    readScope: () => {
+      const terminal = activationBoundary.binding(terminalStore.read());
+      if (terminal?.platform !== "pc" || terminal.mode !== "operations") return null;
+      return { branchId: authorizedLocalBranch(), terminalId: terminal.id, fingerprint: syncCloud.requestContext().fingerprint };
+    },
+  });
   ipcMain.handle("sync:get-failures", async () => ({ databaseErrors:diagnostics.databaseErrors(100), failures:databaseManager.isConnected()?await jobRepository.failures():[], businessBatches:databaseManager.isConnected()?await changeReader.failedAggregates(localBranchId()):[], conflictRows:databaseManager.isConnected()?await conflictRepository.unresolved():[], conflicts:databaseManager.isConnected()?await conflictRepository.count():0 }));
   ipcMain.handle("sync:reconcile", (_e, options) => guard.guarded(async()=>{try{const input=guard.options(options,{name:"reconciliation options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("A branch is required for reconciliation."),{code:"EBRANCH"});const historyDays=Number(databaseConfig.profile()?.retentionDays)||90;if(input.deep===true){const report=await localDataLifecycle.verify(branchId,historyDays,Array.isArray(input.tables)?input.tables:[]);return{ok:true,verified:report.verified,differences:report.tables.filter(table=>!table.verified),verification:report.tables,lastVerifiedAt:report.verifiedAt};}const differences=input.repair===true?await localDataLifecycle.repair(branchId,historyDays,Array.isArray(input.tables)?input.tables:[]):await localDataLifecycle.reconcile(branchId,historyDays);const historyPending=localDataLifecycle.historyPending(branchId);return{ok:true,matched:differences.length===0&&!historyPending,differences,...(historyPending?{historyPending}:{}),verification:syncCoordinator.snapshot().tables,lastComparedAt:syncCoordinator.snapshot().lastComparedAt};}catch(error){return{ok:false,code:error?.code??"ERECONCILE",error:String(error?.message??error)};}}));
   ipcMain.handle("telemetry:presence", (_e, value) => guard.guarded(() => {

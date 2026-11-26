@@ -19,6 +19,7 @@ import { loadStockHistoryMovements } from "@/lib/stock-history-movements-client"
 import { STOCK_MOVEMENT_PAGE_SIZE, type StockHistoryMovementCursor, type StockHistoryMovementPage } from "@/lib/stock-history-movements";
 import { exportStockHistoryCsv, exportStockHistoryXlsx, stockHistoryForExport } from "@/lib/stock-history-export";
 import { syncState } from "@/lib/sync-status";
+import { currentPlatform } from "@/platform-config/features";
 import { stockDateTimeInput, stockEndOfDay, stockTimeChoices, type StockTimeChoice } from "@/lib/stock-history-selection";
 import { stockHistoryExplanation, type StockHistoryPage, type StockHistoryRequest, type StockHistoryRow } from "@/lib/stock-history-report";
 import { stockReportDay } from "../../../../../electron/shared/stock-report-day.mjs";
@@ -88,6 +89,41 @@ function existedAt(createdAt: string | undefined, cutoff: string | undefined) {
   catch { return false; }
 }
 
+type AsOfBalance = StockActivityProduct & { quantity: string | number | null };
+
+function AsOfBalanceTable({ rows, verified, paginate, empty, checkingProduct, checkProduct }: {
+  rows: AsOfBalance[];
+  verified: boolean;
+  paginate: boolean;
+  empty: string;
+  checkingProduct?: string;
+  checkProduct?: (productId: string) => void;
+}) {
+  const { pageItems, setPage, setPageSize, ...pagination } = usePagination(rows, 50);
+  const visible = paginate ? pageItems : rows;
+  return <>
+    <div className="overflow-x-auto rounded-md border">
+      <Table aria-label="Stock at selected time" data-stock-report-print-table={verified && visible.length ? true : undefined}>
+        <TableHeader><TableRow>
+          <TableHead>Product</TableHead>
+          <TableHead>Barcode</TableHead>
+          <TableHead className="text-right">Stock quantity</TableHead>
+        </TableRow></TableHeader>
+        <TableBody>{visible.length ? visible.map(row => <TableRow key={row.productId}>
+          <TableCell className="min-w-36 whitespace-normal break-words">{row.name}</TableCell>
+          <TableCell className="whitespace-nowrap">{row.barcode || "—"}</TableCell>
+          <TableCell className="numeric whitespace-nowrap text-right">
+            {row.quantity !== null ? row.quantity : checkProduct ? <Button type="button" variant="link" size="sm" className="h-auto p-0"
+              disabled={checkingProduct === row.productId} aria-label={`Check recorded balance for ${row.name}`}
+              onClick={() => checkProduct(row.productId)}>{checkingProduct === row.productId ? "Checking…" : "Unavailable"}</Button> : "Unavailable"}
+          </TableCell>
+        </TableRow>) : <TableRow><TableCell colSpan={3}>{empty}</TableCell></TableRow>}</TableBody>
+      </Table>
+    </div>
+    {paginate && <TablePagination {...pagination} onPage={setPage} onPageSize={setPageSize} label="products" />}
+  </>;
+}
+
 export function StockReport({ branchId, branchName, initialView = "current", historicalValuation = false, refreshToken = 0 }: {
   branchId: string;
   branchName: string;
@@ -98,6 +134,7 @@ export function StockReport({ branchId, branchName, initialView = "current", his
   const { can, isAdmin, authUserId, appUser, terminalUser, user } = useAuth();
   const { state, ready, loadPhase } = usePos();
   const separateHistory = initialView === "history";
+  const simpleHistory = separateHistory && !historicalValuation;
   const configuredTimeZone = effectiveTimeZone();
   const timeZone = separateHistory ? state.settings.integrations.timeZone || "Asia/Brunei" : configuredTimeZone;
   const mayRead = can("can_view_inventory"), mayExport = can("can_export_reports");
@@ -111,10 +148,13 @@ export function StockReport({ branchId, branchName, initialView = "current", his
   const periodId = useId(), quantityFilterId = useId(), movementHeadingId = useId();
   const [choices, setChoices] = useState<StockTimeChoice[]>([]), [choice, setChoice] = useState("");
   const [page, setPage] = useState<StockHistoryPage | null>(null), [request, setRequest] = useState<StockHistoryRequest | null>(null);
+  const [pageStart, setPageStart] = useState<string | null>(null);
   const [error, setError] = useState(""), [busy, setBusy] = useState(false), [exporting, setExporting] = useState(false);
   const [pageIdentity, setPageIdentity] = useState(""), [activityIdentity, setActivityIdentity] = useState("");
+  const [evidenceGeneration, setEvidenceGeneration] = useState(0);
   const [movement, setMovement] = useState<MovementView | null>(null);
-  const [activitySelection, setActivitySelection] = useState<{ scope: string; productId: string } | null>(null);
+  const [activitySelection, setActivitySelection] = useState<{ scope: string; productId: string; attempt: number } | null>(null);
+  const [checkedBalances, setCheckedBalances] = useState<{scope: string; quantities: Map<string, number>} | null>(null);
   const movementHeading = useRef<HTMLHeadingElement>(null), movementTrigger = useRef<HTMLButtonElement | null>(null);
   const activityHeading = useRef<HTMLHeadingElement>(null);
   const returnMovementFocus = useRef(false);
@@ -129,22 +169,27 @@ export function StockReport({ branchId, branchName, initialView = "current", his
   const shownBusy = active && busy, shownExporting = active && exporting, shownError = active ? error : "";
   const grade = stockReportDisplayGrade(visiblePage);
   const historicalCutoff = !visiblePage?.reasons.includes("FUTURE_CUTOFF");
+  const asOfCoverageMessage = visiblePage?.reasons.includes("NO_VERIFIED_OPENING") && historicalCutoff && !visibleRequest?.closedShiftId
+    ? "Verified stock history has not started for this location."
+    : stockHistoryExplanation(visiblePage?.reasons[0] ?? "");
   const searchText = search.trim().toLocaleLowerCase();
   const matchesSearch = (row: StockActivityProduct) => !searchText ||
     [row.name, row.sku, row.barcode, row.productId].some(value => value?.toLocaleLowerCase().includes(searchText));
   const visibleRows = visiblePage?.rows.filter(row => (!zeroOnly || zeroQuantity(row)) && matchesSearch(row));
-  const canOpenMovements = grade === "verified" && Boolean(visiblePage?.sourceRevision && visiblePage.baselineAt);
+  const canOpenMovements = !simpleHistory && grade === "verified" && Boolean(visiblePage?.sourceRevision && visiblePage.baselineAt);
   const visibleMovement = canOpenMovements && movement?.identity === identity ? movement : null;
   const movementProductId = visibleMovement?.product.productId, movementPageNumber = visibleMovement?.number;
   const unresolvedShift = Boolean(visibleRequest?.closedShiftId && visiblePage?.cutoff === unresolvedClosedShiftCutoff);
-  const activityBranch = unresolvedShift ? undefined : visiblePage?.branchId;
-  const activityCutoff = unresolvedShift ? undefined : visiblePage?.cutoff;
-  const activityScope = JSON.stringify([identity, activityBranch, activityCutoff]);
+  const readActivity = !unresolvedShift && (!simpleHistory || (grade === "unavailable" && historicalCutoff));
+  const activityBranch = readActivity ? visiblePage?.branchId : undefined;
+  const activityCutoff = readActivity ? visiblePage?.cutoff : undefined;
+  const activityScope = JSON.stringify([identity, activityBranch, activityCutoff, simpleHistory ? evidenceGeneration : null]);
   const activityProduct = activitySelection?.scope === activityScope ? activitySelection.productId : undefined;
+  const itemActivityScope = simpleHistory ? JSON.stringify([activityScope, activitySelection?.attempt]) : activityScope;
   const before = useStockReportActivityPage(activityScope, activityBranch, activityCutoff, "through-cutoff");
   const after = useStockReportActivityPage(activityScope, activityBranch, activityCutoff, "after-cutoff");
-  const itemBefore = useStockReportActivityPage(activityScope, activityProduct ? activityBranch : undefined, activityCutoff, "through-cutoff", activityProduct);
-  const itemAfter = useStockReportActivityPage(activityScope, activityProduct ? activityBranch : undefined, activityCutoff, "after-cutoff", activityProduct);
+  const itemBefore = useStockReportActivityPage(itemActivityScope, activityProduct ? activityBranch : undefined, activityCutoff, "through-cutoff", activityProduct);
+  const itemAfter = useStockReportActivityPage(itemActivityScope, activityProduct ? activityBranch : undefined, activityCutoff, "after-cutoff", activityProduct);
   const activityFailed = Boolean(before.error || after.error);
   const itemActivityFailed = Boolean(itemBefore.error || itemAfter.error);
   const activityFormat = useMemo(() => new Intl.DateTimeFormat(undefined, {
@@ -154,6 +199,16 @@ export function StockReport({ branchId, branchName, initialView = "current", his
     [activityFailed, before.evidence, after.evidence]);
   const itemEvidence = useMemo(() => itemActivityFailed ? reportActivityEvidence(null, null) : reportActivityEvidence(itemBefore.evidence, itemAfter.evidence),
     [itemActivityFailed, itemBefore.evidence, itemAfter.evidence]);
+  useEffect(() => {
+    if (!simpleHistory || !activityProduct || !itemBefore.evidence || !itemAfter.evidence || itemActivityFailed) return;
+    const quantity = itemEvidence.balances.get(activityProduct)?.quantity;
+    if (quantity === undefined) return;
+    setCheckedBalances(previous => {
+      const quantities = previous?.scope === activityScope ? previous.quantities : new Map<string, number>();
+      if (quantities.get(activityProduct) === quantity) return previous;
+      return { scope: activityScope, quantities: new Map(quantities).set(activityProduct, quantity) };
+    });
+  }, [simpleHistory, activityScope, activityProduct, itemBefore.evidence, itemAfter.evidence, itemActivityFailed, itemEvidence]);
   const activityProducts = useMemo(() => {
     const catalogue = new Map<string, StockActivityProduct>();
     if (!activityBranch) return catalogue;
@@ -181,11 +236,13 @@ export function StockReport({ branchId, branchName, initialView = "current", his
     const observed = selected ? itemEvidence : evidence;
     const awaitingAfter = selected ? itemAfter.loading && !itemAfter.evidence : after.loading && !after.evidence;
     const balance = historicalCutoff && !awaitingAfter ? observed.balances.get(product.productId) : undefined;
-    return { ...product, quantity: balance?.quantity ?? null, supportedAt: balance?.supportedAt, lastChange: observed.latest.get(product.productId) };
+    const checked = checkedBalances?.scope === activityScope ? checkedBalances.quantities.get(product.productId) : undefined;
+    return { ...product, quantity: checked ?? balance?.quantity ?? null, supportedAt: balance?.supportedAt, lastChange: observed.latest.get(product.productId) };
   }).sort((left, right) => left.name.localeCompare(right.name) || left.productId.localeCompare(right.productId)) : [],
-  [activityProduct, activityProducts, after.loading, after.evidence, evidence, itemBefore.evidence, itemAfter.loading, itemAfter.evidence, itemEvidence, itemActivityFailed, grade, historicalCutoff]);
+  [activityProduct, activityProducts, activityScope, after.loading, after.evidence, checkedBalances, evidence, itemBefore.evidence,
+    itemAfter.loading, itemAfter.evidence, itemEvidence, itemActivityFailed, grade, historicalCutoff]);
   function selectActivityProduct(productId: string) {
-    setActivitySelection({ scope: activityScope, productId });
+    setActivitySelection(previous => ({ scope: activityScope, productId, attempt: (previous?.attempt ?? 0) + 1 }));
     activityHeading.current?.focus();
   }
   useEffect(() => {
@@ -276,7 +333,7 @@ export function StockReport({ branchId, branchName, initialView = "current", his
         cursors.add(result.next);
         pageRequest = { ...selectedRequest, cutoff: result.cutoff, after: result.next, sourceRevision: result.sourceRevision };
       }
-      setPage(result); setPageIdentity(identity);
+      setPage(result); setPageIdentity(identity); setPageStart(pageRequest.after ?? null); setEvidenceGeneration(generation.current);
       setRequest({ ...selectedRequest, cutoff: result.cutoff, after: null, sourceRevision: result.sourceRevision });
     } catch (failure) {
       try { assertCurrent(); setError(failure instanceof Error ? failure.message : "The stock report could not be loaded."); } catch { /* Stale read has no visible result. */ }
@@ -335,7 +392,7 @@ export function StockReport({ branchId, branchName, initialView = "current", his
       const options = separateHistory ? {
         company: state.settings.receipt.companyName,
         generatedBy: terminalUser?.name || user?.name,
-        freshness: syncState().lastSyncAt ?? "Last successful sync time unavailable",
+        freshness: currentPlatform() === "web" ? "Central stock history" : syncState().lastSyncAt ?? "Last successful device sync time unavailable",
         filters: [zeroOnly ? "Zero stock only" : "All quantities", searchText ? `Product search: ${search.trim()}` : "All products"].join(" · "),
       } : undefined;
       if (format === "csv" && options) exportStockHistoryCsv(filtered, branchName, assertCurrent, options);
@@ -371,7 +428,7 @@ export function StockReport({ branchId, branchName, initialView = "current", his
           {shifts.error && <span role="alert" className="block text-xs text-destructive">{shifts.error}</span>}
         </Label>}
       </div>
-      {mode !== "shift" && <div className="flex items-start gap-2 text-sm"><Switch id={periodId} className="mt-0.5" checked={showPeriod}
+      {!simpleHistory && mode !== "shift" && <div className="flex items-start gap-2 text-sm"><Switch id={periodId} className="mt-0.5" checked={showPeriod}
         onCheckedChange={checked => { invalidate(); setShowCurrent(false); setShowPeriod(checked); }} /><Label htmlFor={periodId} className="block leading-normal">Show inventory changes for this day<span className="block text-xs text-muted-foreground">Opening stock, stock in and stock out through the same selected time.</span></Label></div>}
       <div className="flex flex-wrap gap-2"><Button type="submit" disabled={shownBusy || shownExporting}>{shownBusy && <Loader2 className="size-4 animate-spin" />}{separateHistory ? "Generate Report" : "Show stock at selected time"}</Button>
         {!showCurrent && !separateHistory && <Button type="button" variant="outline" onClick={() => { invalidate(); setChoices([]); setChoice(""); setShiftId(""); setMode("time"); setShowPeriod(false); setShowCurrent(true); }}>Return to current stock</Button>}
@@ -389,7 +446,7 @@ export function StockReport({ branchId, branchName, initialView = "current", his
         {!showCurrent && mayExport && !historicalValuation && <Button type="button" data-stock-report-export variant="outline" disabled={shownBusy || shownExporting || grade !== "verified" || visiblePage?.status !== "complete"} onClick={() => void download()}>{shownExporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}{!separateHistory && zeroOnly ? "Export full report" : "Export Excel"}</Button>}
         {separateHistory && mayExport && !historicalValuation && <Button type="button" variant="outline" disabled={shownBusy || shownExporting || grade !== "verified" || visiblePage?.status !== "complete"} onClick={() => void download("csv")}>Export CSV</Button>}
       </div>
-      {separateHistory && visiblePage && <Label className="block max-w-md space-y-1"><span>Search this page</span>
+      {separateHistory && visiblePage && <Label className="block max-w-md space-y-1"><span>{simpleHistory && grade === "unavailable" ? "Search products" : "Search this page"}</span>
         <Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Product, ID, SKU or barcode" />
       </Label>}
     </form>
@@ -404,6 +461,30 @@ export function StockReport({ branchId, branchName, initialView = "current", his
         </>}</p>
         {grade === "verified" && <p className="sr-only" data-stock-report-print-summary>Verified historical balances at {visiblePage.cutoff} · {visiblePage.timeZone}</p>}
       </header>
+      {simpleHistory ? <>
+        {grade !== "verified" && <p className="text-sm text-muted-foreground" role="status">
+          {grade === "provisional" ? "Recorded balances may change when outstanding stock movements arrive."
+            : unresolvedShift || !historicalCutoff ? asOfCoverageMessage
+              : before.loading || after.loading ? "Checking recorded stock balances…"
+                : balances.some(row => row.quantity !== null) ? "Some balances come from recorded activity. Other quantities are unavailable for this time."
+                  : asOfCoverageMessage}
+        </p>}
+        <AsOfBalanceTable key={JSON.stringify([visiblePage.cutoff, searchText, zeroOnly])}
+          rows={grade === "unavailable"
+            ? balances.filter(row => (!zeroOnly || row.quantity === 0) && matchesSearch(row))
+            : visibleRows ?? []}
+          verified={grade === "verified"} paginate={grade === "unavailable"}
+          checkingProduct={itemBefore.loading || itemAfter.loading ? activityProduct : undefined}
+          checkProduct={grade === "unavailable" && activityBranch && activityCutoff ? selectActivityProduct : undefined}
+          empty={searchText ? "No matching products." : zeroOnly ? "No products with a known zero balance on this page." : "No stock balances are available for this time."} />
+        {grade !== "unavailable" && visibleRequest && (pageStart || visiblePage.next) &&
+          <div className="flex flex-wrap gap-2" aria-label="Stock balance pages">
+            {pageStart && <Button variant="outline" disabled={shownBusy || shownExporting}
+              onClick={() => void read(visibleRequest)}>First products page</Button>}
+            {visiblePage.next && <Button variant="outline" disabled={shownBusy || shownExporting}
+              onClick={() => void read({ ...visibleRequest, after: visiblePage.next })}>Next products</Button>}
+          </div>}
+      </> : <>
       {grade === "unavailable" && !unresolvedShift && <StockRecordedBalances rows={balances.filter(matchesSearch)} zeroOnly={zeroOnly} selected={activityProduct}
         selectProduct={selectActivityProduct} format={activityFormat} />}
       {grade !== "unavailable" && <><div className="overflow-x-auto rounded-md border"><Table aria-label="Stock at selected time" data-stock-report-print-table={grade === "verified" && visibleRows?.length ? true : undefined}><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>SKU / barcode</TableHead>{visiblePage.period && <TableHead className="text-right">Opening stock</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock in</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock out</TableHead>}<TableHead className="text-right">Stock available</TableHead><TableHead>Last recorded change</TableHead><TableHead>Balance status</TableHead></TableRow></TableHeader><TableBody>
@@ -460,7 +541,8 @@ export function StockReport({ branchId, branchName, initialView = "current", his
       {!unresolvedShift && <StockReportActivity before={activityProduct ? itemBefore : before} after={activityProduct ? itemAfter : after}
         products={activityProducts} selected={activityProduct} clearSelection={() => setActivitySelection(null)}
         timeZone={timeZone} format={activityFormat} heading={activityHeading} />}
-      <details className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+      </>}
+      {!simpleHistory && <details className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
         <summary className="cursor-pointer font-medium text-foreground">Report coverage details</summary>
         <div className="mt-2 space-y-1 break-words">
           {!unresolvedShift && <p>{grade === "provisional" ? "Recorded cutoff" : "Exact cutoff"}: {visiblePage.cutoff} · {visiblePage.timeZone}</p>}
@@ -472,7 +554,7 @@ export function StockReport({ branchId, branchName, initialView = "current", his
           {visiblePage.reasons.map(reason => <p key={reason}>{stockHistoryExplanation(reason)}</p>)}
           {grade !== "unavailable" && <p className="break-all">Read at {visiblePage.readAt} · Source {visiblePage.sourceRevision}</p>}
         </div>
-      </details>
+      </details>}
     </div>}
   </section>;
 }

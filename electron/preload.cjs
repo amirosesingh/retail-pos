@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld("pos", {
   snapshot: (options) => invoke("business:snapshot", options),
   analytics: (from, to, timeZone) => invoke("business:analytics", from, to, timeZone),
   managementReport: (options) => invoke("business:management-report", options),
+  managementInventory: (request) => invoke("business:management-inventory", request),
   stockHistory: (request) => invoke("business:stock-history", request),
   stockHistoryMovements: (request) => invoke("business:stock-history-movements", request),
   stockActivity: (request) => invoke("business:stock-activity", request),
@@ -124,6 +125,7 @@ contextBridge.exposeInMainWorld("pos", {
     pause: () => invoke("sync:pause"),
     resume: () => invoke("sync:resume"),
     getFailures: () => invoke("sync:get-failures"),
+    getRecoveryEvidence: (request) => invoke("sync:recovery-evidence", request),
     reconcile: (options) => invoke("sync:reconcile", options),
     legacyRecovery: {
       list: (options) => invoke("sync:legacy-recovery-list", options),

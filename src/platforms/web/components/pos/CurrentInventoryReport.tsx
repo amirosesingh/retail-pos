@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, Boxes, ChevronDown, Columns3, Download, Layers3, Search, WalletCards } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
 } from "@/lib/current-inventory-report";
 import { formatMoney } from "@/lib/currency";
 import { beginDataTask } from "@/lib/data-progress";
+import { managementInventoryReader, toManagementReportProduct, useManagementInventory } from "@/lib/management-inventory-client";
 import { notifyError } from "@/lib/notify";
 import { usePersonalAppearance } from "@/lib/personal-appearance";
 import { useAuth } from "@/lib/pos-auth";
@@ -23,6 +24,8 @@ import { sessionEpoch } from "@/lib/session-epoch";
 import { subscribeSyncState, syncState } from "@/lib/sync-status";
 import { tableColumnHidden } from "@/lib/table-column-policy";
 import { formatDateTime } from "@/lib/time-zone";
+import { currentPlatform } from "@/platform-config/features";
+import type { Store } from "@/core/types/pos-types";
 import { ColumnResizer } from "./ColumnResizer";
 import { downloadCsv } from "./report-kit";
 import { TablePagination, usePagination } from "./TablePagination";
@@ -87,8 +90,8 @@ function Filter({ id, label, value, options, setValue, empty }: {
   </div>;
 }
 
-export function CurrentInventoryReport({ branchId, branchName, valuation = false, refreshToken = 0 }: {
-  branchId: string; branchName: string; valuation?: boolean; refreshToken?: number;
+export function CurrentInventoryReport({ branchId, branchName, valuation = false, refreshToken = 0, managementLocations }: {
+  branchId: string; branchName: string; valuation?: boolean; refreshToken?: number; managementLocations?: Store[];
 }) {
   const { state, stores, storesLoaded, ready, loadPhase } = usePos();
   const { can, user, canSwitchStores, terminalStoreId, isAdmin } = useAuth();
@@ -96,11 +99,11 @@ export function CurrentInventoryReport({ branchId, branchName, valuation = false
   const sync = useSyncExternalStore(subscribeSyncState, syncState, syncState);
   const filterId = useId();
   const mayRead = can("can_view_inventory");
-  const mayValue = mayRead && can("can_view_cost_margin");
-  const mayExport = mayRead && can("can_export_reports");
-  const directory = useMemo(() => stockDisplayLocations(stores, {
+  const mayRequestValue = mayRead && can("can_view_cost_margin");
+  const mayRequestExport = mayRead && can("can_export_reports");
+  const directory = useMemo(() => managementLocations ?? stockDisplayLocations(stores, {
     currentStoreId: branchId, terminalStoreId, userStoreId: user?.storeId, canSwitchStores,
-  }), [stores, branchId, terminalStoreId, user?.storeId, canSwitchStores]);
+  }), [managementLocations, stores, branchId, terminalStoreId, user?.storeId, canSwitchStores]);
   const visibility = useMemo(() => createCatalogueVisibility(state.settings, state.stores, state.transfers),
     [state.settings, state.stores, state.transfers]);
   const [draft, setDraft] = useState(() => currentInventoryDefaults(branchId));
@@ -110,23 +113,33 @@ export function CurrentInventoryReport({ branchId, branchName, valuation = false
   const [details, setDetails] = useState<string | null>(null);
   const [widths, setWidths] = useState<Record<string, number>>({});
   const [exporting, setExporting] = useState(false);
-  const snapshotReady = mayRead && ready && storesLoaded && loadPhase === "ready" &&
-    sameBranchId(state.currentStoreId, branchId) && directory.length > 0;
-  const snapshot = useMemo(() => ({ products: snapshotReady ? state.products : [], refreshToken }),
-    [snapshotReady, state.products, refreshToken]);
-  const products = useMemo(() => snapshot.products.filter(product => directory.some(location => visibility(product, location.id))),
-    [snapshot, directory, visibility]);
   const locationOptions = directory.map(location => ({ value: canonicalBranchId(location.id), label: location.name }));
-  if (canSwitchStores && !terminalStoreId && !user?.storeId && locationOptions.length > 1) {
+  if ((managementLocations || (canSwitchStores && !terminalStoreId && !user?.storeId)) && locationOptions.length > 1) {
     locationOptions.unshift({ value: ALL_INVENTORY_LOCATIONS, label: "All authorized locations" });
   }
   const locationChoice = (value: string) => locationOptions.some(option => option.value === value)
     ? value : (locationOptions.find(option => sameBranchId(option.value, branchId))?.value ?? locationOptions[0]?.value ?? "");
   const selectedLocation = locationChoice(applied.location);
+  const localInventory = useManagementInventory(managementLocations && selectedLocation && mayRead ? (
+    selectedLocation === ALL_INVENTORY_LOCATIONS ? { kind: "current", all: true } : { kind: "current", branchId: selectedLocation }
+  ) : null, JSON.stringify([refreshToken, sync.lastSyncAt]));
+  const mayValue = mayRequestValue && (!managementLocations || (localInventory?.ok === true && localInventory.canViewCost === true));
+  const mayExport = mayRequestExport && (!managementLocations || (localInventory?.ok === true && localInventory.canExportReports === true));
+  const snapshotReady = mayRead && (managementLocations ? localInventory?.ok === true && !!localInventory.products
+    : ready && storesLoaded && loadPhase === "ready" && sameBranchId(state.currentStoreId, branchId) && directory.length > 0);
+  const products = useMemo(() => managementLocations ? (localInventory?.ok ? localInventory.products?.map(toManagementReportProduct) ?? [] : [])
+    : snapshotReady ? state.products.filter(product => directory.some(location => visibility(product, location.id))) : [],
+  [managementLocations, localInventory, snapshotReady, state.products, directory, visibility]);
+  const visibleAt = useCallback((product: Parameters<typeof visibility>[0], id: string) => managementLocations
+    ? typeof product !== "string" && !!product.stockByStore && Object.hasOwn(product.stockByStore, canonicalBranchId(id))
+    : visibility(product, id), [managementLocations, visibility]);
+  const localPrices = useMemo(() => new Map(localInventory?.ok ? localInventory.products?.map(product => [product.id, product.retailPriceByStore]) : []), [localInventory]);
+  const scopedSellingPrice = useCallback((productId: string, locationId: string) => localPrices.get(productId)?.[locationId], [localPrices]);
   const filters = useMemo(() => ({ ...applied, location: selectedLocation }), [applied, selectedLocation]);
   const locations = useMemo(() => currentInventoryLocations(directory, filters), [directory, filters]);
-  const data = useMemo(() => buildCurrentInventory(products, locations, filters, visibility, branchId, mayValue),
-    [products, locations, filters, visibility, branchId, mayValue]);
+  const data = useMemo(() => buildCurrentInventory(products, locations, filters, visibleAt, branchId, mayValue,
+    managementLocations ? scopedSellingPrice : undefined),
+    [products, locations, filters, visibleAt, branchId, mayValue, managementLocations, scopedSellingPrice]);
   const allowedColumns = columns.filter((column, index) => column.key === "name" || ((!column.money || mayValue) &&
     !tableColumnHidden(state.settings.visibility?.hidden ?? {}, TABLE_ID, index,
       isAdmin ? "admin" : user?.metaRole ?? user?.role ?? null, user?.staffId ?? null, user?.permissions)));
@@ -141,12 +154,20 @@ export function CurrentInventoryReport({ branchId, branchName, valuation = false
     collator.compare(left.location.name, right.location.name) || left.key.localeCompare(right.key)),
   [data.rows, group, selectedSort, sort.descending]);
   const pager = usePagination(sorted, 25);
-  const freshness = sync.pending > 0 ? "Device synchronization pending" : sync.phase === "offline" ? "Offline snapshot"
-    : sync.lastError ? "Synchronization needs attention" : "Latest available snapshot";
-  const authority = JSON.stringify([sessionEpoch(), user?.staffId, branchId, directory.map(location => location.id),
-    snapshotReady, mayExport, mayValue, shownColumns.map(column => column.key)]);
+  const web = currentPlatform() === "web";
+  const lastSyncAt = web ? null : sync.lastSyncAt;
+  const freshness = web ? "Inventory snapshot" : sync.pending > 0 ? "Device synchronization pending"
+    : sync.phase === "offline" ? "Offline snapshot" : sync.lastError ? "Synchronization needs attention" : "Latest available snapshot";
+  const epoch = sessionEpoch();
+  const authority = JSON.stringify([epoch, user?.staffId, branchId, directory.map(location => location.id),
+    snapshotReady, mayExport, mayValue, shownColumns.map(column => column.key), filters, sort, group, refreshToken]);
   const currentAuthority = useRef(authority);
   currentAuthority.current = authority;
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const title = valuation ? "Current stock valuation" : "Current stock";
   const filterLabels: [string, string][] = [
     ["Search", filters.query], ["Location type", locationTypes[filters.locationType] ?? ""],
@@ -171,14 +192,23 @@ export function CurrentInventoryReport({ branchId, branchName, valuation = false
   };
   async function exportData(format: "xlsx" | "csv") {
     if (!exportReady) return;
+    const canFinish = () => mounted.current && sessionEpoch() === epoch && currentAuthority.current === authority;
     setExporting(true);
     const task = beginDataTask("Exporting stock report");
     try {
+      if (managementLocations) {
+        const result = await managementInventoryReader()?.(selectedLocation === ALL_INVENTORY_LOCATIONS
+          ? { kind: "authorize-export", all: true } : { kind: "authorize-export", branchId: selectedLocation });
+        if (!canFinish()) return;
+        if (!result?.ok) throw new Error(result?.error ?? "The Management export permission could not be verified.");
+        if (mayValue && !result.canViewCost) return;
+      }
       const reportDetails: (string | number)[][] = [
         ["Company", state.settings.receipt.companyName || branchName], ["Report", title],
         ["Locations", locations.map(location => location.name).join(", ")],
         ["Generated at", new Date().toISOString()], ["Generated by", user?.name || user?.staffId || ""],
-        ["Data freshness", freshness], ["Last successful synchronization", sync.lastSyncAt ?? "Unavailable"],
+        ["Data freshness", freshness],
+        ...(!web ? [["Last successful device synchronization", lastSyncAt ?? "Unavailable"]] : []),
         ["Data status", "Current balance"], ["Products / SKUs", data.products], ["On-hand quantity", data.quantity],
       ];
       if (mayValue) reportDetails.push(["Stock cost value", data.cost ?? "Unavailable"], ["Retail stock value", data.retail ?? "Unavailable"]);
@@ -186,27 +216,27 @@ export function CurrentInventoryReport({ branchId, branchName, valuation = false
       const rows = [shownColumns.map(column => column.label),
         ...sorted.map(row => shownColumns.map(column => column.value(row) ?? (column.money ? "Unavailable" : "")))];
       if (format === "csv") {
-        if (currentAuthority.current === authority) downloadCsv("stock-report", [...rows, [], ...reportDetails]);
+        if (canFinish()) downloadCsv("stock-report", [...rows, [], ...reportDetails]);
         return;
       }
       const [xlsx, { reportWorksheet }] = await Promise.all([import("xlsx"), import("@/lib/report-export")]);
-      if (currentAuthority.current !== authority) return;
+      if (!canFinish()) return;
       const book = xlsx.utils.book_new();
       const worksheet = await reportWorksheet(rows);
-      if (currentAuthority.current !== authority) return;
+      if (!canFinish()) return;
       xlsx.utils.book_append_sheet(book, worksheet, "Stock report");
       xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet(reportDetails), "Report details");
       xlsx.writeFile(book, `stock-report-${new Date().toISOString().slice(0, 10)}.xlsx`, { compression: true });
     } catch (error) {
-      notifyError(error, "Exporting stock report");
+      if (canFinish()) notifyError(error, "Exporting stock report");
     } finally {
       task.finish();
-      setExporting(false);
+      if (mounted.current) setExporting(false);
     }
   }
 
-  if (!mayRead || (valuation && !mayValue)) return <p role="status" className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">Stock report permission is required.</p>;
-  if (!snapshotReady) return <p role="status" className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
+  if (!mayRead || (valuation && !mayRequestValue)) return <p role="status" className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">Stock report permission is required.</p>;
+  if (!snapshotReady && !managementLocations) return <p role="status" className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
     {loadPhase === "failed" ? "Current inventory is unavailable." : "Loading current inventory…"}
   </p>;
   const summary = [
@@ -254,6 +284,11 @@ export function CurrentInventoryReport({ branchId, branchName, valuation = false
         }}>Reset filters</Button>
       </div>
     </form>
+    {managementLocations && !snapshotReady ? <p role="status" className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
+      {localInventory?.ok === false ? localInventory.error : "Loading current inventory from local SQL Server…"}
+    </p> : valuation && !mayValue ? <p role="status" className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
+      The verified Management account cannot read local stock costs.
+    </p> : <>
     <div data-stock-report-print-summary className={`grid grid-cols-2 gap-3 ${mayValue ? "xl:grid-cols-4" : ""}`} aria-label="Filtered stock totals">
       {summary.map(({ label, value, icon: Icon }) => <article key={label} className="min-w-0 rounded-xl border bg-card p-3 sm:p-4">
         <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
@@ -262,6 +297,12 @@ export function CurrentInventoryReport({ branchId, branchName, valuation = false
         <p className="numeric mt-2 break-words text-xl font-semibold tracking-tight sm:text-2xl">{value}</p>
       </article>)}
     </div>
+    {valuation && mayValue && (data.cost === null || data.retail === null) && (
+      <div role="status" className="space-y-1 rounded-lg border bg-card p-3 text-sm text-muted-foreground">
+        {data.cost === null && <p>A complete stock cost total requires a usable unit cost for every product with stock.</p>}
+        {data.retail === null && <p>A complete retail total requires a confirmed selling price for every stocked product at its report location.</p>}
+      </div>
+    )}
     <div className="min-w-0 overflow-hidden rounded-xl border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b p-3 sm:px-4">
         <div className="min-w-0">
@@ -325,7 +366,8 @@ export function CurrentInventoryReport({ branchId, branchName, valuation = false
     {mayValue && (data.cost === null || data.retail === null) && <p role="status" className="text-xs text-muted-foreground">
       Valuation is unavailable for some rows. Selling prices use the selected POS location's price scope.
     </p>}
-    <p className="text-xs text-muted-foreground">{freshness}{sync.lastSyncAt ? ` · Last successful sync ${formatDateTime(sync.lastSyncAt)}` : ""}</p>
+    <p className="text-xs text-muted-foreground">{freshness}{lastSyncAt ? ` · Last successful sync ${formatDateTime(lastSyncAt)}` : ""}</p>
+    </>}
   </section>;
 }
 

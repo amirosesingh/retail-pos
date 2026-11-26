@@ -12,6 +12,7 @@ vi.mock("../external-supabase-config", () => ({ supabaseConfig: () => ({ url: "h
 const repo = new URL("../../../", import.meta.url), db = new PGlite();
 const terminalId = "11111111-1111-4111-8111-111111111111";
 const second = "11111111-1111-4111-8111-111111111112";
+const managementId = "11111111-1111-4111-8111-111111111113";
 const baseline = "22222222-2222-4222-8222-222222222222";
 const product = "33333333-3333-4333-8333-333333333333";
 const start = "2026-11-21T00:00:00.0000000Z", end = "2026-11-21T00:01:00.0000000Z";
@@ -29,18 +30,24 @@ beforeAll(async () => {
     CREATE TABLE app_users(user_id text PRIMARY KEY,role text,role_slug text,store_id text,is_active boolean,permissions jsonb);
     CREATE TABLE stores(id text PRIMARY KEY);
     CREATE TABLE terminal_tokens(id uuid PRIMARY KEY,location_id text,status text,revoked_at timestamptz,
-      platform text,is_claimed boolean,claimed_at timestamptz,management_sync_enabled boolean);
+      platform text,is_claimed boolean,claimed_at timestamptz,management_sync_enabled boolean,management_sync_proof_hash text);
     CREATE TABLE products(id uuid PRIMARY KEY,name text,sku text,barcode text,owner_store_id text,stock_by_store jsonb,stock_quantity integer);
     CREATE TABLE stock_delta_applied(movement_id uuid PRIMARY KEY,product_id uuid,store_id text,delta integer);
     CREATE TABLE shifts(id uuid PRIMARY KEY,store_id text,status text,closed_at timestamptz);
     CREATE FUNCTION public.pos_sync_validate_scope(text,text,text) RETURNS void LANGUAGE plpgsql AS $$BEGIN RETURN; END$$;
+    CREATE FUNCTION public.pos_sync_validate_read_scope(text,text,text) RETURNS void LANGUAGE plpgsql AS
+       $$BEGIN IF $1<>'default' OR NOT EXISTS(SELECT 1 FROM public.stores WHERE id=$2)
+        THEN RAISE EXCEPTION 'SCOPE_DENIED' USING ERRCODE='42501'; END IF; END$$;
     INSERT INTO stores VALUES('A'),('B');
-    INSERT INTO terminal_tokens VALUES('${terminalId}','A','active',NULL,'pc',true,NULL,false),
-      ('${second}','B','active',NULL,'pc',true,NULL,false);
+    INSERT INTO terminal_tokens VALUES('${terminalId}','A','active',NULL,'pc',true,NULL,false,NULL),
+      ('${second}','B','active',NULL,'pc',true,NULL,false,NULL),
+      ('${managementId}',NULL,'active',NULL,'pc',true,NULL,true,repeat('a',64));
     INSERT INTO products VALUES('${product}','Grain','0004','004','A','{"A":0}',0);`);
   for (const path of ["supabase/migrations/20261105113916_stock_history_effective_ledger.sql",
     "supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql",
-    "scripts/preparation/stock-history-replica-export.sql"]) await db.exec(await readFile(new URL(path, repo), "utf8"));
+    "scripts/preparation/stock-history-replica-export.sql",
+    "scripts/preparation/stock-history-management-replica.sql",
+    "scripts/preparation/stock-history-management-replica.sql"]) await db.exec(await readFile(new URL(path, repo), "utf8"));
 
   serviceRest.mockImplementation(async (route: string, init: { body: string }) => {
     const { p_branch, p_terminal, p_snapshot, p_index } = JSON.parse(init.body);
@@ -99,6 +106,19 @@ describe("Stock Report replica export", () => {
     appendPage(staged, openings, nativeScope);
     appendPage(staged, movements, nativeScope);
     expect(staged.movements).toMatchObject([{ id: movementId, delta: "5", ingestedCursor: "42" }]);
+
+    const managementTerminal = { ...terminal, id: managementId, branchId: null, mode: "management" as const };
+    const managementRequest = { ...scope, terminalId: managementId, action: "manifest" as const };
+    expect((await stockHistoryDownload(managementRequest, managementTerminal, signal)).status).toBe(403);
+    const managementPublication = await (await stockHistoryDownload(managementRequest, managementTerminal, signal, true)).json();
+    expect(managementPublication).toMatchObject({ terminalId: managementId, manifest: { snapshotId, pages: published.manifest.pages } });
+    expect(managementPublication.manifest.revision).not.toBe(revision);
+    const managementScope = { ...nativeScope, terminalId: managementId };
+    expect(() => checkManifest(published, managementScope)).toThrow();
+    expect(checkManifest(managementPublication, managementScope)).toMatchObject({ snapshotId });
+    expect((await stockHistoryDownload({ ...managementRequest, branchId: "missing" }, managementTerminal, signal, true)).status).toBe(403);
+    await db.query("UPDATE terminal_tokens SET revoked_at=now() WHERE id=$1", [managementId]);
+    expect((await stockHistoryDownload(managementRequest, managementTerminal, signal, true)).status).toBe(403);
 
     await db.query(`UPDATE products SET stock_by_store='{"A":1}' WHERE id=$1`, [product]);
     expect((await page(snapshotId, revision, 0)).status).toBe(409);

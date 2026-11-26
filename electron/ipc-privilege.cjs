@@ -78,6 +78,7 @@ const CHANNEL_LEVELS = {
   "business:snapshot": OPEN,
   "business:query": OPEN,
   "business:management-report": OPEN, // explicit report permissions below; handler additionally verifies sealed management registration and complete replica
+  "business:management-inventory": OPEN, // dedicated read-only local replica inspection
   "business:stock-history": OPEN, // dedicated Main reader rechecks current SQL account and trusted branch
   "business:stock-history-movements": OPEN, // same dedicated stock report admission
   "business:stock-activity": OPEN, // same dedicated stock report admission
@@ -101,6 +102,7 @@ const CHANNEL_LEVELS = {
   "sync:held-sale-review-list": ADMIN,
   "sync:held-sale-review-preview": ADMIN,
   "sync:held-sale-review-resolve": ADMIN,
+  "sync:recovery-evidence": ADMIN,
   "receipts:find-exact": OPEN,
   "receipts:refund": OPEN,
   "receipts:refund-approval-status": OPEN, // Main checks current person, branch and original receipt
@@ -476,7 +478,7 @@ function allowed(channel, args = []) {
   if (channel === "business:stock-arrival-capability") {
     return adminSession.hasPosAuthority() && (adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_receive_purchase_order"));
   }
-  if (["business:stock-history", "business:stock-history-movements", "business:stock-activity"].includes(channel)) {
+  if (["business:management-inventory", "business:stock-history", "business:stock-history-movements", "business:stock-activity"].includes(channel)) {
     if (!adminSession.hasPosAuthority() || !(adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_view_inventory"))) return false;
     if (args[0]?.export === true && !(adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_export_reports"))) return false;
     return true; // Only the admitted POS frame may touch the session in its handler.
@@ -497,6 +499,8 @@ function allowed(channel, args = []) {
     // The fixed handler verifies the trusted frame before touching the session.
     return adminSession.hasPosAuthority() && adminSession.identity()?.level === "admin";
   }
+  if (channel === "sync:recovery-evidence")
+    return adminSession.hasPosAuthority() && (adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_manage_sync_backup"));
   if (channel === "business:management-report") {
     if (!adminSession.hasPosAuthority()) return false;
     const request = args[0];
@@ -713,7 +717,7 @@ function localRecoveryAction(channel, args = []) {
     "database:test-server", "database:list-databases",
   ].includes(channel);
   if (channel.startsWith("sqladmin:")) return true;
-  if (channel.startsWith("sync:")) return !["sync:get-status", "sync:get-failures", "sync:pause"].includes(channel);
+  if (channel.startsWith("sync:")) return !["sync:get-status", "sync:get-failures", "sync:recovery-evidence", "sync:pause"].includes(channel);
   if (channel.startsWith("pos:")) return true;
   if (channel === "config:set") return ["localDatabaseProfile", "localDatabaseEnabled"].includes(String(args[0]).trim());
   return ["config:write", "config:reset"].includes(channel);
@@ -738,9 +742,10 @@ function install(ipcMain, { isFirstRun, writeBarrier, isManagementDevice, isLoca
       if ((isRetainedLocalRecoveryPending?.() && (retainedConfigWrite || unboundLocalControl)) ||
           (isLocalRecoveryPending?.() && localRecoveryAction(channel, args) && !currentLocalControl))
         return { ok: false, code: "ELOCAL_RECOVERY_PENDING", error: "Use the online database while the previous local setup is awaiting verified recovery. Saved local work has been kept." };
-      // Management PCs use the hosted database. Do not let a stale local pool
-      // or cached branch credentials become an alternate business-data path.
-      if (isManagementDevice?.() && /^(?:business:|db:|local:|staff:|receipts:refund$|sync:(?:run-now|reconcile|resume)$|pos:(?:write|write-batch|query|snapshot|compare-summary|compare-rows)$)/.test(channel))
+      // Native stock reports admit their own verified Management read scope.
+      // Keep general business queries, writes and PIN admission unavailable.
+      const managementStockRead = ["business:management-inventory", "business:stock-history", "business:stock-history-movements", "business:stock-activity"].includes(channel);
+      if (isManagementDevice?.() && !managementStockRead && /^(?:business:|db:|local:|staff:|receipts:refund$|sync:(?:run-now|reconcile|resume)$|pos:(?:write|write-batch|query|snapshot|compare-summary|compare-rows)$)/.test(channel))
         return { ok: false, code: "MANAGEMENT_ONLINE_ONLY", error: "Management devices use the online database and a staff sign-in." };
       if (!allowed(channel, args)) return refusal(levelFor(channel, args), channel, args);
       if (writeBarrier && require("./sync/write-barrier.cjs").BUSINESS_WRITE_CHANNELS.has(channel))

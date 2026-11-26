@@ -5,6 +5,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { beforeAll, beforeEach, afterAll, describe, it, expect } from "vitest";
 const require=createRequire(import.meta.url),contract=require("../../../electron/db/stock-history-contract.cjs"),protocol=require("../../../electron/security/stock-event-author-protocol.cjs");
 const base=readFileSync("supabase/migrations/20261105113916_stock_history_effective_ledger.sql","utf8"),capture=readFileSync("supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql","utf8"),admission=readFileSync("supabase/migrations/20261105232647_stock_history_author_claim_admission.sql","utf8");
+const recovery=readFileSync("scripts/preparation/stock-history-accepted-receipt-recovery.sql","utf8");
 const author="10000000-0000-4000-8000-000000000001",keyId="10000000-0000-4000-8000-000000000002",terminal="20000000-0000-4000-8000-000000000001",product="30000000-0000-4000-8000-000000000001",source="70000000-0000-4000-a000-300000000000",operation="50000000-0000-4000-8000-000000000001",other="60000000-0000-4000-8000-000000000001",sale="70000000-0000-4000-8000-000000000001",shift="80000000-0000-4000-8000-000000000001";
 const pair=generateKeyPairSync("ed25519"),project="https://stock.fixture",at="2026-11-06T00:00:00.1234567Z";
 let db:PGlite;
@@ -33,7 +34,7 @@ beforeAll(async()=>{
   INSERT INTO terminal_tokens VALUES('${terminal}','a','used',NULL,'pc',true,now(),false);
   INSERT INTO products VALUES('${product}','Fixture','0001','00001','a','{"a":3,"b":2}',5,19.95);`);
  await db.query("INSERT INTO pos_sync_private.shift_author_keys VALUES($1,$2,$3,$4,$5,'cashier-a',NULL)",[keyId,author,terminal,project,pair.publicKey.export({type:"spki",format:"der"}).toString("base64url")]);
- await db.exec(base);await db.exec(capture);await db.exec(admission);
+ await db.exec(base);await db.exec(capture);await db.exec(admission);await db.exec(recovery);
 },30000);
 afterAll(async()=>db?.close());
 beforeEach(async()=>{
@@ -80,6 +81,27 @@ describe("service-only exact stock claim and accepted-effect admission",()=>{
  it("acknowledges exact accepted replay after original author revocation without new writes",async()=>{
   await effect();const ack=await accept();await db.exec("UPDATE app_users SET is_active=false;UPDATE pos_sync_private.shift_author_keys SET revoked_at=now()");
   const row=claim();row.authorState.allowed=false;expect(await accept([row])).toEqual(ack);expect(await count("stock_history_movements")).toBe(1);
+ });
+ it("recovers a retained immutable receipt only for its exact accepted bytes and enrolled till",async()=>{
+  await effect();
+  const {id,payloadHash,payloadJson}=claim(),retained={id,payloadHash,payloadJson};
+  const lookup=async(rows=[retained],origin=project,branch="a",terminalId=terminal)=>(await db.query<{ack:Record<string,unknown>}>(
+   "SELECT pos_stock_history_recover_accepted_receipts($1,$2,$3,$4::jsonb) ack",[origin,branch,terminalId,JSON.stringify(rows)])).rows[0]!.ack;
+  await expect(lookup()).rejects.toThrow(/STOCK_HISTORY_AUTHOR_REQUIRED/);
+  expect(await count("stock_history_movements")).toBe(0);
+  const ack=await accept(),before=(await db.query("SELECT * FROM public.stock_history_heads")).rows;
+  await db.exec("UPDATE app_users SET is_active=false;UPDATE pos_sync_private.shift_author_keys SET revoked_at=now()");
+  expect(await lookup()).toEqual(ack);
+  await expect(lookup([retained],"https://another.fixture")).rejects.toThrow(/STOCK_HISTORY_AUTHOR_REQUIRED/);
+  await expect(lookup([{...retained,payloadJson:payloadJson+" "}])).rejects.toThrow(/STOCK_HISTORY_AUTHOR_REQUIRED/);
+  await expect(lookup([{...retained,payloadHash:"a".repeat(64)}])).rejects.toThrow(/STOCK_HISTORY_AUTHOR_REQUIRED/);
+  await expect(lookup([retained,retained])).rejects.toThrow(/STOCK_HISTORY_INVALID_BATCH/);
+  await expect(lookup([retained],project,"b")).rejects.toThrow(/SYNC_BRANCH_FORBIDDEN/);
+  await expect(lookup([retained],project,"a",other)).rejects.toThrow(/SYNC_BRANCH_FORBIDDEN/);
+  expect((await db.query("SELECT * FROM public.stock_history_heads")).rows).toEqual(before);
+  expect(await count("stock_history_movements")).toBe(1);expect(await count("private.stock_history_effect_coverage")).toBe(1);
+  expect(await count("private.stock_history_claim_receipts")).toBe(1);
+  expect((await db.query("SELECT has_function_privilege('authenticated', 'public.pos_stock_history_recover_accepted_receipts(text,text,text,jsonb)', 'EXECUTE') ok")).rows).toEqual([{ok:false}]);
  });
  it("never consumes one physical effect twice under a different operation or movement",async()=>{
   await effect();await accept();await expect(accept([claim(other)])).rejects.toThrow(/EFFECT_ALREADY_CONSUMED/);expect(await count("stock_history_movements")).toBe(1);

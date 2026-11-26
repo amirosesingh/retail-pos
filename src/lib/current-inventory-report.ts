@@ -60,6 +60,7 @@ export function buildCurrentInventory(
   visibleAt: (product: Product, locationId: string) => boolean,
   priceLocation: string,
   mayValue: boolean,
+  scopedSellingPrice?: (productId: string, locationId: string) => number | undefined,
 ) {
   const rows: CurrentInventoryRow[] = [];
   const productIds = new Set<string>();
@@ -87,8 +88,9 @@ export function buildCurrentInventory(
         (filters.availability === "negative" && quantity >= 0) ||
         (filters.availability === "low" && !lowStock)) continue;
       // The catalogue supplies the selected branch/terminal selling price only.
-      const retailPrice = mayValue && sameBranchId(locationId, priceLocation) &&
-        Number.isFinite(product.price) && product.price >= 0 ? product.price : null;
+      const sellingPrice = scopedSellingPrice ? scopedSellingPrice(product.id, locationId) :
+        sameBranchId(locationId, priceLocation) ? product.price : undefined;
+      const retailPrice = mayValue && sellingPrice !== undefined && Number.isFinite(sellingPrice) && sellingPrice >= 0 ? sellingPrice : null;
       const stockCost = stockValue(quantity, unitCost, mayValue);
       const stockRetail = stockValue(quantity, retailPrice, mayValue);
       rows.push({ key: JSON.stringify([product.id, locationId]), product, location, quantity, unitCost, stockCost, retailPrice, stockRetail });

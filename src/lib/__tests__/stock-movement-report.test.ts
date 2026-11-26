@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createRequire } from "node:module";
 import { movementActivityWithinRange, stockMovementRange, verifiedMovementBreakdown, verifiedMovementSummary, verifiedMovementTimeline } from "../stock-movement-report";
 import type { StockActivityPage } from "../stock-activity-query";
 import type { StockHistoryMovementPage } from "../stock-history-movements";
@@ -8,15 +9,34 @@ const timeZone = "Asia/Brunei", branchId = "branch-a";
 const productId = "4cbe2fb4-2247-4d69-aa80-33d8eb087364";
 const from = "2026-11-21", now = new Date("2026-11-23T02:30:00.000Z");
 const day = stockMovementRange({ from, to: from }, branchId, timeZone, now);
+const { stockHistoryPeriod } = createRequire(import.meta.url)("../../../electron/db/stock-history-period.cjs");
 
 describe("inventory movement report dates and evidence", () => {
-  it("resolves exact business dates and uses a verified period only for one date", () => {
+  it("resolves exact business dates and pins the same start and inclusive cutoff for one or several dates", () => {
     expect(day).toEqual({ opening: "2026-11-20T16:00:00.0000000Z", cutoff: "2026-11-21T15:59:59.9999999Z",
       aggregateRequest: { branchId, timeZone, periodStart: "2026-11-20T16:00:00.0000000Z", cutoff: "2026-11-21T15:59:59.9999999Z" } });
     expect(stockMovementRange({ from, to: "2026-11-23" }, branchId, timeZone, now)).toEqual({ opening: day.opening,
-      cutoff: "2026-11-23T02:30:00.0000000Z", aggregateRequest: null });
+      cutoff: "2026-11-23T02:30:00.0000000Z", aggregateRequest: { branchId, timeZone, periodStart: day.opening,
+        cutoff: "2026-11-23T02:30:00.0000000Z" } });
     expect(() => stockMovementRange({ from, to: "2026-11-24" }, branchId, timeZone, now)).toThrow("already started");
     expect(() => stockMovementRange({ from: "2026-11-22", to: from }, branchId, timeZone, now)).toThrow("valid start and end date");
+  });
+
+  it("uses the exact last-day boundary across DST and keeps wider recorded activity available", () => {
+    const zone = "America/New_York", now = new Date("2026-04-08T12:00:00Z");
+    const range = stockMovementRange({ from: "2026-03-07", to: "2026-04-06" }, branchId, zone, now);
+    expect(range).toMatchObject({ opening: "2026-03-07T05:00:00.0000000Z", cutoff: "2026-04-07T03:59:59.9999999Z" });
+    expect(stockHistoryPeriod(range.opening, range.cutoff, zone)).toEqual({
+      start: range.opening, through: range.cutoff, endExclusive: "2026-04-07T04:00:00.0000000Z", fullDay: true,
+    });
+    expect(stockMovementRange({ from: "2026-03-07", to: "2026-04-07" }, branchId, zone, now)).toMatchObject({
+      opening: range.opening, cutoff: "2026-04-08T03:59:59.9999999Z", aggregateRequest: null,
+    });
+    for (const [start, cutoff] of [
+      [range.opening, "2026-04-07T04:00:00.0000000Z"],
+      ["2026-03-07T05:00:00.0000001Z", range.cutoff],
+      [range.opening, "2026-03-07T04:59:59.9999999Z"],
+    ]) expect(() => stockHistoryPeriod(start, cutoff, zone)).toThrowError(expect.objectContaining({ code: "ESTOCK_HISTORY_PERIOD_INVALID" }));
   });
 
   it("preserves the exclusive activity paging stop without dropping records on the opening boundary", () => {

@@ -155,7 +155,7 @@ function appendPage(staged, response, scope) {
 
 function createStockHistoryDownloader({ request, current, install, withdraw, now = Date.now }) {
   let staged = null, nextAt = 0;
-  return async (scope, assertCurrent, runInstall = work => work(assertCurrent)) => {
+  const download = async (scope, assertCurrent, runInstall = work => work(assertCurrent)) => {
     if (now() < nextAt) return null;
     try {
       const manifestRead = () => request(stockHistoryDownloadRequest(scope));
@@ -210,6 +210,8 @@ function createStockHistoryDownloader({ request, current, install, withdraw, now
       throw error;
     }
   };
+  download.hasPending = () => staged !== null;
+  return download;
 }
 
 module.exports = { checkManifest, beginDownload, appendPage, createStockHistoryDownloader, MAX_RESPONSE_BYTES };

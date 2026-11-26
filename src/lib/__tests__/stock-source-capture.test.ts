@@ -30,8 +30,16 @@ describe('original stock source claims from actual transaction readbacks',()=>{
   expect(await sourceManifestForMovement({...input,row:foreign})).toBeNull();
   expect(await sourceManifestForMovement({...input,before:f.before})).toBeNull();
   expect(await sourceManifestForMovement({...input,after:[{...after[0],stock_by_store:{a:2}}]})).toBeNull();
+  expect(await sourceManifestForMovement({...input,after:[{...after[0],name:'Different product'}]})).toBeNull();
   expect(await sourceManifestForMovement({...input,row:{...local,source_refs:[['item_activity_logs',document,'1']]}})).toBeNull();
   expect(await sourceManifestForMovement({...input,row:{...local,local_delta:'0'}})).toBeNull();
+  const edit={kind:'update',table:'products',rows:[{id:product}]};
+  expect(await sourceManifestForMovement({...input,operations:[edit]})).toBeNull();
+  expect(await sourceManifestForMovement({...input,operations:[...operations,edit]})).toBeNull();
+  expect(await sourceManifestForMovement({...input,operations:[...operations,...operations]})).toBeNull();
+  expect(await sourceManifestForMovement({...input,operations:[...operations,{...edit,rows:[{}]}]})).toBeNull();
+  expect(JSON.parse(await sourceManifestForMovement({...input,operations:[...operations,{...edit,rows:[{id:document}]}]})).document)
+   .toEqual({type:'products',id:product});
  });
  it('uses the actual receiving document and activity readbacks, never invoice time or a nonexistent table',async()=>{
   const f=fixture('RECEIVE'),queries:string[]=[];

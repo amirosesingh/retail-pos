@@ -356,15 +356,18 @@ class ChangeReader {
     if(!rows.length)return null;const row=rows[0];if(createHash('sha256').update(row.opening_payload_json,'utf8').digest('hex')!==row.opening_payload_hash)throw Object.assign(new Error('The frozen opening changed.'),{code:'EFINANCIAL_HISTORY_INVALID'});
     return prepareFinancialOpening({openingJson:row.opening_payload_json,proof:JSON.parse(row.proof_json)},branchId,terminalId);
   }
-  async financialHistory(branchId,terminalId,limit=100){
+  async financialHistory(branchId,terminalId,limit=100,heldShifts=[]){
     if(this.financialOperations?.enabled!==true)return [];
+    if(!Array.isArray(heldShifts)||heldShifts.length>100||heldShifts.some(shift=>!UUID.test(shift)))
+      throw Object.assign(new Error("The held financial shift scope is invalid."),{code:"EFINANCIAL_HISTORY_INVALID"});
     const rows=await this.financialTransaction(async tx=>(await this.financialQuery(tx,`SELECT TOP (@limit) e.*,f.computed_merged_hash,f.pending_from_hash,CONVERT(nvarchar(30),e.sequence) sequence_text FROM dbo.pos_sync_shift_financial_events e
       LEFT JOIN dbo.pos_sync_shift_financial_refreshes f ON f.branch_id=e.branch_id AND f.shift_id=e.shift_id AND f.terminal_id=e.terminal_id AND f.operation_id=e.operation_id
       JOIN dbo.pos_sync_shift_financial_origins o ON o.branch_id=e.branch_id AND o.shift_id=e.shift_id AND o.terminal_id=e.terminal_id
       WHERE e.branch_id=@branch AND e.terminal_id=@terminal AND
+       NOT EXISTS(SELECT 1 FROM OPENJSON(@heldShifts) h WHERE TRY_CONVERT(uniqueidentifier,h.[value])=e.shift_id) AND
        (JSON_VALUE(e.payload_json,'$.cloudOrigin.serverBasisId') IS NOT NULL OR EXISTS(SELECT 1 FROM dbo.local_operation_receipts r WHERE r.operation_type=N'financial_history_opened' AND r.entity_id=CONVERT(nvarchar(36),o.local_aggregate_id) AND r.note COLLATE Latin1_General_100_BIN2=o.opening_payload_hash COLLATE Latin1_General_100_BIN2+N':'+o.terminal_id))
        AND NOT EXISTS(SELECT 1 FROM dbo.local_operation_receipts r WHERE r.operation_type=N'financial_history_registered' AND r.entity_id=CONVERT(nvarchar(36),e.shift_id)+N':'+CONVERT(nvarchar(36),e.operation_id) AND r.note COLLATE Latin1_General_100_BIN2=e.payload_hash COLLATE Latin1_General_100_BIN2+N':'+e.terminal_id)
-      ORDER BY e.shift_id,e.sequence;`,{branch:branchId,terminal:terminalId,limit:Math.max(1,Math.min(100,Number(limit)||100))})).recordset??[]);
+      ORDER BY e.shift_id,e.sequence;`,{branch:branchId,terminal:terminalId,limit:Math.max(1,Math.min(100,Number(limit)||100)),heldShifts:JSON.stringify(heldShifts)})).recordset??[]);
     const items=[];
     for(const row of rows){const item={kind:row.event_kind,branchId:row.branch_id,terminalId:row.terminal_id,shiftId:String(row.shift_id).toLowerCase(),operationId:String(row.operation_id).toLowerCase(),sequence:row.sequence_text,payloadJson:row.payload_json,payloadHash:row.payload_hash,proof:JSON.parse(row.proof_json)};
       if(row.action==='REFUND'){
@@ -624,8 +627,14 @@ class ChangeReader {
   async acknowledgeAggregate(aggregateId) {
     await this.connectionManager.pool.request().input("aggregate", aggregateId).query("UPDATE dbo.sync_change_journal SET acknowledged_at=SYSDATETIMEOFFSET(),last_error=NULL WHERE aggregate_id=@aggregate AND acknowledged_at IS NULL;");
   }
-  async failAggregate(aggregateId, error) {
-    await this.connectionManager.pool.request().input("aggregate", aggregateId).input("error", String(error?.message ?? error).slice(0, 1000)).query("UPDATE dbo.sync_change_journal SET retry_count=retry_count+1,last_error=@error WHERE aggregate_id=@aggregate AND acknowledged_at IS NULL;");
+  async failAggregate(aggregateId, error, branchId = null) {
+    await this.connectionManager.pool.request()
+      .input("aggregate", aggregateId)
+      .input("error", String(error?.message ?? error).slice(0, 1000))
+      .input("branch", branchId)
+      .query(`UPDATE dbo.sync_change_journal SET retry_count=retry_count+1,last_error=@error
+        WHERE aggregate_id=@aggregate AND acknowledged_at IS NULL
+          AND (@branch IS NULL OR branch_id COLLATE Latin1_General_100_BIN2=@branch);`);
   }
   async pendingSummary(branchId) {
     const result = await this.connectionManager.pool.request().input("branch", branchId).query(`SELECT

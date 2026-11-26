@@ -1,7 +1,14 @@
 import { PGlite } from "@electric-sql/pglite";
+import { randomUUID, sign } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { buildStockSourceCohort } from "../../../electron/shared/stock-source-cohort.mjs";
 
+const require = createRequire(import.meta.url);
+const { createActualStockWriter } = require("../../../scripts/lib/stock-actual-writer-fixture.cjs");
+const { changes, normalizeContext } = require("../../../electron/db/stock-history-contract.cjs");
+const { stockSourceCohortMessage, stockEventMessage } = require("../../../electron/security/stock-event-author-protocol.cjs");
 const ledger = readFileSync("supabase/migrations/20261105113916_stock_history_effective_ledger.sql", "utf8");
 const effects = readFileSync("supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql", "utf8");
 const prepared = readFileSync("scripts/preparation/stock-history-product-membership.sql", "utf8");
@@ -41,7 +48,7 @@ afterAll(async () => db?.close());
 
 describe("recorded product membership evidence", () => {
   it("records no backfill and treats an existing current product as historically unknown", async () => {
-    expect(await observe("A", uuid(1))).toMatchObject({ status: "unknown", membershipVerified: false, observations: [] });
+    expect(await observe("A", uuid(1))).toMatchObject({ status: "unknown", membershipVerified: false, observations: [], creation: null });
   });
 
   it("retains independent zero birth and physical removal identity despite deleting the live row", async () => {
@@ -51,7 +58,7 @@ describe("recorded product membership evidence", () => {
       UPDATE public.products SET name='Last known name',is_archived=true,row_version=2 WHERE id='${item}';
       DELETE FROM public.products WHERE id='${item}';`);
     const evidence = await observe("A", item);
-    expect(evidence).toMatchObject({ status: "recorded_unresolved", reason: "ORIGINAL_MEMBERSHIP_TIME_UNVERIFIED", membershipVerified: false,
+    expect(evidence).toMatchObject({ status: "recorded_unresolved", reason: "ORIGINAL_MEMBERSHIP_TIME_UNVERIFIED", membershipVerified: false, creation: null,
       observations: [
         { kind: "product_deleted", sourceVersion: 2, identity: { name: "Last known name", sku: "002", barcode: "0002", ownerStoreId: "A" } },
         { kind: "product_created", sourceVersion: 1, identity: { name: "Zero at birth", sku: "002", barcode: "0002", ownerStoreId: "A" } },
@@ -61,6 +68,105 @@ describe("recorded product membership evidence", () => {
     expect(await observe("a", item)).toMatchObject({ status: "unknown", observations: [] });
     expect((await db.query("SELECT count(*)::int n FROM public.stock_history_movements")).rows[0]).toEqual({ n: 0 });
     expect((await db.query("SELECT count(*)::int n FROM public.products WHERE id=$1::uuid", [item])).rows[0]).toEqual({ n: 0 });
+  });
+
+  it("matches an explicit initial balance to the committed scoped insert without verifying its effective time", async () => {
+    const item = uuid(22);
+    await db.query(`INSERT INTO public.products(id,name,sku,barcode,owner_store_id,stock_by_store)
+      VALUES($1,'Initial identity','022','00022','A','{"A":0}')`, [item]);
+    await db.query(`UPDATE public.products SET name='Renamed',barcode='other',stock_by_store='{"A":5}'
+      WHERE id=$1`, [item]);
+    expect(await observe("A", item, "1")).toMatchObject({
+      membershipVerified: false,
+      reason: "ORIGINAL_MEMBERSHIP_TIME_UNVERIFIED",
+      creation: { initialQuantity: "0", identity: { name: "Initial identity", barcode: "00022" }, admittedSource: null },
+    });
+    expect(await observe("B", item)).toMatchObject({ creation: null });
+    await db.query("DELETE FROM public.products WHERE id=$1", [item]);
+    await db.query(`INSERT INTO public.products(id,name,sku,barcode,owner_store_id,stock_by_store)
+      VALUES($1,'Reused identity','022','00022','A','{"A":0}')`, [item]);
+    expect(await observe("A", item)).toMatchObject({ membershipVerified: false, creation: null });
+  });
+
+  it("leaves an intermediate insert quantity within a single transaction unavailable", async () => {
+    const item = uuid(23);
+    await db.exec(`BEGIN;
+      INSERT INTO public.products(id,name,barcode,owner_store_id,stock_by_store)
+      VALUES('${item}','Changed before commit','023','A','{"A":0}');
+      UPDATE public.products SET stock_by_store='{"A":5}' WHERE id='${item}';
+      COMMIT;`);
+    expect(await observe("A", item)).toMatchObject({ membershipVerified: false, creation: null });
+  });
+
+  it("holds intermediate owners and product IDs reused in another scope", async () => {
+    const changedOwner = uuid(24), reusedId = uuid(25);
+    await db.exec(`BEGIN;
+      INSERT INTO public.products(id,name,barcode,owner_store_id,stock_by_store)
+      VALUES('${changedOwner}','Owner changed before commit','024','A','{"A":0}');
+      UPDATE public.products SET owner_store_id='B' WHERE id='${changedOwner}';
+      COMMIT;`);
+    expect(await observe("A", changedOwner)).toMatchObject({ membershipVerified: false, creation: null });
+    expect(await observe("B", changedOwner)).toMatchObject({ membershipVerified: false, creation: null });
+    await db.query(`INSERT INTO public.products(id,name,barcode,owner_store_id,stock_by_store)
+      VALUES($1,'First scope','025','A','{"A":0}')`, [reusedId]);
+    await db.query("DELETE FROM public.products WHERE id=$1", [reusedId]);
+    const original = await observe("A", reusedId);
+    expect(original).toMatchObject({ creation: { initialQuantity: "0" } });
+    await db.query(`INSERT INTO public.products(id,name,barcode,owner_store_id,stock_by_store)
+      VALUES($1,'Different scoped identity','025','B','{"B":0}')`, [reusedId]);
+    const invalidated = await observe("A", reusedId);
+    expect(invalidated).toMatchObject({ creation: null });
+    expect(invalidated.revision).not.toBe(original.revision);
+    expect(await observe("B", reusedId)).toMatchObject({ creation: null });
+  });
+
+  it("reports a PRODUCT_CREATE time only as the original signed claim admitted for its exact project", async () => {
+    const fixture = await createActualStockWriter({ sourceAdmission: true, capturedAdjustment: true });
+    try {
+      const { db, scalar, author, terminal } = fixture;
+      const { project, database, key, pair } = fixture.stockSourceFixture;
+      await db.exec(`ALTER TABLE public.stock_transfers ADD COLUMN IF NOT EXISTS verified_at timestamptz;
+        ALTER TABLE public.stock_transfer_items ADD COLUMN IF NOT EXISTS id uuid;
+        CREATE INDEX IF NOT EXISTS stock_transfer_items_transfer_idx ON public.stock_transfer_items(transfer_id);`);
+      await db.exec(prepared);
+      await db.query(`UPDATE app_users SET permissions='{"can_add_new_product":true}' WHERE id=$1`, [author]);
+      const productId = randomUUID(), operationId = randomUUID(), batch = randomUUID();
+      const product = { ...await fixture.productRow(4), id: productId, name: "New item fixture", barcode: productId, owner_store_id: "A" };
+      const claimedAt = "2026-11-06T01:02:03.1234567Z";
+      const row = changes(normalizeContext({ operationId, branchId: "A", terminalId: terminal, actorId: author, kind: "product" }, claimedAt), [], [product])[0];
+      const cohort = await buildStockSourceCohort([{
+        version: 1, operationId, action: "PRODUCT_CREATE", document: { type: "products", id: productId },
+        authorId: author, terminalId: terminal, branchId: "A", productId, delta: "4",
+        effectiveAt: claimedAt, recordedAt: claimedAt, sourceRefs: [],
+      }]);
+      const common = { version: 1, algorithm: "Ed25519", projectOrigin: project, terminalId: terminal, authorId: author,
+        subject: author, branchId: "A", operationId, action: "PRODUCT_CREATE", keyId: key };
+      const header = { ...common, sourceDatabaseId: database, sourceSequence: "1", sourceRoot: cohort.root, sourceCount: 1, sourcePredecessorRoot: null };
+      const proofJson = JSON.stringify({ ...header, signature: sign(null, stockSourceCohortMessage(header), pair.privateKey).toString("base64url") });
+      const member = cohort.members[0]!;
+      const proof = { ...common, movementId: row.id, payloadHash: row.payload_hash, sourceManifestJson: member.manifestJson };
+      const submission = { id: row.id, payloadHash: row.payload_hash, payloadJson: row.payload_json,
+        authorProofJson: JSON.stringify({ ...proof, signature: sign(null, stockEventMessage(proof), pair.privateKey).toString("base64url") }),
+        sourceCohortJson: JSON.stringify({ proofJson, member, sourceBatchId: batch }), authorState: { allowed: true },
+        sourceState: { verified: true, sourceBatchId: batch, proofJson, manifestJson: member.manifestJson, memberIndex: 0, timeGrade: "author_claimed" } };
+      const evidence = (origin: string) => scalar(
+        "SELECT private.stock_history_product_membership_evidence('A',$1,1,$2)", [productId, origin]);
+      expect(await scalar("SELECT public.pos_sync_push_stock_source_aggregate($1,'default','A',$2,$3::jsonb,$4,$5::jsonb)", [
+        batch, terminal, JSON.stringify([{ table: "products", rows: [product], changes: [] }]), project, JSON.stringify([{ proofJson }]),
+      ])).toMatchObject({ ok: true, stockSourceStatus: "captured_unverified" });
+      expect(await evidence(project)).toMatchObject({ membershipVerified: false, creation: { initialQuantity: "4", admittedSource: null } });
+      expect(await scalar("SELECT public.pos_stock_history_accept_claims($1,'A',$2,$3::jsonb)", [
+        project, terminal, JSON.stringify([submission]),
+      ])).toMatchObject({ ok: true });
+      expect(await evidence(project)).toMatchObject({ membershipVerified: false, creation: {
+        initialQuantity: "4", identity: { name: "New item fixture", barcode: productId },
+        admittedSource: { movementId: row.id, claimedAt, timeGrade: "author_claimed" },
+      } });
+      expect(await evidence("https://other.fixture")).toMatchObject({ creation: { admittedSource: null } });
+      expect(await scalar("SELECT coverage_state FROM public.stock_history_heads WHERE store_id='A'")).toBe("incomplete");
+    } finally {
+      await fixture.db.close();
+    }
   });
 
   it("keeps direct owner transitions separately and ignores quantity-only, archive, and same-owner writes", async () => {
@@ -144,7 +250,7 @@ describe("recorded product membership evidence", () => {
         UPDATE public.products SET owner_store_id='A' WHERE id='${item}';
       END LOOP; END $body$;`);
     const evidence = await observe("A", item);
-    expect(evidence).toMatchObject({ membershipVerified: false, hasMoreObservations: true, revision: expect.stringMatching(/^stock-membership\.v1:43:\d+$/) });
+    expect(evidence).toMatchObject({ membershipVerified: false, hasMoreObservations: true, revision: expect.stringMatching(/^stock-membership\.v3:43:\d+:-:-$/) });
     expect(evidence.observations).toHaveLength(20);
     expect(evidence.observations).toEqual(expect.arrayContaining([expect.objectContaining({ identity: null })]));
     expect((await db.query("SELECT length(name) AS length FROM public.products WHERE id=$1::uuid", [item])).rows[0]).toEqual({ length: 12000 });

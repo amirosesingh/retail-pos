@@ -1,11 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadStockHistoryMovements } from "../stock-history-movements-client";
 
 const transport = vi.hoisted(() => ({
-  mode: vi.fn(), management: vi.fn(), epoch: vi.fn(), bridge: vi.fn(), native: vi.fn(), hosted: vi.fn(), auth: vi.fn(),
+  mode: vi.fn(), management: vi.fn(), windows: vi.fn(), epoch: vi.fn(), bridge: vi.fn(),
+  desktopBridge: vi.fn(), native: vi.fn(), hosted: vi.fn(), auth: vi.fn(),
 }));
 vi.mock("@/core/local-db/local-db", () => ({ localDb: transport.bridge }));
 vi.mock("@/core/local-db/db-mode", () => ({ effectiveDatabaseMode: transport.mode }));
+vi.mock("@/platform-config/features", () => ({ isWindowsShell: transport.windows }));
+vi.mock("../desktop-bridge-registry", () => ({ desktopBridge: transport.desktopBridge }));
 vi.mock("../management-device", () => ({ isManagementDevice: transport.management }));
 vi.mock("../session-epoch", () => ({ sessionEpoch: transport.epoch }));
 vi.mock("../pos-caller-auth", () => ({ getPosCallerAuth: transport.auth }));
@@ -25,10 +28,13 @@ describe("stock movement client dispatch", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     transport.mode.mockReturnValue("local"); transport.management.mockReturnValue(false); transport.epoch.mockReturnValue(1);
+    transport.windows.mockReturnValue(false);
     transport.bridge.mockReturnValue({ stockHistoryMovements: transport.native });
+    transport.desktopBridge.mockReturnValue({ stockHistoryMovements: transport.native });
     transport.native.mockResolvedValue({ ok: true, page }); transport.hosted.mockResolvedValue(page);
     transport.auth.mockResolvedValue({ accessToken: "owned-fixture" });
   });
+  afterEach(() => vi.unstubAllGlobals());
 
   it("uses the local authorized bridge for local tills", async () => {
     await expect(loadStockHistoryMovements(request)).resolves.toEqual(page);
@@ -37,12 +43,23 @@ describe("stock movement client dispatch", () => {
     expect(transport.hosted).not.toHaveBeenCalled();
   });
 
-  it.each(["online", "management"])("uses the hosted action for %s scope", async route => {
-    if (route === "management") transport.management.mockReturnValue(true);
-    else transport.mode.mockReturnValue("online");
+  it("uses the hosted action for an online web client", async () => {
+    transport.mode.mockReturnValue("online");
     await expect(loadStockHistoryMovements(request)).resolves.toEqual(page);
     expect(transport.hosted).toHaveBeenCalledWith({ data: { accessToken: "owned-fixture", request } });
     expect(transport.native).not.toHaveBeenCalled();
+  });
+
+  it("uses the dedicated local reader for Management Electron even when general business reads are online", async () => {
+    vi.stubGlobal("window", { pos: null });
+    transport.windows.mockReturnValue(true);
+    transport.management.mockReturnValue(true);
+    transport.mode.mockReturnValue("online");
+    transport.bridge.mockReturnValue(null);
+    await expect(loadStockHistoryMovements(request)).resolves.toEqual(page);
+    expect(transport.desktopBridge).toHaveBeenCalledWith("pos", null);
+    expect(transport.native).toHaveBeenCalledWith(request);
+    expect(transport.hosted).not.toHaveBeenCalled();
   });
 
   it("does not retry a denied local read against the hosted branch", async () => {

@@ -49,6 +49,7 @@ beforeEach(()=>{
  h.authority.mockReset().mockResolvedValue({authorId:author,subject:'original-a',branchId:'a',level:'staff',permissions:{can_process_sale:true}});
  h.rest.mockReset().mockImplementation(async(path:string,options:RequestInit)=>{
   if(path==='rpc/pos_shift_author_key')return Response.json({terminal_enrolled:true,key:{key_id:keyId,author_id:author,terminal_id:'terminal-a',project_origin:'https://stock.fixture',public_key:pair.publicKey.export({type:'spki',format:'der'}).toString('base64url'),subject:'original-a',revoked_at:null}});
+  if(path==='rpc/pos_stock_history_recover_accepted_receipts')return Response.json({message:'STOCK_HISTORY_AUTHOR_REQUIRED'},{status:400});
   if(path==='rpc/pos_stock_history_accept_claims'){
    const input=JSON.parse(String(options.body));return Response.json({ok:true,version:1,branchId:input.p_branch,terminalId:input.p_terminal,receipts:input.p_rows.map((r:{id:string;payloadHash:string},index:number)=>({id:r.id,payloadHash:r.payloadHash,ingestedCursor:String(index+1),acceptedAt:at,effectIds:[`40000000-0000-4000-8000-${String(index+1).padStart(12,'0')}`]}))});
   }
@@ -99,6 +100,42 @@ describe('shared authenticated relay stock-history admission composition',()=>{
   h.authority.mockResolvedValue({authorId:author,subject:'original-a',branchId:'a',level:'staff',permissions:{}});
   expect((await call()).status).toBe(200);
   const input=JSON.parse(String(h.rest.mock.calls.find(([path])=>path==='rpc/pos_stock_history_accept_claims')![1].body));expect(input.p_rows[0].authorState.allowed).toBe(false);
+ });
+ it('recovers the exact prior receipt without contacting a signer or invoking claim admission',async()=>{
+  const {authorProofJson,...retained}=row(),movement={...retained};
+  h.rest.mockImplementationOnce(async(path:string,options:RequestInit)=>{
+   expect(path).toBe('rpc/pos_stock_history_recover_accepted_receipts');
+   expect(JSON.parse(String(options.body))).toEqual({p_project:'https://stock.fixture',p_branch:'a',p_terminal:'terminal-a',p_rows:[movement]});
+   return Response.json({ok:true,version:1,branchId:'a',terminalId:'terminal-a',receipts:[{id:movement.id,payloadHash:movement.payloadHash,
+    ingestedCursor:'5',acceptedAt:at,effectIds:['40000000-0000-4000-8000-000000000005'],authorProofJson}]});
+  });
+  const response=await call(upload([movement] as ReturnType<typeof row>[]));expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ok:true,version:1,branchId:'a',terminalId:'terminal-a',receipts:[{id:movement.id,payloadHash:movement.payloadHash,
+   ingestedCursor:'5',acceptedAt:at,effectIds:['40000000-0000-4000-8000-000000000005']}]});
+  expect(h.rest).toHaveBeenCalledTimes(1);expect(h.authority).not.toHaveBeenCalled();
+ });
+ it('keeps the original review hold on a mixed page when no exact receipt exists',async()=>{
+  const {authorProofJson:_proof,...movement}=row(2);
+  const response=await call(upload([row(),movement as ReturnType<typeof row>]));
+  expect(response.status).toBe(409);expect(await response.json()).toMatchObject({ok:false,code:'ESTOCK_HISTORY_AUTHOR_REQUIRED'});
+  expect(h.rest.mock.calls.some(([path])=>path==='rpc/pos_stock_history_accept_claims')).toBe(false);
+ });
+ it.each([false,true])('combines a recovered and a new receipt only when both are distinct (duplicate=%s)',async duplicate=>{
+  const fresh=row(),{authorProofJson:_proof,...retained}=row(2),delegate=h.rest.getMockImplementation()!;
+  h.rest.mockImplementation(async(path:string,options:RequestInit)=>{
+   if(path!=='rpc/pos_stock_history_recover_accepted_receipts')return delegate(path,options);
+   expect(JSON.parse(String(options.body)).p_rows).toEqual([retained]);
+   return Response.json({ok:true,version:1,branchId:'a',terminalId:'terminal-a',receipts:[{
+    id:retained.id,payloadHash:retained.payloadHash,ingestedCursor:duplicate?'1':'2',acceptedAt:at,
+    effectIds:['40000000-0000-4000-8000-000000000002'],
+   }]});
+  });
+  const response=await call(upload([fresh,retained as ReturnType<typeof row>]));
+  expect(response.status).toBe(duplicate?503:200);
+  const result=await response.json();
+  if(duplicate) expect(result).toMatchObject({ok:false,code:'ESTOCK_HISTORY_ACK_UNCONFIRMED'});
+  else expect(result).toMatchObject({ok:true,receipts:[{id:retained.id,ingestedCursor:'2'},{id:fresh.id,ingestedCursor:'1'}]});
+  expect(h.rest.mock.calls.filter(([path])=>path==='rpc/pos_stock_history_accept_claims')).toHaveLength(1);
  });
  it('reports unsupported source-origin evidence as retained work, not an accepted HTTP success',async()=>{
   const delegate=h.rest.getMockImplementation()!;h.rest.mockImplementation(async(path:string,options:RequestInit)=>path==='rpc/pos_stock_history_accept_claims'?Response.json({message:'STOCK_HISTORY_SOURCE_ORIGIN_UNPROVEN'},{status:409}):delegate(path,options));

@@ -13,9 +13,9 @@ import { isNativeDatabaseSnapshot, nativeSyncSummary } from "@/lib/sync-status-s
 import { LegacyShiftRecoveryReview } from "./LegacyShiftRecoveryReview";
 import { HeldBillRecoveryReview } from "./HeldBillRecoveryReview";
 import { sameBranchId } from "@/lib/branch-id";
-import type { StoreSettingsEditUpload } from "@/core/local-db/local-db";
+import type { RecoveryEvidenceKind, SavedRecoveryEvidence, StoreSettingsEditUpload } from "@/core/local-db/local-db";
 
-type DatabaseState = { state?: string; enabled?: boolean; connected?: boolean; tradingReady?: boolean; localRecoveryPending?: boolean; profile?: { database?: string } | null };
+type DatabaseState = { state?: string; enabled?: boolean; connected?: boolean; tradingReady?: boolean; localRecoveryPending?: boolean; profile?: { database?: string; id?: string; host?: string; instanceName?: string; port?: number } | null };
 type TableStatus = { table: string; local: string; cloud: string; status: "SYNCED" | "VERIFIED" | "DIFFERENT"; verified?: boolean; comparedAt?: string | null };
 const groupedSettingsLabels = {
   PAUSED: "Paused",
@@ -56,6 +56,7 @@ type DatabaseApi = {
 type JobsApi = { getActive(): Promise<DatabaseJob | null>; subscribe(cb: (job: DatabaseJob | null) => void): () => void };
 type SyncApi = {
   getStatus(): Promise<SyncState>; getFailures(): Promise<Failures>; runNow(options: Result): Promise<Result>;
+  getRecoveryEvidence?(input: { batchId: string; kind: RecoveryEvidenceKind }): Promise<SavedRecoveryEvidence | { ok: false; error: string }>;
   pause(): Promise<Result>; resume(): Promise<Result>; reconcile(options: Result): Promise<Result>;
   subscribe(cb: (state: SyncState) => void): () => void;
 };
@@ -65,8 +66,73 @@ const label = (value?: string) => (value ?? "idle").replaceAll("_", " ").replace
 const isDatabaseConnectivityFailure = (failure: FailureRow) => /(?:E?CONN(?:ECT|REFUSED|RESET)|ETIMEOUT|ESOCKET|ELOGIN|ENOTOPEN|network|failed to fetch|sql server|database (?:connection|offline|unreachable)|could not (?:connect|reach)|unable to (?:connect|reach))/i.test(
   `${failure.error_code ?? ""} ${failure.error_message ?? ""}`,
 );
+const financialReview = {
+  FIN62_OPEN_BIRTH_NOT_EMPTY: {
+    title: "Saved shift opening needs review",
+    message: "The central database found a sale linked to the shift when verifying its opening.",
+  },
+  FIN62_SALE_BIRTH_ALREADY_EXISTS: {
+    title: "Saved sale needs review",
+    message: "The central database already has a sale with this ID.",
+  },
+};
 
-export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}) {
+function financialReviewReason(message?: string | null): keyof typeof financialReview | null {
+  const match = /^(FIN62_OPEN_BIRTH_NOT_EMPTY|FIN62_SALE_BIRTH_ALREADY_EXISTS)(?: \(table: (?:transaction batch|shifts|sales)\))?$/.exec(message?.trim() ?? "");
+  return (match?.[1] as keyof typeof financialReview | undefined) ?? null;
+}
+
+const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const evidenceLabels = {
+  shift: { label: "Shift opening", reason: "The central database already has a sale linked to this shift." },
+  sale: { label: "Sale", reason: "The central database already has a sale with this ID." },
+  stock: { label: "Stock movement", reason: "The original author proof or matching stock receipt has not been confirmed." },
+};
+const receiptLabels = {
+  opening: "Shift-opening acceptance receipt saved",
+  "financial-metadata": "Financial history receipt saved. Complete sale acceptance remains unconfirmed.",
+  stock: "Stock movement acceptance saved",
+};
+const proofLabels = { saved: "Saved on this till", missing: "Missing on this till", partial: "Missing for some rows" };
+type VerificationCase = { batchId: string; kind: RecoveryEvidenceKind };
+type EvidenceCheck = { scope: string; entry: VerificationCase; state: "checking" }
+  | { scope: string; entry: VerificationCase; state: "unavailable" }
+  | { scope: string; entry: VerificationCase; state: "checked"; data: SavedRecoveryEvidence };
+
+function verificationCase(row: BusinessBatchRow): VerificationCase | null {
+  if (!row.aggregate_id || !uuid.test(row.aggregate_id)) return null;
+  const batchId = row.aggregate_id.toLowerCase();
+  const financial = financialReviewReason(row.error);
+  if (financial === "FIN62_OPEN_BIRTH_NOT_EMPTY" && row.entity_type === "shifts") return { batchId, kind: "shift" };
+  if (financial === "FIN62_SALE_BIRTH_ALREADY_EXISTS") return { batchId, kind: "sale" };
+  if (row.entity_type === "stock_history_movements" &&
+      /^(?:Stock history needs source\/author review \()?E?STOCK_HISTORY_AUTHOR_REQUIRED(?:\)\. Existing business data and pending evidence are retained\.)?$/.test(row.error?.trim() ?? ""))
+    return { batchId, kind: "stock" };
+  return null;
+}
+
+function validEvidence(result: SavedRecoveryEvidence | { ok: false }, entry: VerificationCase, branchId: string): result is SavedRecoveryEvidence {
+  if (result?.ok !== true || result.kind !== entry.kind || result.batchId !== entry.batchId || !sameBranchId(result.branchId, branchId) ||
+      !uuid.test(result.reference) || typeof result.savedAt !== "string" || !Number.isFinite(Date.parse(result.savedAt)) ||
+      !Number.isInteger(result.savedRows) || result.savedRows < 1 || result.savedRows > 100 ||
+      !Number.isInteger(result.queuedRows) || result.queuedRows < 0 || result.queuedRows > result.savedRows ||
+      !Object.hasOwn(proofLabels, result.originalProof)) return false;
+  const expected = entry.kind === "sale" ? "financial-metadata" : entry.kind === "shift" ? "opening" : "stock";
+  return result.receipt === null || (result.receipt === expected && (expected !== "stock" || result.queuedRows === 0));
+}
+
+function DatabaseErrorDetail({ failure }: { failure: DatabaseErrorRow }) {
+  return <div className="rounded-md border p-3 text-sm">
+    <div className="font-medium">{label(failure.category ?? "Database")} · {label(failure.stage ?? failure.event)}</div>
+    <div className="mt-1 text-destructive">{failure.message || "No error message was recorded."}</div>
+    <div className="mt-1 text-xs text-muted-foreground">{[
+      failure.code, Number(failure.occurrences ?? 1) > 1 ? `Repeated ${failure.occurrences} times` : null,
+      failure.state ? label(failure.state) : null, failure.occurred_at ? when(failure.occurred_at) : null,
+    ].filter(Boolean).join(" · ")}</div>
+  </div>;
+}
+
+export function LocalDatabaseOperations({ branchId, reviewOperator }: { branchId?: string; reviewOperator?: string } = {}) {
   const [state, setState] = useState<DatabaseState>({});
   const [health, setHealth] = useState<Result>({});
   const [schema, setSchema] = useState<Result>({});
@@ -76,7 +142,11 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
   const [databaseReadFailed, setDatabaseReadFailed] = useState(false);
   const syncReadSequence = useRef(0);
   const databaseReadSequence = useRef(0);
-  const invalidateStatusReads = useCallback(() => { syncReadSequence.current++; databaseReadSequence.current++; }, []);
+  const failureReadSequence = useRef(0);
+  const reviewReadSequence = useRef(0);
+  const invalidateStatusReads = useCallback(() => {
+    syncReadSequence.current++; databaseReadSequence.current++; failureReadSequence.current++; reviewReadSequence.current++;
+  }, []);
   const applyDatabase = useCallback((next: DatabaseState) => {
     databaseReadSequence.current++;
     if (isNativeDatabaseSnapshot(next)) { setState(next); setDatabaseReadFailed(false); }
@@ -94,6 +164,23 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
   const [busy, setBusy] = useState(false);
   const [failureDetailsOpen, setFailureDetailsOpen] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [evidenceCheck, setEvidenceCheck] = useState<EvidenceCheck | null>(null);
+  const scope = JSON.stringify([branchId, reviewOperator, state.profile?.id, state.profile?.host,
+    state.profile?.instanceName, state.profile?.port, state.profile?.database, state.connected]);
+  const currentCheck = evidenceCheck?.scope === scope ? evidenceCheck : null;
+  useEffect(() => { reviewReadSequence.current++; setEvidenceCheck(null); }, [scope]);
+
+  const refreshFailures = useCallback(async () => {
+    const request = ++failureReadSequence.current;
+    const read = shell().sync?.getFailures;
+    if (!read) return;
+    try {
+      const current = await read();
+      if (request === failureReadSequence.current) setFailures(current ?? {});
+    } catch {
+      if (request === failureReadSequence.current) setFailures({});
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     const api = shell();
@@ -101,7 +188,7 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
     const databaseRequest = ++databaseReadSequence.current;
     const requests = await Promise.allSettled([
       api.database?.getState(), api.database?.health(), api.database?.schemaStatus(),
-      api.jobs?.getActive(), api.sync?.getStatus(), api.sync?.getFailures(),
+      api.jobs?.getActive(), api.sync?.getStatus(), refreshFailures(),
     ]);
     if (databaseRequest === databaseReadSequence.current) {
       if (requests[0].status === "fulfilled" && isNativeDatabaseSnapshot(requests[0].value)) applyDatabase(requests[0].value as DatabaseState);
@@ -114,15 +201,36 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
       if (requests[4].status === "fulfilled" && requests[4].value) applySync(requests[4].value as SyncState);
       else setSyncReadFailed(true);
     }
-    if (requests[5].status === "fulfilled" && requests[5].value) setFailures(requests[5].value as Failures);
-  }, [applySync, applyDatabase]);
+  }, [applySync, applyDatabase, refreshFailures]);
 
   useEffect(() => {
     void refresh();
     const api = shell();
-    const unsubscribe = [api.database?.subscribe?.(applyDatabase), api.jobs?.subscribe?.(setJob), api.sync?.subscribe?.(applySync)].filter(Boolean) as Array<() => void>;
+    let wasRunning = false;
+    const updateSync = (next: SyncState) => {
+      applySync(next);
+      if (wasRunning && next.running === false) void refreshFailures();
+      wasRunning = next.running === true;
+    };
+    const unsubscribe = [api.database?.subscribe?.(applyDatabase), api.jobs?.subscribe?.(setJob), api.sync?.subscribe?.(updateSync)].filter(Boolean) as Array<() => void>;
     return () => { invalidateStatusReads(); unsubscribe.forEach((stop) => stop()); };
-  }, [refresh, applySync, applyDatabase, invalidateStatusReads]);
+  }, [refresh, applySync, applyDatabase, invalidateStatusReads, refreshFailures]);
+
+  const verifySavedRecord = async (entry: VerificationCase) => {
+    const read = shell().sync?.getRecoveryEvidence;
+    if (!read || !state.connected || !branchId || !reviewOperator) return;
+    const request = ++reviewReadSequence.current;
+    setEvidenceCheck({ scope, entry, state: "checking" });
+    try {
+      const result = await read(entry);
+      if (request !== reviewReadSequence.current) return;
+      setEvidenceCheck(validEvidence(result, entry, branchId)
+        ? { scope, entry, state: "checked", data: result }
+        : { scope, entry, state: "unavailable" });
+    } catch {
+      if (request === reviewReadSequence.current) setEvidenceCheck({ scope, entry, state: "unavailable" });
+    }
+  };
 
   const run = async (success: string, work: () => Promise<Result>) => {
     if (busy) return;
@@ -132,17 +240,24 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
       if (result.ok === false) throw new Error(String(result.error ?? "The operation did not complete."));
       const differences = Array.isArray(result.differences) ? result.differences.length : 0;
       const historyPending = result.historyPending === true || result.historyHoldOnly === true;
+      const stockHistoryPending = typeof result.heldStockHistoryAggregates === "number" &&
+        Number.isSafeInteger(result.heldStockHistoryAggregates) && result.heldStockHistoryAggregates > 0;
       const synced = result as SyncState;
       const upload = synced.storeSettingsEditUpload;
       const download = synced.groupedSettingsPilot;
       const settingsPending = Boolean(branchId && ((upload && sameBranchId(branchId, upload.branchId) && upload.status !== "EMPTY") ||
         (download && sameBranchId(branchId, download.branchId) && !["CAUGHT_UP", "HANDED_BACK"].includes(download.status))));
-      const pending = historyPending || settingsPending;
-      const status = historyPending ? "Protected history is still pending." : settingsPending ? "Store settings synchronization is still pending." : success;
+      const pending = historyPending || stockHistoryPending || settingsPending;
+      const status = historyPending ? "Protected history is still pending."
+        : stockHistoryPending ? "Stock history still needs verification."
+        : settingsPending ? "Store settings synchronization is still pending." : success;
       setMessage({ text: differences ? `${status} ${differences} difference${differences === 1 ? " remains" : "s remain"}.` : status, pending });
       await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      const failure = cause instanceof Error ? cause.message : String(cause);
+      const reason = financialReviewReason(failure);
+      setError(reason ? `${financialReview[reason].title}. ${financialReview[reason].message}` : failure);
+      if (reason) await refresh();
     } finally { setBusy(false); }
   };
 
@@ -150,6 +265,13 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
   const failureCount = jobFailureCount + (failures.databaseErrors?.length ?? 0) + (failures.businessBatches?.length ?? 0) + (failures.conflictRows?.length ?? 0);
   const activeErrorCount = Number(sync.failed ?? 0) + (sync.lastError ? 1 : 0) + (state.connected === false ? 1 : 0);
   const hasDatabaseConnectivityError = state.connected === false || (Boolean(sync.lastError) && isDatabaseConnectivityFailure({ error_message: sync.lastError }));
+  const review = financialReviewReason(sync.lastError);
+  const canReviewEvidence = Boolean(branchId && reviewOperator && shell().sync?.getRecoveryEvidence);
+  const cases = canReviewEvidence ? (failures.businessBatches ?? []).flatMap(row => {
+    const entry = verificationCase(row);
+    return entry ? [{ ...entry, savedAt: row.created_at }] : [];
+  }) : [];
+  const databaseErrors = failures.databaseErrors ?? [];
   const conflictCount = Number(failures.conflicts ?? failures.conflictRows?.length ?? sync.conflicts ?? 0);
   const tableDifferences = (sync.tables ?? []).filter((table) => table.status === "DIFFERENT");
   const activeTable = sync.running ? sync.currentTable : null;
@@ -180,7 +302,39 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
             {!activeTable && !queuedTables.length ? <p className="px-3 py-2 text-xs text-muted-foreground">{syncReadFailed || databaseReadFailed ? "Table upload status could not be confirmed." : "No journaled table uploads are listed."}</p> : null}
             {queuedTables.length > 5 ? <p className="border-t px-3 py-2 text-xs text-muted-foreground">+{queuedTables.length - 5} more pending tables in More settings</p> : null}
           </div>
-          {sync.lastError ? <p role="alert" className="text-xs text-destructive">{sync.lastError}</p> : null}
+          {canReviewEvidence && (cases.length || currentCheck) ? <section className="space-y-2 rounded-md border p-3 text-sm" aria-label="Needs verification">
+            <h4 className="font-semibold">Needs verification</h4>
+            {cases.map(entry => <div key={entry.batchId} className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="font-medium">{evidenceLabels[entry.kind].label}</p>
+                <p className="text-xs text-muted-foreground">{evidenceLabels[entry.kind].reason} {entry.savedAt ? `Saved ${when(entry.savedAt)}.` : ""}</p>
+              </div>
+              <Button type="button" size="sm" variant="outline" disabled={!state.connected || currentCheck?.state === "checking"}
+                onClick={() => verifySavedRecord({ batchId: entry.batchId, kind: entry.kind })}>Verify saved record</Button>
+            </div>)}
+            {currentCheck ? <div className="space-y-2 border-t pt-2">
+              {currentCheck.state === "checking" ? <p role="status" className="text-xs">Checking saved evidence…</p> : currentCheck.state === "unavailable"
+                ? <p role="status" className="text-xs">Evidence could not be confirmed for this saved batch.</p>
+                : <>
+                  <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                    <dt>{evidenceLabels[currentCheck.entry.kind].label} reference</dt><dd className="break-all font-mono">{currentCheck.data.reference}</dd>
+                    <dt>Saved in local SQL Server</dt><dd>{when(currentCheck.data.savedAt)}</dd>
+                    <dt>Journal rows still queued</dt><dd>{currentCheck.data.queuedRows} of {currentCheck.data.savedRows}</dd>
+                    <dt>Original proof</dt><dd>{proofLabels[currentCheck.data.originalProof]}</dd>
+                    <dt>Central acceptance evidence</dt>
+                    <dd>{currentCheck.data.receipt ? receiptLabels[currentCheck.data.receipt] : "No matching acceptance receipt saved on this till"}</dd>
+                  </dl>
+                  <p className="text-xs text-muted-foreground">This check reads the evidence saved on this till. Use Sync now in More settings to retry with the central database.</p>
+                </>}
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant="outline" disabled={!state.connected || currentCheck.state === "checking"}
+                  onClick={() => verifySavedRecord(currentCheck.entry)}>Check again</Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => { reviewReadSequence.current++; setEvidenceCheck(null); }}>Close evidence</Button>
+              </div>
+            </div> : null}
+          </section> : null}
+          {sync.lastError && !(review && cases.some(entry => entry.kind === (review === "FIN62_OPEN_BIRTH_NOT_EMPTY" ? "shift" : "sale"))) ? <p role="alert" className="text-xs text-destructive">{review
+            ? `${financialReview[review].title}. ${financialReview[review].message}` : sync.lastError}</p> : null}
           {syncReadFailed ? <p role="alert" className="text-xs text-destructive">Synchronization status could not be read. Refresh to check again; no data was changed.</p> : null}
           {databaseReadFailed ? <p role="alert" className="text-xs text-destructive">Local database status could not be read. Refresh to check again; no data was changed.</p> : null}
           <details className="group rounded-md border border-border">
@@ -231,7 +385,18 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
           <DialogHeader><DialogTitle>Database errors</DialogTitle><DialogDescription>Connection, validation, migration, synchronization, and conflict details recorded by this PC. Credentials are never included.</DialogDescription></DialogHeader>
           <div className="space-y-3">
             {hasDatabaseConnectivityError ? <Button type="button" variant="outline" onClick={() => { setFailureDetailsOpen(false); window.dispatchEvent(new CustomEvent(OPEN_LOCAL_DATABASE_SETTINGS_EVENT)); }}>Open Database Settings</Button> : null}
-            {(failures.databaseErrors ?? []).map((failure, index) => <div key={failure.id ?? index} className="rounded-md border p-3 text-sm"><div className="font-medium">{label(failure.category ?? "Database")} · {label(failure.stage ?? failure.event)}</div><div className="mt-1 text-destructive">{failure.message || "No error message was recorded."}</div><div className="mt-1 text-xs text-muted-foreground">{[failure.code, Number(failure.occurrences ?? 1) > 1 ? `Repeated ${failure.occurrences} times` : null, failure.state ? label(failure.state) : null, failure.occurred_at ? when(failure.occurred_at) : null].filter(Boolean).join(" · ")}</div></div>)}
+            {(Object.keys(financialReview) as (keyof typeof financialReview)[]).map(reason => {
+              const stages = databaseErrors.filter(failure => financialReviewReason(failure.message) === reason);
+              if (!stages.length) return null;
+              return <details key={reason} className="rounded-md border p-3 text-sm">
+                <summary className="cursor-pointer font-medium">{financialReview[reason].title}</summary>
+                <p className="mt-1 text-muted-foreground">{financialReview[reason].message}</p>
+                <div className="mt-2 space-y-2">{stages.map((failure, index) =>
+                  <DatabaseErrorDetail key={failure.id ?? index} failure={failure} />)}</div>
+              </details>;
+            })}
+            {databaseErrors.map((failure, index) => financialReviewReason(failure.message) ? null :
+              <DatabaseErrorDetail key={failure.id ?? index} failure={failure} />)}
             {(failures.failures ?? []).map((failure, index) => <div key={failure.job_id ?? index} className="rounded-md border p-3 text-sm"><div className="font-medium">{label(failure.job_type ?? "Database job")} · {label(failure.status)}</div><div className="mt-1 text-destructive">{failure.error_message || "No error message was recorded."}</div><div className="mt-1 text-xs text-muted-foreground">{[failure.error_code, failure.current_table, failure.updated_at ? when(failure.updated_at) : null].filter(Boolean).join(" · ")}</div></div>)}
             {(failures.businessBatches ?? []).map((failure, index) => <div key={failure.aggregate_id ?? index} className="rounded-md border p-3 text-sm"><div className="font-medium">Synchronization batch · {failure.entity_type ?? "transaction"}</div><div className="mt-1 text-destructive">{failure.error || "The local transaction has not synchronized."}</div><div className="mt-1 text-xs text-muted-foreground">{[`Attempts ${Number(failure.attempts ?? 0)}`, failure.rows ? `${failure.rows} row(s)` : null, failure.last_attempt_at ? when(failure.last_attempt_at) : null].filter(Boolean).join(" · ")}</div></div>)}
             {(failures.conflictRows ?? []).map((conflict, index) => <div key={conflict.conflict_id ?? index} className="rounded-md border p-3 text-sm"><div className="font-medium">Conflict · {conflict.entity_type ?? "record"}</div><div className="mt-1">{conflict.reason ?? "Local and cloud changes require review."}</div><div className="mt-1 break-all text-xs text-muted-foreground">{conflict.entity_id}</div></div>)}

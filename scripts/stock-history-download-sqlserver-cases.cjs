@@ -4,6 +4,8 @@ const contract = require("../electron/db/stock-history-contract.cjs");
 const { StockHistoryStore } = require("../electron/db/stock-history.cjs");
 const { createStockHistoryInstaller } = require("../electron/db/stock-history-download.cjs");
 const { createStockHistoryDownloader } = require("../electron/sync/stock-history-download.cjs");
+const { createManagementStockHistory } = require("../electron/sync/management-stock-history.cjs");
+const { createStockHistoryReader } = require("../electron/stock-history-ipc.cjs");
 
 module.exports = async function stockHistoryDownloadCases({ pool, sql, inTx, pass }) {
   const manager = { pool, sql: () => sql };
@@ -34,7 +36,8 @@ module.exports = async function stockHistoryDownloadCases({ pool, sql, inTx, pas
     assert.deepEqual(await state(), before);
   };
   const payload = (cursor, row) => [cursor, through, row.payload_hash, row.payload_json];
-  const receive = (generation, headCursor, selectedOpening, selectedRows, baseline = selectedBaseline, coverageState = "complete", changes) => {
+  const replica = { tokenId: scope.terminalId, deviceUse: "management", deviceType: "pc" };
+  const receive = (generation, headCursor, selectedOpening, selectedRows, baseline = selectedBaseline, coverageState = "complete", changes, management = false) => {
     const chunks = [["openings", JSON.stringify([selectedOpening])], ["movements", JSON.stringify(selectedRows)]];
     const manifest = { snapshotId: randomUUID(), headCursor, coverageGeneration: generation, coverageState,
       coverageFrom: String(contract.instant(baseline[1])), coverageThrough: String(contract.instant(through)), baseline,
@@ -43,15 +46,25 @@ module.exports = async function stockHistoryDownloadCases({ pool, sql, inTx, pas
     manifest.revision = hash(JSON.stringify([manifest.snapshotId, scope.projectOrigin, scope.branchId, scope.terminalId,
       manifest.headCursor, manifest.coverageGeneration, manifest.coverageState, manifest.coverageFrom, manifest.coverageThrough, manifest.baseline, manifest.pages]));
     const response = { ...envelope, manifest };
-    const run = createStockHistoryDownloader({ ...installer, request: async ({ action, index }) => {
+    const request = async ({ action, index, branchId, terminalId }) => {
+      assert.equal(branchId, scope.branchId);
+      assert.equal(terminalId, scope.terminalId);
       if (action === "manifest") return response;
       return { ...envelope, snapshotId: manifest.snapshotId, revision: manifest.revision, index,
         kind: chunks[index][0], rowsJson: changes?.(chunks[index][1]) ?? chunks[index][1] };
-    } });
+    };
+    if (management) {
+      const source = { pool, fingerprint: "fixture-profile", stamp: "fixture-branches",
+        branches: [scope.branchId], terminal: replica, project: { projectOrigin: scope.projectOrigin } };
+      return createManagementStockHistory({ manager, ready: () => true, cloud: {
+        verifiedManagementStockScope: () => source, downloadStockHistory: request,
+      } })(work => work(() => true));
+    }
+    const run = createStockHistoryDownloader({ ...installer, request });
     return run(scope, () => undefined);
   };
   const before = await state();
-  assert.equal(await receive("11", "8", opening, [payload("8", remote)]), "installed");
+  assert.equal(await receive("11", "8", opening, [payload("8", remote)], undefined, undefined, undefined, true), "installed");
   const loaded = await store.readPage({ cutoff: through, timeZone: "Asia/Brunei" });
   assert.equal(loaded.status, "complete", JSON.stringify(loaded));
   assert.equal(loaded.rows[0].quantity, "9007199254740994");
@@ -60,6 +73,22 @@ module.exports = async function stockHistoryDownloadCases({ pool, sql, inTx, pas
   assert.equal(imported.journal, before.journal);
   assert.equal(JSON.parse(imported.movements)[0].ingested_cursor, 8);
   pass("owned download installs pinned opening and accepted cursor atomically with exact SQL quantity and original bytes");
+
+  const reopenManagementReader = (projectOrigin = scope.projectOrigin, terminalId = scope.terminalId) => {
+    const admission = { branchId: scope.branchId, contextKey: "new-session", projectOrigin, terminalId, canViewInventory: true };
+    return createStockHistoryReader({ manager, session: { hasPosAuthority: () => true, epoch: () => 1, identity: () => null, touch: () => {} },
+      terminal: () => replica, branch: () => null, isPosSender: () => true,
+      managementHistoryAdmission: async () => ({ ...admission, assertCurrent: () => {},
+        authorizeRead: async () => admission }) });
+  };
+  const managementRequest = { cutoff: through, branchId: scope.branchId, timeZone: "Asia/Brunei" };
+  const reopened = await reopenManagementReader()(null, managementRequest);
+  assert.equal(reopened.page.status, "complete");
+  assert.equal(reopened.page.rows[0].quantity, "9007199254740994");
+  const wrongReceiver = await reopenManagementReader("https://other.fixture")(null, managementRequest);
+  assert.equal(wrongReceiver.page.status, "unavailable");
+  assert.deepEqual(wrongReceiver.page.rows, []);
+  pass("a new Management reader loads only its receiving terminal's stored stock history without any cloud request");
   const { readStockHistoryFrontierSnapshot } = require("../electron/db/stock-history-frontier-snapshot.cjs");
   const observation = await readStockHistoryFrontierSnapshot({ manager, branchId: scope.branchId, terminalId: scope.terminalId,
     assertCurrent: () => undefined, assertLease: () => true });

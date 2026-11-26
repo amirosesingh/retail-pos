@@ -11,10 +11,12 @@ import { posTimeZone } from "@/lib/time-zone";
 import { sessionEpoch } from "@/lib/session-epoch";
 import { subscribeSyncState, syncState } from "@/lib/sync-status";
 import { effectiveDatabaseMode, preferredDatabaseMode, subscribeDatabaseMode } from "@/core/local-db/db-mode";
-import { isWindowsShell } from "@/platform-config/features";
+import { currentPlatform, isWindowsShell } from "@/platform-config/features";
 import { isManagementDevice } from "@/lib/management-device";
 import { stockDisplayLocations } from "@/lib/all-shops-stock";
 import { sameBranchId } from "@/lib/branch-id";
+import { toManagementReportStore, useManagementInventory } from "@/lib/management-inventory-client";
+import type { Store } from "@/core/types/pos-types";
 import { CurrentInventoryReport } from "./CurrentInventoryReport";
 import { StockMovementReport } from "./StockMovementReport";
 import { StockReport } from "./StockReport";
@@ -99,15 +101,16 @@ function StockReportHeading() {
     <p className="mt-1 text-sm text-muted-foreground">{reportSubtitle}</p></div>;
 }
 
-function ReportWorkspace({ branchId, branchName, canExport, canPrint, canValue }: {
+function ReportWorkspace({ branchId, branchName, canExport, canPrint, canValue, managementLocations }: {
   branchId: string;
   branchName: string;
   canExport: boolean;
   canPrint: boolean;
   canValue: boolean;
+  managementLocations?: Store[];
 }) {
   const { user, terminalUser, terminalStoreId, canSwitchStores } = useAuth();
-  const { state, stores, storesLoaded } = usePos();
+  const { state, stores, storesLoaded, ready, loadPhase } = usePos();
   const [tab, setTab] = useState<ReportTab>("current");
   const [historicalLocation, setHistoricalLocation] = useState(branchId);
   const [visited, setVisited] = useState<ReadonlySet<ReportTab>>(() => new Set(["current"]));
@@ -119,10 +122,12 @@ function ReportWorkspace({ branchId, branchName, canExport, canPrint, canValue }
   const workspace = useRef<HTMLDivElement>(null);
   const sync = useSyncExternalStore(subscribeSyncState, syncState, syncState);
   const timeZone = posTimeZone() || "Asia/Brunei";
-  const lastSync = displayDate(sync.lastSyncAt, timeZone);
+  const web = currentPlatform() === "web";
+  const inventoryLoaded = ready && loadPhase === "ready" && storesLoaded;
+  const lastSync = web ? null : displayDate(sync.lastSyncAt, timeZone);
   const refreshView = tab === "valuation" && historicalValuation ? "valuationHistory" : tab;
-  const reportLocations = storesLoaded ? stockDisplayLocations(stores, { terminalStoreId,
-    userStoreId: user?.storeId, currentStoreId: branchId, canSwitchStores }) : [];
+  const reportLocations = managementLocations ?? (storesLoaded ? stockDisplayLocations(stores, { terminalStoreId,
+    userStoreId: user?.storeId, currentStoreId: branchId, canSwitchStores }) : []);
   const selectedLocation = reportLocations.find(store => sameBranchId(store.id, historicalLocation));
   const historicalBranchId = selectedLocation?.id ?? branchId;
   const historicalBranchName = selectedLocation?.name ?? branchName;
@@ -130,9 +135,16 @@ function ReportWorkspace({ branchId, branchName, canExport, canPrint, canValue }
     (tab === "valuation" && historicalValuation));
   const exportSupported = canExport && (tab === "current" || tab === "history" || (tab === "valuation" && !historicalValuation));
   const printSupported = canPrint && refreshView !== "valuationHistory";
-  const freshness = sync.phase === "offline" ? (isWindowsShell() ? "Offline · local SQL" : "Offline") : sync.lastError
-    ? "Synchronization needs attention" : sync.pending > 0 ? "Changes awaiting sync" : sync.phase === "syncing"
-      ? "Synchronizing" : lastSync ? "Device sync recorded" : "Sync time unavailable";
+  const freshness = web
+    ? inventoryLoaded ? "Inventory snapshot loaded"
+      : loadPhase === "failed" ? "Inventory unavailable" : "Loading inventory"
+    : sync.phase === "offline" ? (isWindowsShell() ? "Offline · local SQL" : "Offline") : sync.lastError
+      ? "Synchronization needs attention" : sync.pending > 0 ? "Changes awaiting sync" : sync.phase === "syncing"
+        ? "Synchronizing" : lastSync ? "Device sync recorded" : "Sync time unavailable";
+  const freshnessColor = web ? inventoryLoaded ? "bg-emerald-500"
+    : loadPhase === "failed" ? "bg-amber-500" : "bg-muted-foreground/60"
+    : sync.phase === "offline" || sync.lastError || sync.pending > 0 ? "bg-amber-500"
+      : lastSync ? "bg-emerald-500" : "bg-muted-foreground/60";
   const activePanel = () => workspace.current?.querySelector<HTMLElement>(`[data-stock-report-panel="${tab}"]:not([hidden])`);
 
   useEffect(() => {
@@ -197,9 +209,9 @@ function ReportWorkspace({ branchId, branchName, canExport, canPrint, canValue }
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border/70 pt-3 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1.5 text-foreground"><MapPin className="size-3.5 text-muted-foreground" aria-hidden="true" /><span className="text-muted-foreground">Active location</span> {branchName}</span>
-        <span>Last successful device sync {lastSync ? <time dateTime={sync.lastSyncAt!} className="font-medium text-foreground">{lastSync} · {timeZone}</time> : "unavailable"}</span>
-        <Badge variant="outline" className="gap-1.5 bg-muted/30 font-medium" aria-label={`Device data freshness, ${freshness}`}>
-          <span className={`size-1.5 rounded-full ${sync.phase === "offline" || sync.lastError || sync.pending > 0 ? "bg-amber-500" : lastSync ? "bg-emerald-500" : "bg-muted-foreground/60"}`} aria-hidden="true" />{freshness}
+        {!web && <span>Last successful device sync {lastSync ? <time dateTime={sync.lastSyncAt!} className="font-medium text-foreground">{lastSync} · {timeZone}</time> : "unavailable"}</span>}
+        <Badge variant="outline" className="gap-1.5 bg-muted/30 font-medium" aria-label={`${web ? "Inventory data" : "Device data freshness"}, ${freshness}`}>
+          <span className={`size-1.5 rounded-full ${freshnessColor}`} aria-hidden="true" />{freshness}
         </Badge>
       </div>
       {actionMessage && <p className="mt-3 text-sm text-muted-foreground" role="status">{actionMessage}</p>}
@@ -221,7 +233,7 @@ function ReportWorkspace({ branchId, branchName, canExport, canPrint, canValue }
             }} />
         </Label>}
         <TabsContent value="current" forceMount hidden={tab !== "current"} data-stock-report-panel="current" className="mt-4">
-          <CurrentInventoryReport branchId={branchId} branchName={branchName} refreshToken={revision.current} />
+          <CurrentInventoryReport branchId={branchId} branchName={branchName} refreshToken={revision.current} managementLocations={managementLocations} />
         </TabsContent>
         <TabsContent value="history" forceMount hidden={tab !== "history"} data-stock-report-panel="history" className="mt-4">
           {visited.has("history") && <StockReport branchId={historicalBranchId} branchName={historicalBranchName} initialView="history" refreshToken={revision.history} />}
@@ -237,7 +249,7 @@ function ReportWorkspace({ branchId, branchName, canExport, canPrint, canValue }
             <Button type="button" size="sm" variant={historicalValuation ? "secondary" : "outline"} aria-pressed={historicalValuation}
               onClick={() => { setHistoricalValuation(true); setVisitedHistoricalValuation(true); setActionMessage(""); }}>Historical valuation</Button>
           </div>
-          <div hidden={historicalValuation}><CurrentInventoryReport branchId={branchId} branchName={branchName} valuation refreshToken={revision.valuation} /></div>
+          <div hidden={historicalValuation}><CurrentInventoryReport branchId={branchId} branchName={branchName} valuation refreshToken={revision.valuation} managementLocations={managementLocations} /></div>
           {visitedHistoricalValuation && <div hidden={!historicalValuation}>
             <StockReport branchId={historicalBranchId} branchName={historicalBranchName} initialView="history" historicalValuation
               refreshToken={revision.valuationHistory} />
@@ -249,6 +261,24 @@ function ReportWorkspace({ branchId, branchName, canExport, canPrint, canValue }
   </section>;
 }
 
+function ManagementReportWorkspace({ branchId, canExport, canPrint, canValue }: {
+  branchId: string; canExport: boolean; canPrint: boolean; canValue: boolean;
+}) {
+  const [attempt, setAttempt] = useState(0);
+  const sync = useSyncExternalStore(subscribeSyncState, syncState, syncState);
+  const directory = useManagementInventory({ kind: "locations" }, JSON.stringify([attempt, sync.phase, sync.lastSyncAt]));
+  const managementLocations = directory?.ok ? directory.locations.map(toManagementReportStore) : [];
+  const active = managementLocations.find(location => sameBranchId(location.id, branchId)) ?? managementLocations[0];
+  if (!active) return <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-5" aria-label="Inventory reports">
+    <StockReportHeading />
+    <p role="status" className="text-sm text-muted-foreground">{directory === null ? "Checking the Management local inventory…"
+      : directory.ok ? "No authorized locations are available in the local inventory replica." : directory.error}</p>
+    {directory && <Button type="button" variant="outline" onClick={() => setAttempt(value => value + 1)}>Retry local inventory</Button>}
+  </section>;
+  return <ReportWorkspace branchId={active.id} branchName={active.name} managementLocations={managementLocations}
+    canExport={canExport} canPrint={canPrint} canValue={canValue} />;
+}
+
 export function AdvancedStockReport({ branchId, branchName }: { branchId: string; branchName: string }) {
   const { can, isAdmin, authUserId, appUser, terminalUser, user } = useAuth();
   const mode = useSyncExternalStore(subscribeDatabaseMode, effectiveDatabaseMode, preferredDatabaseMode);
@@ -256,11 +286,12 @@ export function AdvancedStockReport({ branchId, branchName }: { branchId: string
   const localManagement = windows && isManagementDevice();
   const mayRead = can("can_view_inventory"), canExport = can("can_export_reports"), canValue = can("can_view_cost_margin");
   const scopeKey = JSON.stringify([branchId, mode, localManagement, sessionEpoch(), authUserId, appUser?.id, terminalUser?.cashierId, user?.staffId, mayRead, canExport, canValue, isAdmin]);
-  if (!mayRead || !branchId || localManagement || (windows && mode !== "local")) {
+  if (mayRead && localManagement) return <ManagementReportWorkspace key={scopeKey} branchId={branchId}
+    canExport={canExport} canPrint={isAdmin && canExport} canValue={canValue} />;
+  if (!mayRead || !branchId || (windows && mode !== "local")) {
     return <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-5" aria-label="Inventory reports">
       <StockReportHeading />
       <p role="status" className="text-sm text-muted-foreground">{!mayRead ? "Inventory permission is required to view this report."
-        : localManagement ? "Stock Report on this Management terminal requires an authorized local inventory and stock-history reader."
           : !branchId ? "Choose an authorized location to view its inventory."
           : "Stock Report in Electron requires the local SQL Server database."}</p>
     </section>;

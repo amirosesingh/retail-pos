@@ -4,6 +4,8 @@
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 
+export const STOCK_MOVEMENT_MAX_CALENDAR_DAYS = 31;
+
 function invalid(code = 'STOCK_DAY_INVALID') {
   throw Object.assign(new Error('Choose a valid, representable business date and time zone.'), { code });
 }

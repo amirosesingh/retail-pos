@@ -4,7 +4,8 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {pathToFileURL}=require('node:url'),{chromium}=require('@playwright/test');
 async function main(){
- const preview=process.argv.includes('--preview'),requestedPort=process.argv.find(arg=>arg.startsWith('--port='));
+ const refreshPreviewFixture=process.argv.includes('--refresh-preview-fixture');
+ const preview=process.argv.includes('--preview')||refreshPreviewFixture,requestedPort=process.argv.find(arg=>arg.startsWith('--port='));
  const port=preview?(requestedPort?Number(requestedPort.slice(7)):4180):0;
  if(preview&&(!Number.isInteger(port)||port<1024||port>65535))throw new Error('Use a loopback preview port between 1024 and 65535.');
  const root=process.cwd(),name=preview?'advanced-stock-report-preview':'stock-report-ui';
@@ -12,10 +13,11 @@ async function main(){
  const pagePath='/.tmp/'+name+'/index.html';
  fs.writeFileSync(path.join(directory,'index.html'),`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${preview?'Stock Report · Local Beta preview':'Stock Report test'}</title><div id="root"></div><script type="module" src="/.tmp/${name}/main.tsx"></script></html>`);
  fs.writeFileSync(path.join(directory,'fixture.ts'),`import{useMemo,useSyncExternalStore}from'react';
+export{formatDateTime,posDayKey,inPosDayRange}from'../../src/lib/time-zone';
 ${preview?"import{stockDateTimeInput,stockEndOfDay}from'@/lib/stock-history-selection';":""}
 const preview=${preview};
 export let model={branch:'a',name:preview?'Bandar flagship':'Fixture A',open:true,mount:true,inventory:true,export:true,shifts:true,zone:'Asia/Brunei',epoch:1,kind:'complete',liveQuantity:7,inventoryReady:true,inventoryPhase:'ready',movementKind:'complete',activity:preview,pagedActivity:false,failActivityContinuation:false};
-const listeners=new Set();export const calls=[],movementCalls=[],activityCalls=[],exports=[],pending=[],commits=[];let defer=false,deferMovement=false,deferActivity=false;
+const listeners=new Set();export const calls=[],movementCalls=[],activityCalls=[],exports=[],pending=[],commits=[];let defer=false,deferMovement=false,deferActivity=false,deferWorksheet=false;
 export const set=next=>{model={...model,...next};listeners.forEach(fn=>fn());};export const watch=()=>useSyncExternalStore(fn=>{listeners.add(fn);return()=>listeners.delete(fn);},()=>model);
 export const useAuth=()=>{const m=watch();return{ready:true,isAdmin:preview,canSwitchStores:preview,terminalStoreId:preview?null:m.branch,authUserId:'synthetic-report-user',user:{staffId:'fixture-'+m.epoch,name:'Demo manager'},permissions:{},can:key=>key==='can_view_inventory'?m.inventory:key==='can_export_reports'?m.export:key==='can_shift_closing_history_view'?m.shifts:preview&&key==='can_view_cost_margin'};};
 const stores=[{id:'a',name:preview?'Bandar flagship':'Fixture A',groupId:'cluster-a',locationType:'store',active:true},
@@ -37,12 +39,25 @@ const samples=[
  sample('20000000-0000-4000-8000-000000000008','Classic Slide Sandal','FW-154-INK','9556601001542','Footwear','Sandals','Harbor',14,39,4,3),
  sample('20000000-0000-4000-8000-000000000009','Oxford Pocket Shirt','AP-044-WHT','9556601000446','Apparel','Shirts','Fieldwork',22,55,2,9),
 ];
-export const usePos=()=>{const m=watch(),products=useMemo(()=>preview?samples:[
+const previewMovements=[
+ {id:'70000000-0000-4000-8000-000000000001',branchId:'a',productId:samples[0].id,occurredAt:'2026-11-05T02:00:00.0000000Z',kind:'receiving',delta:12,reference:'RECEIVE-12'},
+ {id:'70000000-0000-4000-8000-000000000002',branchId:'a',productId:samples[1].id,occurredAt:'2026-11-05T06:00:00.0000000Z',kind:'stock',delta:-4,reference:'ADJUST-1'},
+ {id:'70000000-0000-4000-8000-000000000003',branchId:'a',productId:samples[0].id,occurredAt:'2026-11-06T03:00:00.0000000Z',kind:'sale',delta:-5,reference:'SALE-1'},
+ {id:'70000000-0000-4000-8000-000000000004',branchId:'a',productId:samples[2].id,occurredAt:'2026-11-06T07:00:00.0000000Z',kind:'sale',delta:-4,reference:'SALE-2'},
+ {id:'70000000-0000-4000-8000-000000000005',branchId:'b',productId:samples[0].id,occurredAt:'2026-11-05T03:00:00.0000000Z',kind:'receiving',delta:7,reference:'STORE-RECEIPT-1'},
+];
+const sampleEvents=(productId,branchId)=>previewMovements.filter(row=>row.productId===productId&&row.branchId===branchId);
+function sampleBalance(product,branchId,cutoff,inclusive=true){
+ return sampleEvents(product.id,branchId).reduce((quantity,row)=>
+  quantity+(row.occurredAt>cutoff||!inclusive&&row.occurredAt===cutoff?-row.delta:0),stockAt(product,branchId));
+}
+export const usePos=()=>{const m=watch(),products=useMemo(()=>preview?(m.largeCatalogue?
+ [...samples,...Array.from({length:10000},(_,index)=>sample('demo-'+index,'Fixture product '+index,'SKU-'+index,'TEST-'+index,'Other','','',0,0,0,0))]:samples):[
  {id:'live-a',ownerStoreId:'a',name:'Current branch A stock',sku:'CUR-A',barcode:'101',createdAt,stockByStore:{a:m.liveQuantity}},
  {id:'live-a-zero',ownerStoreId:'a',name:'Zero stock item',sku:'CUR-Z',barcode:'103',createdAt,stockByStore:{a:0}},
  {id:'live-b',ownerStoreId:'b',name:'Current branch B stock',sku:'CUR-B',barcode:'102',createdAt,stockByStore:{b:51}},
  ...(m.lateProduct?[{id:'live-a-later',ownerStoreId:'a',name:'Added after the cutoff',sku:'NEW-A',createdAt:'2098-01-01T00:00:00.000Z',stockByStore:{a:14}}]:[]),
- ],[m.liveQuantity,m.lateProduct]);return{ready:m.inventoryReady,loadPhase:m.inventoryPhase,storesLoaded:true,state:{shifts:[],settings,stores,transfers,currentStoreId:m.branch,products},stores,currentStore:{id:m.branch,name:m.name}};};
+ ],[m.liveQuantity,m.lateProduct,m.largeCatalogue]);return{ready:m.inventoryReady,loadPhase:m.inventoryPhase,storesLoaded:true,state:{shifts:[],settings,stores,transfers,currentStoreId:m.branch,products},stores,currentStore:{id:m.branch,name:m.name}};};
 export const effectiveTimeZone=()=>watch().zone,sessionEpoch=()=>model.epoch,isCurrentEpoch=epoch=>epoch===model.epoch;
 export const posTimeZone=()=>model.zone,isManagementDevice=()=>preview,isWindowsShell=()=>false;
 export const setManagementDevice=()=>{},bumpSessionEpoch=()=>model.epoch;
@@ -57,14 +72,18 @@ const first='20000000-0000-4000-8000-000000000001',second='20000000-0000-4000-80
 function response(r){const cutoff=r.closedShiftId?'2026-11-05T13:00:00.1234567Z':r.cutoff;
  const base={status:model.kind,reasons:[],cutoff,timeZone:r.timeZone,branchId:r.branchId,baselineAt:'2026-11-01T00:00:00.0000000Z',readAt:'2099-01-01T00:00:00.0000000Z',sourceRevision:'source-'+r.branchId,pendingCount:'0',restatable:true,next:null};
  if(r.periodStart){
-  const dayEnd=preview?stockEndOfDay(stockDateTimeInput(new Date(r.periodStart),r.timeZone).slice(0,10),r.timeZone).cutoff:null;
+  const dayEnd=preview?stockEndOfDay(stockDateTimeInput(new Date(cutoff),r.timeZone).slice(0,10),r.timeZone).cutoff:null;
   const endExclusive=dayEnd?new Date(Date.parse(dayEnd)+1).toISOString().slice(0,19)+'.0000000Z':'2026-11-06T16:00:00.0000000Z';
   base.period={start:r.periodStart,endExclusive,through:cutoff,fullDay:cutoff===dayEnd};
  }
- if(preview&&cutoff<base.baselineAt)return{...base,status:'incomplete',baselineAt:undefined,reasons:['NO_VERIFIED_OPENING'],rows:[]};
- if(preview)return{...base,status:'complete',rows:samples.map(product=>{const closing=stockAt(product,r.branchId);return{
+ if(preview&&(model.kind==='incomplete'||cutoff<base.baselineAt||r.periodStart&&r.periodStart<base.baselineAt))return{...base,status:'incomplete',baselineAt:undefined,reasons:['NO_VERIFIED_OPENING'],rows:[]};
+ if(preview)return{...base,status:'complete',rows:samples.map(product=>{const closing=sampleBalance(product,r.branchId,cutoff);
+  const moves=r.periodStart?sampleEvents(product.id,r.branchId).filter(row=>row.occurredAt>=r.periodStart&&row.occurredAt<=cutoff):[];
+  return{
   productId:product.id,locationId:r.branchId,name:product.name,sku:product.sku,barcode:product.barcode,quantity:String(closing),negative:false,
-  ...(r.periodStart?{openingQuantity:String(closing+3),inQuantity:'4',outQuantity:'7'}:{}),
+  ...(r.periodStart?{openingQuantity:String(sampleBalance(product,r.branchId,r.periodStart,false)),
+   inQuantity:String(moves.reduce((total,row)=>total+Math.max(0,row.delta),0)),
+   outQuantity:String(moves.reduce((total,row)=>total+Math.max(0,-row.delta),0))}:{}),
  };})};
  const row=(id,negative)=>({productId:id,locationId:r.branchId,name:r.branchId==='a'?'Fixture A product':'Fixture B product',sku:'00001',barcode:'0000001',quantity:negative?'-2':'9007199254740993',negative,
   ...(r.periodStart?{openingQuantity:negative?'1':'9007199254740991',inQuantity:negative?'0':'5',outQuantity:'3'}:{})});
@@ -84,8 +103,15 @@ export const loadStockHistoryMovements=async r=>{
  const {after,limit,...scope}=r;
  const first='40000000-0000-4000-8000-000000000001',second='40000000-0000-4000-8000-000000000002';
  const page={...scope,status:model.movementKind,reasons:[],baselineAt:'2026-11-01T00:00:00.0000000Z',next:null,rows:[]};
+ if(preview){
+  const eligible=sampleEvents(r.productId,r.branchId).filter(row=>row.occurredAt<=r.cutoff&&
+   (!r.periodStart||row.occurredAt>=r.periodStart)&&(!after||row.occurredAt>after.effectiveAt||row.occurredAt===after.effectiveAt&&row.id>after.id));
+  const rows=eligible.slice(0,limit??50).map(row=>({id:row.id,effectiveAt:row.occurredAt,recordedAt:row.occurredAt,kind:row.kind,delta:String(row.delta)}));
+  const last=rows.at(-1);
+  return {...page,rows,next:eligible.length>rows.length?{id:last.id,effectiveAt:last.effectiveAt}:null};
+ }
  if(model.movementKind==='complete'){
-  const row={id:after?second:first,effectiveAt:r.cutoff,recordedAt:'2099-01-01T00:00:00.0000000Z',kind:after?'sale':'receiving',delta:preview?(after?'-7':'4'):(after?'-3':'9007199254740993')};
+  const row={id:after?second:first,effectiveAt:r.cutoff,recordedAt:'2099-01-01T00:00:00.0000000Z',kind:after?'sale':'receiving',delta:after?'-3':'9007199254740993'};
   page.rows=[row];page.next=after?null:{id:row.id,effectiveAt:row.effectiveAt};
  }else if(model.movementKind==='incomplete')page.reasons=['WRITER_COVERAGE_PENDING'];
  if(deferMovement){deferMovement=false;return new Promise(resolve=>pending.push(()=>resolve(page)));}return page;
@@ -93,6 +119,11 @@ export const loadStockHistoryMovements=async r=>{
 export const deferNext=()=>defer=true,resolve=()=>pending.shift()?.();
 export const deferNextMovement=()=>deferMovement=true;
 export const deferNextActivity=()=>deferActivity=true;
+export const deferNextWorksheet=()=>deferWorksheet=true;
+export const reportWorksheet=async rows=>{
+ if(deferWorksheet){deferWorksheet=false;return new Promise(resolve=>pending.push(()=>resolve(rows)));}
+ return rows;
+};
 const activities=[
  {id:'50000000-0000-4000-8000-000000000001',productId:first,productName:'Recorded test item',branchId:'a',occurredAt:'2026-11-05T02:00:00.0000000Z',kind:'receive',delta:7,before:0,after:7,reference:'RECEIVE-1'},
  {id:'50000000-0000-4000-8000-000000000002',productId:first,productName:'Recorded test item',branchId:'a',occurredAt:'2026-11-05T03:00:00.1234567Z',kind:'sale',delta:-1,before:null,after:null,reference:'SALE-1'},
@@ -107,7 +138,15 @@ export const loadStockActivityPage=async request=>{
   occurredAt:'2026-11-05T02:00:'+String(index+1).padStart(2,'0')+'.0000000Z',kind:'stock_adjustment',
  })):[];
  const position=(a,b)=>a.occurredAt.localeCompare(b.occurredAt)||a.id.localeCompare(b.id);
- const all=model.activity?[...activities,...extra].filter(row=>row.branchId===request.branchId&&(!scope.productId||row.productId===scope.productId)&&
+ const recorded=preview?previewMovements.map(row=>{const product=samples.find(item=>item.id===row.productId);
+  const before=sampleBalance(product,row.branchId,row.occurredAt,false);
+  return {...row,productName:product.name,before,after:before+row.delta};
+ }):activities;
+ const background=model.lookupActivity?['10','17'].flatMap((hour,side)=>Array.from({length:26},(_,index)=>({
+   ...activities[2],id:'80000000-0000-4000-8000-'+String(side*26+index+1).padStart(12,'0'),
+   occurredAt:'2026-11-05T'+hour+':00:'+String(index).padStart(2,'0')+'.0000000Z',reference:null,delta:0,before:null,after:null,
+ }))):[];
+ const all=model.activity?[...recorded,...extra,...background].filter(row=>row.branchId===request.branchId&&(!scope.productId||row.productId===scope.productId)&&
   (earlier?row.occurredAt<=scope.cutoff:row.occurredAt>scope.cutoff)&&(!cursor||(earlier?position(row,cursor)<0:position(row,cursor)>0)))
   .sort((a,b)=>earlier?position(b,a):position(a,b)):[];
  const rows=all.slice(0,limit),last=rows.at(-1),page={...scope,rows,next:all.length>limit?{occurredAt:last.occurredAt,id:last.id}:null};
@@ -119,9 +158,10 @@ export const xlsx={utils:{book_new:()=>({sheets:[]}),aoa_to_sheet:rows=>rows,jso
  fs.writeFileSync(path.join(directory,'xlsx.ts'),`export{utils,writeFile};import{xlsx}from'./fixture';const{utils,writeFile}=xlsx;`);
  fs.writeFileSync(path.join(directory,'shell.tsx'),`export const AppShell=({children})=><main>{children}</main>;`);
  fs.writeFileSync(path.join(directory,'main.tsx'),`import React,{useLayoutEffect}from'react';import{createRoot}from'react-dom/client';
-${preview?"import{StockAtTimeReport}from'@/routes/reports.inventory';import{setPosTimeZone}from'@/lib/time-zone';":"import{StockReport}from'@/platforms/web/components/pos/StockReport';"}import*as f from'./fixture';import'@/styles.css';
+${preview?"import{StockAtTimeReport}from'@/routes/reports.inventory';import{setPosTimeZone}from'@/lib/time-zone';":"import{StockReport}from'@/platforms/web/components/pos/StockReport';import{CurrentInventoryReport}from'@/platforms/web/components/pos/CurrentInventoryReport';"}import*as f from'./fixture';import'@/styles.css';
 ${preview?"setPosTimeZone('Asia/Brunei');":""}
-window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits.push({branch:m.branch,epoch:m.epoch,inventory:m.inventory,export:m.export,text:document.getElementById('root')?.textContent});},[m]);return !m.mount?null:${preview?"<><div className='border-b border-border bg-muted px-6 py-2 text-xs font-medium text-muted-foreground'>Local Beta preview · Sample inventory</div><StockAtTimeReport/></>":"<main className='pos-page-container'>{m.inventory?<StockReport branchId={m.branch} branchName={m.name}/>:<p role='status'>Inventory permission is required to view this report.</p>}</main>"};}createRoot(document.getElementById('root')).render(<App/>);`);
+window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits.push({branch:m.branch,epoch:m.epoch,inventory:m.inventory,export:m.export,text:document.getElementById('root')?.textContent});},[m]);return !m.mount?null:${preview?"<><div className='border-b border-border bg-muted px-6 py-2 text-xs font-medium text-muted-foreground'>Local Beta preview · Sample inventory</div><StockAtTimeReport/></>":"<main className='pos-page-container'>{m.inventory?(m.currentInventory?<CurrentInventoryReport branchId={m.branch} branchName={m.name}/>:<StockReport branchId={m.branch} branchName={m.name}/>):<p role='status'>Inventory permission is required to view this report.</p>}</main>"};}createRoot(document.getElementById('root')).render(<App/>);`);
+ if(refreshPreviewFixture){console.log('Refreshed the synthetic preview fixture.');return;}
  const{createServer}=await import('vite'),react=(await import('@vitejs/plugin-react')).default,tailwind=(await import('@tailwindcss/vite')).default;
  const{popupRuntimeAliases}=await import(pathToFileURL(path.join(root,'scripts/popup-runtime-aliases.mjs')).href);
  let server,browser,passed=0;
@@ -133,7 +173,7 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
   server=await createServer({configFile:false,envFile:false,root,cacheDir:path.join(directory,'.vite'),plugins:[entry,react(),tailwind()],resolve:{alias:[
    ...['pos-auth','pos-store','use-report-shifts','session-epoch','stock-history-client','stock-history-movements-client','stock-activity-client','personal-appearance','management-device','sync-summary','sync-status',...(!preview?['time-zone']:[])].map(name=>({find:new RegExp('^@/lib/'+name+'$'),replacement:fixture})),
    {find:/^(?:@\/platforms\/web\/components\/pos\/|\.\/)AppShell$/,replacement:path.join(directory,'shell.tsx')},
-   ...(!preview?[{find:/^xlsx$/,replacement:path.join(directory,'xlsx.ts')}]:[]),...popupRuntimeAliases(),{find:'@',replacement:path.join(root,'src')},
+   ...(!preview?[{find:/^xlsx$/,replacement:path.join(directory,'xlsx.ts')},{find:/^@\/lib\/report-export$/,replacement:fixture}]:[]),...popupRuntimeAliases(),{find:'@',replacement:path.join(root,'src')},
   ]},server:{host:'127.0.0.1',port,strictPort:preview,
     headers:preview?{'Content-Security-Policy':"connect-src 'self' ws://127.0.0.1:"+port+"; img-src 'self' data: blob:; form-action 'self'"}:undefined,
     fs:{allow:[root,fs.realpathSync(path.join(root,'node_modules'))]}},logLevel:'error'});
@@ -389,6 +429,23 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
    await current.getByText('Current branch A stock',{exact:true}).waitFor();
    assert.equal(await page.evaluate(()=>window.fixture.calls.length),requests);
    passed++;console.log('PASS business-day balance and a zero-stock filter across verified historical pages');await page.close();
+  }
+  {
+   const page=await fresh();
+   await page.evaluate(()=>window.fixture.set({currentInventory:true}));
+   const excel=page.getByRole('button',{name:'Excel',exact:true});
+   await excel.click();
+   await page.waitForFunction(()=>window.fixture.exports.length===1);
+   const original=await page.evaluate(()=>window.fixture.exports[0]);
+   assert(original.book.sheets.some(sheet=>sheet.name==='Stock report'&&sheet.sheet.some(row=>row.includes('Current branch A stock'))));
+   await page.evaluate(()=>window.fixture.deferNextWorksheet());
+   await excel.click();
+   await page.waitForFunction(()=>window.fixture.pending.length===1);
+   await page.evaluate(()=>window.fixture.set({mount:false}));
+   await excel.waitFor({state:'detached'});
+   await page.evaluate(async()=>{window.fixture.resolve();await new Promise(requestAnimationFrame);});
+   assert.equal(await page.evaluate(()=>window.fixture.exports.length),1);
+   passed++;console.log('PASS current stock workbook honors scope unmount while an export is preparing');await page.close();
   }
   console.log('PASS '+passed+' actual mounted Stock report groups');
  }finally{await browser?.close();await server?.close();}

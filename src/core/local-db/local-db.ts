@@ -313,6 +313,21 @@ export type StoreSettingsEditReview = {
   decisionSha256: string;
 };
 
+export type RecoveryEvidenceKind = "shift" | "sale" | "stock";
+
+export type SavedRecoveryEvidence = {
+  ok: true;
+  batchId: string;
+  branchId: string;
+  kind: RecoveryEvidenceKind;
+  reference: string;
+  savedAt: string;
+  savedRows: number;
+  queuedRows: number;
+  originalProof: "saved" | "missing" | "partial";
+  receipt: "opening" | "financial-metadata" | "stock" | null;
+};
+
 export type LocalSyncStatus = {
   connected: boolean;
   tradingReady?: boolean;
@@ -518,6 +533,8 @@ export type PosBridge = {
     pause?: () => Promise<LocalSyncStatus>;
     resume?: () => Promise<LocalSyncStatus>;
     getFailures?: () => Promise<Record<string, unknown>>;
+    getRecoveryEvidence?: (input: { batchId: string; kind: RecoveryEvidenceKind }) =>
+      Promise<SavedRecoveryEvidence | { ok: false; code: string; error: string }>;
     reconcile?: (options?: Record<string, unknown>) => Promise<Record<string, unknown>>;
     subscribe?: (cb: (status: LocalSyncStatus) => void) => () => void;
   };
@@ -748,6 +765,8 @@ export type PosBridge = {
   managementReport?: (options: { kind: "sales" | "totals" | "shifts"; storeIds: string[]; from: string; to: string; zone: string; cursor?: { ts: string; id: string } | null; limit?: number; includeProfit?: boolean; shiftId?: string }) => Promise<{
     ok: boolean; complete?: boolean; source?: string; code?: string; error?: string; rows?: LocalSaleRow[]; storeTotals?: LocalSaleRow[]; hasMore?: boolean; cursor?: { ts: string; id: string } | null;
   }>;
+  managementInventory?: (request: import("@/lib/management-inventory-client").ManagementInventoryRequest) =>
+    Promise<import("@/lib/management-inventory-client").ManagementInventoryResult>;
   stockHistory?: (request:StockHistoryRequest)=>Promise<{ok:boolean;page?:StockHistoryPage;code?:string;error?:string}>;
   stockHistoryMovements?: (request: StockHistoryMovementRequest) => Promise<{ ok: boolean; page?: StockHistoryMovementPage; code?: string; error?: string }>;
   stockActivity?: (request: StockActivityRequest) => Promise<{ ok: boolean; page?: StockActivityPage; code?: string; error?: string }>;

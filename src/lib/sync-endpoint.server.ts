@@ -1103,6 +1103,13 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       return Response.json({ok:false,code:known?error.code:'ESTOCK_FRONTIER_UNAVAILABLE',error:'Stock writer coverage remains unconfirmed. No stock or saved work was changed.'},{status:known?Number(error.status):503});
     }
   }
+  if (body.sqlServerStockHistoryDownload && scope.managementReplica && scope.terminalId === body.terminalToken &&
+      scope.terminalId && scope.storeId === null && !scope.stale) {
+    // Management replication already authenticated both device proofs. The
+    // stock replica RPC checks the requested location and registration again.
+    return stockHistoryDownload(body.sqlServerStockHistoryDownload,
+      { id: scope.terminalId, platform: "pc", mode: "management", branchId: null }, request.signal, true);
+  }
   if (body.sqlServerStockHistoryDownload || body.sqlServerStocktakeCutover) {
     if (!verifiedTerminal || !body.deviceBindingProof || verifiedTerminal.id !== body.terminalToken ||
         verifiedTerminal.id !== scope.terminalId || verifiedTerminal.branchId !== scope.storeId ||

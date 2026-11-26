@@ -7,11 +7,11 @@ const {PushWorker}=require('../../../electron/sync/push-worker.cjs'),{CloudClien
 const {SyncCoordinator}=require('../../../electron/sync/coordinator.cjs');
 const terminal='11111111-1111-4111-8111-111111111111',operation='22222222-2222-4222-8222-222222222222',product='33333333-3333-4333-8333-333333333333';
 const branch='branch-a',at='2026-11-06T00:00:00.1234567Z';
-function fixture(){
- const context=c.normalizeContext({operationId:operation,branchId:branch,terminalId:terminal,actorId:'original-cashier',kind:'sale'},at);
+function fixture(operationId=operation){
+ const context=c.normalizeContext({operationId,branchId:branch,terminalId:terminal,actorId:'original-cashier',kind:'sale'},at);
  const row=c.changes(context,[{id:product,stock_by_store:{[branch]:2}}],[{id:product,name:'Fixture',stock_by_store:{[branch]:1}}])[0];
  const batch=Object.freeze({version:1,branchId:branch,terminalId:terminal,rows:Object.freeze([stockHistoryUploadRow(row,{branchId:branch,terminalId:terminal})])});
- const aggregateId=c.uploadAggregateId(operation,branch),aggregate={aggregateId,changes:[{entity_type:'stock_history_movements',entity_id:JSON.stringify({id:row.id}),operation:'insert'}]};
+ const aggregateId=c.uploadAggregateId(operationId,branch),aggregate={aggregateId,changes:[{entity_type:'stock_history_movements',entity_id:JSON.stringify({id:row.id}),operation:'insert'}]};
  const ack={ok:true,version:1,branchId:branch,terminalId:terminal,receipts:[{id:row.id,payloadHash:row.payload_hash,ingestedCursor:'20',acceptedAt:at,effectIds:[product]}]};
  const outbox={pending:vi.fn(async()=>batch),acknowledge:vi.fn(async(received:unknown,response:unknown)=>{expect(received).toBe(batch);assertStockHistoryAcknowledgement(batch,response);return{acknowledged:1};})};
  const cloud={pushStockHistory:vi.fn(async()=>ack)},adapter=new StockHistoryUploader({outbox,cloud});
@@ -51,6 +51,50 @@ describe('bounded history metadata adapter in the existing durable sync lane',()
   expect(await uploader.upload(f.aggregate,branch,terminal)).toMatchObject({held:{fresh:true,code:'STOCK_HISTORY_SOURCE_ORIGIN_UNPROVEN'}});
   expect(await uploader.upload(f.aggregate,branch,terminal)).toMatchObject({held:{fresh:false}});expect(f.cloud.pushStockHistory).toHaveBeenCalledTimes(1);
   now=300001;expect(await uploader.upload(f.aggregate,branch,terminal)).toMatchObject({held:{fresh:true}});expect(f.cloud.pushStockHistory).toHaveBeenCalledTimes(2);expect(f.outbox.acknowledge).not.toHaveBeenCalled();
+ });
+ it('retries missing original author evidence on manual sync without claiming an acknowledgement',async()=>{
+  const f=fixture(),code='ESTOCK_HISTORY_AUTHOR_REQUIRED';
+  f.cloud.pushStockHistory.mockRejectedValue(Object.assign(new Error('Original author evidence needs review'),{code,status:409}));
+  const reader={pendingAggregates:async(_branch:string,_limit:number,excluded:string[])=>excluded.includes(f.aggregate.aggregateId)?[]:[f.aggregate],
+   failAggregate:vi.fn()};
+  const cloud={...f.cloud,terminalId:()=>terminal},uploader=new StockHistoryUploader({outbox:f.outbox,cloud,now:()=>0});
+  const worker=new PushWorker({reader,cloud,registry:{tables:[]},checkpoints:{},stockHistory:uploader});
+  expect(await worker.run({branchId:branch})).toMatchObject({heldStockHistoryAggregates:1});
+  expect(await worker.run({branchId:branch})).toMatchObject({heldStockHistoryAggregates:1});
+  uploader.retryMissingAuthorReview('another-branch',terminal);
+  expect(await worker.run({branchId:branch})).toMatchObject({heldStockHistoryAggregates:1});
+  expect(f.cloud.pushStockHistory).toHaveBeenCalledOnce();
+  expect(await worker.run({branchId:branch,retryReviewHolds:true})).toMatchObject({heldStockHistoryAggregates:1});
+  expect(f.cloud.pushStockHistory).toHaveBeenCalledTimes(2);
+  expect(reader.failAggregate).toHaveBeenCalledTimes(2);
+  expect(f.outbox.acknowledge).not.toHaveBeenCalled();
+ });
+ it('uses the next background upload turn for eligible stock while the older movement is cooling down',async()=>{
+  const held=fixture(),eligible=fixture('44444444-4444-4444-8444-444444444444');
+  const pending=new Map([held,eligible].map(item=>[item.aggregate.aggregateId,item]));
+  const outbox={
+   pending:vi.fn(async(id:string)=>pending.get(id)?.batch),
+   acknowledge:vi.fn(async(batch:typeof eligible.batch,response:unknown)=>{
+    expect(batch).toBe(eligible.batch);
+    assertStockHistoryAcknowledgement(batch,response);
+    pending.delete(eligible.aggregate.aggregateId);
+    return{acknowledged:1};
+   }),
+  };
+  const cloud={terminalId:()=>terminal,pushStockHistory:vi.fn(async(batch:typeof eligible.batch)=>{
+   if(batch===held.batch)throw Object.assign(new Error('Missing original author evidence'),{code:'ESTOCK_HISTORY_AUTHOR_REQUIRED',status:409});
+   return eligible.ack;
+  })};
+  const reader={pendingAggregates:async(_branch:string,_limit:number,excluded:string[])=>[...pending.values()]
+   .map(item=>item.aggregate).filter(item=>!excluded.includes(item.aggregateId)),failAggregate:vi.fn()};
+  const worker=new PushWorker({reader,cloud,registry:{tables:[]},checkpoints:{},stockHistory:new StockHistoryUploader({outbox,cloud,now:()=>0})});
+
+  expect(await worker.run({branchId:branch})).toMatchObject({heldStockHistoryAggregates:1,pushed:0});
+  expect(cloud.pushStockHistory.mock.calls).toEqual([[held.batch]]);
+  expect(await worker.run({branchId:branch})).toMatchObject({heldStockHistoryAggregates:1,pushed:1});
+  expect(cloud.pushStockHistory.mock.calls).toEqual([[held.batch],[eligible.batch]]);
+  expect(reader.failAggregate).toHaveBeenCalledExactlyOnceWith(held.aggregate.aggregateId,expect.objectContaining({code:'ESTOCK_HISTORY_AUTHOR_REQUIRED'}));
+  expect([...pending.keys()]).toEqual([held.aggregate.aggregateId]);
  });
  it('lets core push/pull complete while exact SQL queue counts still expose held report work',async()=>{
   const f=fixture(),failed=vi.fn(),reader={connectionManager:{pool:{}},pendingAggregates:async(_branch:string,_limit:number,excluded:string[])=>excluded.includes(f.aggregate.aggregateId)?[]:[f.aggregate],

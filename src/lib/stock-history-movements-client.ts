@@ -1,8 +1,6 @@
-import { localDb } from "@/core/local-db/local-db";
-import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
 import { getPosCallerAuth } from "./pos-caller-auth";
 import { hostedFunction } from "./hosted-function-client";
-import { isManagementDevice } from "./management-device";
+import { stockHistoryDesktopReader, usesLocalStockHistory } from "./stock-report-desktop-reader";
 import { sessionEpoch } from "./session-epoch";
 import { loadStockHistoryMovementsDirect } from "./stock-history.functions";
 import {
@@ -11,18 +9,16 @@ import {
 } from "./stock-history-movements";
 
 const hosted = hostedFunction("stock-history.movements", loadStockHistoryMovementsDirect);
-const usesLocalReader = () => effectiveDatabaseMode() === "local" && !isManagementDevice();
-
 export async function loadStockHistoryMovements(input: StockHistoryMovementRequest): Promise<StockHistoryMovementPage> {
   const request = stockHistoryMovementRequestSchema.parse(input);
-  const epoch = sessionEpoch(), native = usesLocalReader();
+  const epoch = sessionEpoch(), native = usesLocalStockHistory();
   const assertCurrent = () => {
-    if (sessionEpoch() !== epoch || usesLocalReader() !== native) {
+    if (sessionEpoch() !== epoch || usesLocalStockHistory() !== native) {
       throw Object.assign(new Error("The signed-in account or database changed. Open the stock report again."), { code: "ESTOCK_HISTORY_CONTEXT_CHANGED" });
     }
   };
   if (native) {
-    const bridge = localDb();
+    const bridge = stockHistoryDesktopReader();
     if (!bridge?.stockHistoryMovements) throw new Error("This desktop version cannot read stock movement details. Update the app before opening them.");
     const result = await bridge.stockHistoryMovements(request);
     assertCurrent();

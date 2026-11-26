@@ -77,6 +77,14 @@ describe('actual stock-history function with existing current-account scope reso
   rest.mockImplementation(async(path:string)=>path.startsWith('app_users?')?new Response(JSON.stringify([row])):new Response('{}',{status:503}));
   await expect(call()).rejects.toThrow(/database did not answer/);
  });
+ it('leaves a multi-day request unavailable on an older hosted reader while preserving one-day validation',async()=>{
+  rest.mockImplementation(async(path:string)=>path.startsWith('app_users?')?Response.json([row]):
+   Response.json({code:'P0001',message:'STOCK_HISTORY_PERIOD_INVALID'},{status:400}));
+  await expect(call({periodStart:'2026-11-03T16:00:00.0000000Z'})).resolves.toMatchObject({
+   status:'unavailable',reasons:['MULTI_DAY_SCHEMA_NOT_INSTALLED'],cutoff:request.cutoff,rows:[],
+  });
+  await expect(call({periodStart:'2026-11-04T16:00:00.0000000Z'})).rejects.toThrow('needs review');
+ });
  it('uses the server-resolved saved shift cutoff and rejects an unexpected ordinary cutoff',async()=>{
   row.permissions={can_view_inventory:true,can_shift_closing_history_view:true};
   const shifted={...complete(),cutoff:'2026-11-05T02:00:00.0000000Z'};

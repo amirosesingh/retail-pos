@@ -1,13 +1,17 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, sign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { stockCoverageFrontierJson } from "../../../electron/shared/stock-coverage-frontier.mjs";
 
 const require = createRequire(import.meta.url);
 const { createActualStockWriter } = require("../../../scripts/lib/stock-actual-writer-fixture.cjs");
+const { stockCoverageFrontierMessage } = require("../../../electron/security/stock-event-author-protocol.cjs");
 const observationSql = readFileSync("scripts/preparation/stock-history-recorded-openings.sql", "utf8");
+const rolloutSql = readFileSync("scripts/preparation/stock-history-rollout-observation.sql", "utf8");
 const stocktakeSql = readFileSync("scripts/preparation/stock-history-physical-stocktakes.sql", "utf8");
 const cutoverSql = readFileSync("scripts/preparation/stock-history-stocktake-cutover.sql", "utf8");
+const activationSql = readFileSync("scripts/preparation/stock-history-rollout-activation.sql", "utf8");
 const zeroProduct = randomUUID();
 let fixture: Awaited<ReturnType<typeof createActualStockWriter>>;
 
@@ -22,6 +26,10 @@ beforeAll(async () => {
   await fixture.db.exec(observationSql);
   await fixture.db.exec(stocktakeSql);
   await fixture.db.exec(cutoverSql);
+  await fixture.db.exec(rolloutSql);
+  await fixture.db.exec(rolloutSql);
+  await fixture.db.exec(activationSql);
+  await fixture.db.exec(activationSql);
 }, 30_000);
 afterAll(async () => fixture?.db.close());
 beforeEach(async () => fixture.db.exec("BEGIN"));
@@ -47,7 +55,81 @@ async function denied(work: () => Promise<unknown>, pattern: string | RegExp) {
 const counts = () => scalar("SELECT jsonb_build_array((SELECT count(*) FROM public.stock_history_baselines)," +
   "(SELECT count(*) FROM public.stock_history_openings),(SELECT count(*) FROM private.stock_history_opening_publications))");
 
+const initializeRollout = (actor = fixture.admin, branch = "A") => scalar(
+  "SELECT public.pos_stock_history_initialize_rollout_opening($1,$2,$3)", [actor, fixture.terminal, branch]);
+
 describe("isolated recorded stock openings", () => {
+  it("checks rollout readiness without opening a writer fence or changing stock", async () => {
+    const { project, database, key, pair } = fixture.stockSourceFixture;
+    const readiness = (actor = fixture.admin, origin = project, branch = "A") => scalar(
+      "SELECT public.pos_stock_history_rollout_readiness($1,$2,$3,$4)", [actor, fixture.terminal, origin, branch]);
+    expect(await readiness()).toEqual({ branchId: "A", writers: 0, confirmed: 0, reasons: ["ROLLOUT_SCOPE_UNCONFIRMED"] });
+    await denied(() => readiness(fixture.author), /STOCK_(?:OPENING_ADMIN_REQUIRED|HISTORY_ACTOR_DENIED|HISTORY_PERMISSION_DENIED)/);
+    await denied(() => readiness(fixture.admin, project, "B"), "STOCK_HISTORY_BRANCH_DENIED");
+    const marker = "CODEX-STOCK401-READINESS";
+    await fixture.db.exec(`ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS parent_id text,
+      ADD COLUMN IF NOT EXISTS archived_at timestamptz,ADD COLUMN IF NOT EXISTS code text;`);
+    await fixture.db.query("UPDATE public.stores SET code=$1 WHERE id='A'", [marker]);
+    await scalar("SELECT private.stock_history_install_cutover_guard($1,'A',$2,ARRAY[$3::uuid],ARRAY[$4::uuid])",
+      [project, marker, fixture.terminal, database]);
+    expect(await readiness()).toEqual({ branchId: "A", writers: 1, confirmed: 0, reasons: ["ROLLOUT_WRITERS_PENDING"] });
+    expect(await readiness(fixture.admin, "https://different.example")).toMatchObject({
+      writers: 0, confirmed: 0, reasons: ["ROLLOUT_SCOPE_UNCONFIRMED"],
+    });
+    const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+    async function observeWriter(pendingBusiness: string) {
+      const challengeId = randomUUID();
+      const challenge = await scalar<{ nonce: string; cohortHash: string; issuedAt: string }>(
+        "SELECT public.pos_stock_history_frontier_challenge($1,$2,'A',$3,$4,$5)",
+        [challengeId, project, fixture.terminal, fixture.author, key]);
+      const frontier = stockCoverageFrontierJson({
+        version: 1, projectOrigin: project, branchId: "A", terminalId: fixture.terminal,
+        authorId: fixture.author, databaseId: database, challengeId, nonce: challenge.nonce,
+        cohortHash: challenge.cohortHash, writerRevision: "stock-history-source.v1",
+        sourceSequence: "0", sourceRoot: null, sourceGeneration: "a".repeat(64), gapHash: hash("[]"),
+        pending: { business: pendingBusiness, metadata: "0", unsigned: "0", unknown: "0" }, observedAt: challenge.issuedAt,
+      });
+      const fields = { version: 1, algorithm: "Ed25519", keyId: key, projectOrigin: project,
+        terminalId: fixture.terminal, authorId: fixture.author, subject: fixture.author, branchId: "A",
+        challengeId, frontierHash: hash(frontier) };
+      const proof = JSON.stringify({ ...fields, signature: sign(null, Buffer.from(stockCoverageFrontierMessage(fields)), pair.privateKey).toString("base64url") });
+      return scalar("SELECT public.pos_stock_history_accept_frontier($1,'A',$2,$3,$4,true)",
+        [project, fixture.terminal, frontier, proof]);
+    }
+    expect(await observeWriter("0")).toMatchObject({ state: "accepted" });
+    expect(await readiness()).toEqual({ branchId: "A", writers: 1, confirmed: 1, reasons: [] });
+    expect(await observeWriter("3")).toMatchObject({ state: "unconfirmed", reasons: ["PENDING_BUSINESS"] });
+    expect(await readiness()).toEqual({ branchId: "A", writers: 1, confirmed: 0, reasons: ["ROLLOUT_WRITERS_PENDING"] });
+    expect(await counts()).toEqual([0, 0, 0]);
+    expect(await scalar("SELECT count(*) FROM private.stock_history_cutover_leases")).toBe(0);
+    expect(await fixture.stock()).toBe("10");
+  });
+
+  it("captures one rollout snapshot, keeps its observed time on retry, and leaves stock unchanged", async () => {
+    const first = await initializeRollout();
+    expect(first).toMatchObject({ status: "recorded", branchId: "A", productCount: 2, cutoff: expect.stringMatching(/Z$/) });
+    const operation = await fixture.sourceOperation();
+    await operation.upload();
+    expect(await initializeRollout()).toEqual(first);
+    expect(await counts()).toEqual([1, 2, 1]);
+    expect(await scalar("SELECT verification_state FROM public.stock_history_baselines")).toBe("unverified");
+    expect(await scalar("SELECT quantity::text FROM public.stock_history_openings WHERE product_id=$1", [fixture.product])).toBe("10");
+    expect(await fixture.stock()).toBe("7");
+  });
+
+  it("waits for captured effects and restricts rollout to the authorized Administrator", async () => {
+    await denied(() => initializeRollout(fixture.author), /STOCK_(?:OPENING_ADMIN_REQUIRED|HISTORY_ACTOR_DENIED|HISTORY_PERMISSION_DENIED)/);
+    await denied(() => initializeRollout(fixture.admin, "B"), "STOCK_HISTORY_BRANCH_DENIED");
+    expect(await scalar("SELECT has_function_privilege('authenticated','public.pos_stock_history_initialize_rollout_opening(text,text,text)','EXECUTE')")).toBe(false);
+    const operation = await fixture.sourceOperation();
+    await operation.upload();
+    expect(await initializeRollout()).toEqual({ status: "waiting", branchId: "A", reasons: ["UNVALIDATED_STOCK_EFFECTS"] });
+    expect(await counts()).toEqual([0, 0, 0]);
+    await operation.accept();
+    expect(await initializeRollout()).toMatchObject({ status: "recorded", branchId: "A", productCount: 2 });
+    expect(await scalar("SELECT quantity::text FROM public.stock_history_openings WHERE product_id=$1", [fixture.product])).toBe("7");
+  });
+
   it("stores the quantity and snapshot receipt while leaving the actual report and export unverified", async () => {
     expect(await counts()).toEqual([0, 0, 0]);
     const plan = await preview();
@@ -185,4 +267,68 @@ it("addresses immutable lease and release readbacks to the exact enrolled termin
   await denied(() => loadLease("arm"), "STOCK_CUTOVER_LEASE_CLOSED");
   await denied(() => loadRelease(randomUUID()), "STOCK_CUTOVER_SCOPE_UNCONFIRMED");
   expect(await scalar("SELECT count(*) FROM public.stock_history_baselines")).toBe(0);
+});
+
+it("activates a fenced reporting-only opening at database time, including zero stock", async () => {
+  const { project, database, key, pair } = fixture.stockSourceFixture;
+  const id = randomUUID(), marker = "CODEX-STOCK401-ROLLOUT";
+  const scope = [fixture.admin, fixture.terminal, project, "A", id];
+  const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+  const dbTime = () => scalar<string>("SELECT private.stock_history_cutover_utc(clock_timestamp())");
+  const activate = (proofs: unknown, args = scope) => scalar<{ cutoff: string }>(
+    "SELECT public.pos_stock_history_activate_rollout($1,$2,$3,$4,$5,$6::jsonb)", [...args, JSON.stringify(proofs)]);
+  const prepare = (args = scope) => scalar<{ leaseIssuedAt: string; leaseExpiresAt: string }>(
+    "SELECT public.pos_stock_history_prepare_stocktake_pause($1,$2,$3,$4,$5)", args);
+  const readReport = (cutoff: string) => scalar("SELECT public.pos_stock_history_page($1,$2,'A',$3,'UTC',NULL,100,NULL,false,NULL)",
+    [fixture.admin, fixture.terminal, cutoff]);
+  await fixture.db.exec(`ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS parent_id text,
+    ADD COLUMN IF NOT EXISTS archived_at timestamptz, ADD COLUMN IF NOT EXISTS code text;`);
+  await fixture.db.query("UPDATE public.stores SET code=$1 WHERE id='A'", [marker]);
+  await scalar("SELECT private.stock_history_install_cutover_guard($1,'A',$2,ARRAY[$3::uuid],ARRAY[$4::uuid])",
+    [project, marker, fixture.terminal, database]);
+  const lease = await prepare();
+  const claim = { terminalId: fixture.terminal, databaseId: database, challengeId: randomUUID(),
+    fenceGeneration: randomUUID(), localFencedAt: await dbTime(), localExpiresAt: lease.leaseExpiresAt };
+  const challenge = await scalar<{ nonce: string; cohortHash: string }>(
+    "SELECT public.pos_stock_history_frontier_challenge($1,$2,'A',$3,$4,$5)",
+    [claim.challengeId, project, fixture.terminal, fixture.author, key]);
+  const gapHash = hash(["stock401-pause-v1", "arm", project, "A", id, claim.terminalId, claim.challengeId,
+    database, claim.fenceGeneration, claim.localFencedAt, claim.localExpiresAt].join("\x1f"));
+  const frontier = stockCoverageFrontierJson({
+    version: 1, projectOrigin: project, branchId: "A", terminalId: fixture.terminal,
+    authorId: fixture.author, databaseId: database, challengeId: claim.challengeId, nonce: challenge.nonce,
+    cohortHash: challenge.cohortHash, writerRevision: "stock-history-source.v1", sourceSequence: "0", sourceRoot: null,
+    sourceGeneration: "a".repeat(64), gapHash, pending: { business: "0", metadata: "0", unsigned: "0", unknown: "0" },
+    observedAt: await dbTime(),
+  });
+  const fields = { version: 1, algorithm: "Ed25519", keyId: key, projectOrigin: project,
+    terminalId: fixture.terminal, authorId: fixture.author, subject: fixture.author, branchId: "A",
+    challengeId: claim.challengeId, frontierHash: hash(frontier) };
+  const proof = JSON.stringify({ ...fields,
+    signature: sign(null, Buffer.from(stockCoverageFrontierMessage(fields)), pair.privateKey).toString("base64url") });
+  expect(await scalar("SELECT public.pos_stock_history_accept_frontier($1,'A',$2,$3,$4,true)",
+    [project, fixture.terminal, frontier, proof])).toMatchObject({ state: "accepted" });
+  await denied(() => activate([]), "STOCK_CUTOVER_PROOFS_INVALID");
+  await denied(() => activate([{ ...claim, databaseId: randomUUID() }]), "STOCK_CUTOVER_PROOFS_UNCONFIRMED");
+  await denied(() => activate([claim], [fixture.admin, fixture.terminal, "https://other.fixture", "A", id]), "STOCK_CUTOVER_SCOPE_UNCONFIRMED");
+  expect(await counts()).toEqual([0, 0, 0]);
+  const before = await dbTime();
+  const opened = await activate([claim]);
+  const after = await dbTime();
+  expect(opened).toEqual({ baselineId: id, branchId: "A", cutoff: expect.any(String), verificationState: "verified",
+    openingKind: "system_snapshot", productCount: 2 });
+  expect(opened.cutoff > before && opened.cutoff < after).toBe(true);
+  expect(await readReport(opened.cutoff)).toMatchObject({ status: "complete" });
+  expect(await readReport(after)).toMatchObject({ reasons: expect.arrayContaining(["INCOMPLETE_MOVEMENTS"]) });
+  const pairs = await scalar("SELECT jsonb_object_agg(product_id::text,quantity::text) FROM public.stock_history_openings WHERE baseline_id=$1", [id]);
+  expect(pairs).toEqual({ [fixture.product]: "10", [zeroProduct]: "0" });
+  expect(await fixture.stock()).toBe("10");
+  await scalar("SELECT public.pos_stock_history_release_stocktake_pause($1,$2,$3,$4,$5)", scope);
+  expect(await activate([claim])).toEqual(opened);
+  await denied(() => activate([{ ...claim, fenceGeneration: randomUUID() }]), "STOCK_CUTOVER_REPLAY_CONFLICT");
+  const next = [...scope.slice(0, 4), randomUUID()];
+  await prepare(next);
+  await denied(() => activate([claim], next), "STOCK_CUTOVER_ALREADY_PUBLISHED");
+  expect(await counts()).toEqual([1, 2, 0]);
+  expect(await scalar("SELECT has_function_privilege('authenticated','public.pos_stock_history_activate_rollout(text,text,text,text,uuid,jsonb)','EXECUTE')")).toBe(false);
 });

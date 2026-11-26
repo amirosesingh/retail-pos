@@ -43,9 +43,11 @@ function identify(manifest: z.infer<typeof manifestSchema>, project: string, bra
 }
 
 export async function stockHistoryDownload(input: z.infer<typeof stockHistoryDownloadSchema>,
-  terminal: VerifiedTerminalDescriptor, signal: AbortSignal) {
-  if (terminal.platform !== "pc" || terminal.mode !== "operations" ||
-      terminal.id !== input.terminalId || terminal.branchId !== input.branchId)
+  terminal: VerifiedTerminalDescriptor, signal: AbortSignal, managementReplica = false) {
+  if (terminal.platform !== "pc" || terminal.id !== input.terminalId ||
+      (managementReplica
+        ? terminal.mode !== "management" || terminal.branchId !== null
+        : terminal.mode !== "operations" || terminal.branchId !== input.branchId))
     return Response.json({ ok: false, code: "STOCK_HISTORY_REPLICA_SCOPE_DENIED" }, { status: 403 });
   const projectOrigin = new URL(supabaseConfig().url).origin;
   const binding = { ok: true, version: 1, projectOrigin, branchId: input.branchId, terminalId: terminal.id };

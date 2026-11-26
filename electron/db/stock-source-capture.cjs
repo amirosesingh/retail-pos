@@ -9,11 +9,30 @@ function records(operations,table){
 }
 function id(value){try{return contract.identifier(value,true);}catch{return null;}}
 function sameRefs(left,right){return JSON.stringify(left)===JSON.stringify(right);}
+function singleCreationOperation(operations,productId){
+ let matching=0;
+ for(const op of operations){
+  if(op.table!=='products')continue;
+  if(op.kind==='insert'||op.kind==='upsert'){
+   for(const row of op.rows??(op.values?[op.values]:[])){
+    if(id(row.id)===productId)matching++;
+   }
+  }else{
+   const target=id(op.match?.id??op.rows?.[0]?.id);
+   if(target===null||target===productId)return false;
+  }
+ }
+ return matching===1;
+}
 function productCreationEffect(row,before,after,branchId){
  if(row.store_id!==branchId||row.local_delta!==row.quantity_delta||row.local_delta==='0'||row.source_refs?.length||
   before.some(product=>id(product.id)===row.product_id))return false;
- const created=after.find(product=>id(product.id)===row.product_id);
- return Boolean(created)&&String(contract.stockMap(created.stock_by_store).get(branchId)??0n)===row.quantity_delta;
+ const matches=after.filter(product=>id(product.id)===row.product_id);
+ if(matches.length!==1)return false;
+ const [created]=matches;
+ const quantity=contract.stockMap(created.stock_by_store).get(branchId);
+ return quantity!==undefined&&String(quantity)===row.quantity_delta&&(created.name??'')===row.product_name&&
+  (created.sku??null)===row.sku&&(created.barcode??null)===row.barcode;
 }
 async function sourceManifestForMovement({action,row,operations,before,after,claims,request,arrivalReason,branchId}){
  let document;
@@ -24,8 +43,7 @@ async function sourceManifestForMovement({action,row,operations,before,after,cla
   if(!records(operations,'stock_adjustments').some(record=>id(record.id)===refs[0][1]))return null;
   document={type:'stock_adjustments',id:refs[0][1]};
  }else if(action==='PRODUCT_CREATE'){
-  if(!productCreationEffect(row,before,after,branchId)||
-   !records(operations,'products').some(product=>id(product.id)===row.product_id))return null;
+  if(!singleCreationOperation(operations,row.product_id)||!productCreationEffect(row,before,after,branchId))return null;
   document={type:'products',id:row.product_id};
  }else if(action==='RECEIVE'){
   // The receiving UI's logical document is stored in purchase_orders, not a

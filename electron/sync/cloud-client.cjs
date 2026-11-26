@@ -81,6 +81,7 @@ const legacyRecoveryResponses = new WeakMap();
 // Only a successful existing Management-directory admission creates this
 // capability. A renderer/company flag or NULL branch is not a read grant.
 const managementHistoryScopes = new WeakMap();
+const managementStockScopes = new WeakMap();
 
 function transportDiagnostic(error, payload, stage) {
   // Read data descriptors only: foreign errors must not run getters or leak
@@ -399,7 +400,10 @@ class CloudClient {
       return data;
     }
     if (!response.ok || data?.ok === false) {
-      if([401,403].includes(response.status))managementHistoryScopes.delete(this);
+      if([401,403].includes(response.status)){
+        managementHistoryScopes.delete(this);
+        managementStockScopes.delete(this);
+      }
       // PostgREST reports raised SQL errors in `message`, while the POS relay
       // uses `error`. Preserve both so diagnostics show SYNC_BRANCH_FORBIDDEN
       // instead of an unhelpful generic HTTP 400.
@@ -434,11 +438,21 @@ class CloudClient {
     managementHistoryScopes.delete(this);
     const source=this.requestContext(false),value=await this.request({managementSyncBranches:true});
     this.assertRequestContext(source,false,{managementSyncBranches:true});
-    if(value?.ok!==true||!Array.isArray(value.branches)||value.branches.some(row=>typeof row?.id!=='string'||!row.id.trim()||row.id.length>128))
+    if(value?.ok!==true||!Array.isArray(value.branches)||value.branches.some(row=>typeof row?.id!=='string'||!row.id.trim()||row.id.length>128)) {
+      managementStockScopes.delete(this);
       throw Object.assign(new Error('The Management synchronization directory could not be verified.'),{code:'EHISTORY_INDEX_SCOPE',table:'change_history'});
+    }
     const branches=[...new Set(value.branches.map(row=>recordId(row.id)))].sort();
-    managementHistoryScopes.set(this,{pool:source.pool,fingerprint:source.fingerprint,branches,stamp:createHash('sha256').update(JSON.stringify(branches)).digest('hex')});
+    const authority={pool:source.pool,fingerprint:source.fingerprint,branches,stamp:createHash('sha256').update(JSON.stringify(branches)).digest('hex')};
+    managementHistoryScopes.set(this,authority);
+    managementStockScopes.set(this,authority);
     return value;
+  }
+  verifiedManagementStockScope() {
+    const proof=managementStockScopes.get(this),source=this.requestContext(false);
+    return proof?.pool && proof.pool===source.pool && proof.fingerprint===source.fingerprint ? {
+      ...source, branches:[...proof.branches], stamp:proof.stamp,
+    } : null;
   }
   verifiedManagementHistoryScope(branchId) {
     const proof=managementHistoryScopes.get(this),source=this.requestContext(false);
@@ -527,8 +541,11 @@ class CloudClient {
   downloadStockHistory(batch) {
     const terminal = this.terminalStore.read() ?? {};
     const scope = require("../verified-activation.cjs").binding(terminal);
-    if (scope?.mode !== "operations" || scope.platform !== "pc" ||
-      batch?.version !== 1 || batch.branchId !== scope.branchId || batch.terminalId !== scope.id ||
+    const branchAuthorized = scope?.mode === "management"
+      ? this.verifiedManagementStockScope()?.branches.includes(batch?.branchId)
+      : scope?.mode === "operations" && batch?.branchId === scope.branchId;
+    if (!scope || scope.platform !== "pc" || !branchAuthorized ||
+      batch?.version !== 1 || batch.terminalId !== scope.id ||
       !["manifest", "page"].includes(batch.action))
       require("../db/stock-history-contract.cjs").fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
     return this.request({ sqlServerStockHistoryDownload: batch });

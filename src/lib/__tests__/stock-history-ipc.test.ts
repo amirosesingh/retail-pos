@@ -18,7 +18,7 @@ function fixture() {
     identity: () => ({ authorId: actorId, subject: "cashier", canonicalSubject: "cashier", source: "pos" }), touch: () => { touched++; } };
   const options = { manager, session, terminal: () => terminal, branch: () => "a", isPosSender: (event: any) => event === "pos", context: () => ["https://fixture.invalid"] };
   const read = createStockHistoryReader(options), readMovements = createStockHistoryReader(options,true);
-  return { read, readMovements, person, terminal, manager, events, revoke: () => { active = false; epoch++; }, after: (fn: () => void) => { afterRead = fn; }, counts: () => ({ reads,touched }) };
+  return { read, readMovements, person, terminal, manager, options, events, revoke: () => { active = false; epoch++; }, after: (fn: () => void) => { afterRead = fn; }, counts: () => ({ reads,touched }) };
 }
 describe("Main-owned stock history read admission", () => {
   it("reports an absent optional schema truthfully without SQL or registration writes", async () => {
@@ -60,6 +60,25 @@ describe("Main-owned stock history read admission", () => {
   it("rechecks newly revoked SQL authority before returning even an unavailable result", async () => {
     const f = fixture(); f.after(() => { f.person.is_active = false; });
     expect(await f.read("pos",request)).toMatchObject({ ok: false,code: "PERMISSION_DENIED" }); expect(f.events).toEqual(["begin","commit"]);
+  });
+  it("uses explicit Main Management branch admission on both queries and denies a substituted scope", async () => {
+    const f = fixture();
+    f.terminal.deviceUse = "management";
+    const authorizeRead = vi.fn(async () => ({ contextKey: "bound", branchId: "b", canViewInventory: true }));
+    const admission = vi.fn(async () => ({ branchId: "b", assertCurrent: vi.fn(), authorizeRead }));
+    const read = createStockHistoryReader({ ...f.options, managementHistoryAdmission: admission });
+    const readMovements = createStockHistoryReader({ ...f.options, managementHistoryAdmission: admission }, true);
+    await expect(read("pos", { ...request, branchId: "a" })).resolves.toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+    await expect(read("pos", { ...request, branchId: "b" })).resolves.toMatchObject({
+      ok: true, page: { branchId: "b", status: "unavailable", reasons: ["SCHEMA_NOT_INSTALLED"] },
+    });
+    await expect(readMovements("pos", { ...request, branchId: "b", productId: databaseGuid,
+      sourceRevision: "test-revision" })).resolves.toMatchObject({
+      ok: true, page: { branchId: "b", status: "unavailable" },
+    });
+    expect(admission).toHaveBeenCalledWith("pos", { branchId: "b", exporting: false });
+    expect(authorizeRead).toHaveBeenCalledTimes(4);
+    expect(f.counts()).toEqual({ reads: 0, touched: 2 });
   });
 });
 

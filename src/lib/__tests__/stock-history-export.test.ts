@@ -26,6 +26,24 @@ describe("stock report export admission and consistency", () => {
     if (change === "permission") load.mockRejectedValueOnce(new Error("Permission revoked")); else load.mockResolvedValueOnce(second);
     await expect(stockHistoryForExport(request, load)).rejects.toThrow();
   });
+  it.each(["revision", "cutoff", "time zone", "period"])("rejects a changed %s on the first and only export page", async change => {
+    const first = page();
+    if (change === "revision") first.sourceRevision = "source-2";
+    if (change === "cutoff") first.cutoff = "2026-11-06T00:00:00.0000002Z";
+    if (change === "time zone") first.timeZone = "UTC";
+    if (change === "period") {
+      first.period = { start: "2026-11-06T00:00:00.0000000Z", endExclusive: "2026-11-07T00:00:00.0000000Z",
+        through: request.cutoff, fullDay: false };
+      Object.assign(first.rows[0]!, { openingQuantity: first.rows[0]!.quantity, inQuantity: "0", outQuantity: "0" });
+    }
+    await expect(stockHistoryForExport(request, async () => first)).rejects.toThrow("no longer matches the displayed report");
+  });
+  it("pins a resolved closing cutoff and the requested movement interval before export", async () => {
+    const closedShiftId = a;
+    await expect(stockHistoryForExport({ ...request, closedShiftId }, async () => page())).resolves.toMatchObject({ cutoff: request.cutoff });
+    await expect(stockHistoryForExport({ ...request, periodStart: "2026-11-06T00:00:00.0000000Z" }, async () => page()))
+      .rejects.toThrow("no longer matches the displayed report");
+  });
   it("stops after session/profile handover before publishing a downloaded page", async () => {
     let active = true;
     const load = vi.fn(async () => { active = false; return page(); });

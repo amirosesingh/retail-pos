@@ -9,11 +9,73 @@ existing synchronization lane. The preview starts on a loopback-only Vite
 server with synthetic retailers, products and history. It uses the actual
 report route and leaves the original draft and operator profiles intact.
 
+### Stock As of Date and the rollout opening
+
+Stock As of Date shows one paginated table containing product, barcode and the
+balance at the inclusive cutoff. The existing reader supplies verified balances
+in revision-pinned pages. When coverage is incomplete, the page uses bounded
+activity reads to support individual recorded balances and leaves unknown
+quantities unavailable. It keeps the activity timeline in Stock Movement.
+Selecting an unavailable quantity checks that product's own scoped activity
+pages. A supported quantity stays visible for the current report and is
+discarded when the report is regenerated or its scope changes. This lookup
+does not grant verified export eligibility.
+
+On Beta, an authorized Administrator can record a rollout opening in Database
+Connection under Stock History Verification. After approval and installation of
+`scripts/preparation/stock-history-rollout-observation.sql`, the application
+will take one database snapshot per location at the actual observation time.
+The SQL reuses existing checks for the capture contract, complete product
+identity and valid quantities. Repeated requests return the same snapshot and
+locations with a verified opening keep it. The action touches reporting
+records only.
+
+The observation has recorded status. Verifying an effective-time ledger still
+requires a proven opening and coverage from the relevant stock writers. The
+existing capture preserves accepted effects automatically. Pending or missing
+writer evidence must keep the affected cutoff provisional or unavailable.
+
+The rollout readiness check reuses the existing authorized cutover scope, full
+writer roster and signed frontier receipts. It selects each till's latest
+receipt for the matching project, scope and physical database and uses the
+existing challenge lifetime. A newer pending receipt invalidates an earlier
+accepted receipt for readiness. The check creates no lease, opens no writer
+fence and advances no report head. One passing readiness check cannot certify
+an opening or cutoff.
+
+The 26 November Beta audit found one verified location, with coverage at its
+opening instant and one of its two tills still unconfirmed. Its latest
+unconfirmed receipt reported three pending business writes. The other
+enrolled location was retired. Beta has no effective-time birth admission or
+continuation publisher, and PostgreSQL commit timestamps are disabled. The
+prepared rollout SQL stays unapplied. Activation requires an exact opening
+cutoff within the authorized writer fence and verified admission for new
+product creations, including zero-stock products.
+
+### Hosted Beta check
+
+On 26 November, the active Beta Worker returned HTTP 200 for its home and
+health endpoints and HTTP 404 for `/reports/inventory`. Its public configuration
+identifies Retail POS Beta and the health endpoint confirms a server binding.
+The remote Beta head was `b8cbaea3`, and PR #401 still had draft status.
+
+The isolated Beta database had one verified opening and five accepted movement
+records. Its complete history head covered only the opening instant on
+23 November at 11:01:56 Brunei time. Multi-day and Management replica scope
+patches were absent. Three of 18 products with nonzero stock had no usable
+base cost. The current report leaves incomplete totals unavailable and
+explains which input is missing. The web report shows inventory load status,
+and native terminals show their actual recorded synchronization time.
+
+The Inventory badge counts the active location's dispatched inbound transfers
+and outgoing transfers awaiting approval or ready to send. Those transfers
+are available under Stock Transfers for users with existing access.
+
 | View | Source and behavior |
 | --- | --- |
 | Current Stock | Filter authorized branch and warehouse balances by catalogue fields and stock availability. Product ID plus location is the row key. Alternate barcodes are search aliases. Sorting, grouping, paging, resizable columns, saved visibility and CSV/Excel use the matching snapshot. |
 | Stock As of Date | Day-end or exact configured-zone cutoff using the existing revision-pinned reader. Dated activity is recorded evidence only. A current-only item with no evidence it existed by the cutoff stays out of the historical list. Verified CSV/Excel use the selected search and zero filters and preserve integer quantities. |
-| Stock Movement | Bounded dated activity across a selected range and verified opening, in, out and closing for one supported business day. Product details use the accepted ledger and draw a chart only where the returned evidence supports it. |
+| Stock Movement | Recorded activity and verified opening, in, out and closing for up to 31 business-calendar days. Amounts use the exact first boundary and inclusive end against one revision. Product details chart the supported ledger. A paginated result identifies its visible totals and keeps branch-wide totals unavailable until the response covers the location. |
 | Stock Valuation | Current cost and price follow the existing scoped catalogue and cost permission. Nonzero stock without a confirmed price makes its matching valuation unavailable. Historical quantities stay usable when supported, with historical monetary values unavailable until dated price evidence exists. |
 | Stock History Verification | Database Connection can inspect coverage for one authorized location/cutoff, including the source-reported opening, read time, writer coverage, pending events and reasons. It is a read-only coverage check. |
 
@@ -22,13 +84,27 @@ browser print preview that also supports saving as PDF. The report header and
 tab changes do not start synchronization or reload the POS. Report refresh
 updates the selected report view only. An Electron terminal with an invalid
 local source does not use a hosted fallback for this report. Management
-Electron remains gated until there is a scoped, authorized local report reader.
+Electron has dedicated Main admission for current stock, verified history and
+recorded activity. A signed-in Management operator with verified location scope
+and a ready local replica can continue reading when connectivity is lost. A cold
+offline login still depends on the existing sign-in and scope rules.
+
+The Management pull coordinator prepares at most one bounded stock history
+publication at a time from its authorized locations. Its installer verifies
+the source, location, receiving terminal, current SQL database and publication
+digest before committing the report evidence. Verification or bootstrap gaps
+block affected locations. Current balances continue to use the existing catalogue
+scope and per-location balances, with restricted costs redacted in Main. Before
+displaying current stock, the Management coordinator compares the scoped catalogue
+and its dependencies against the authorized server using bounded signature reads.
+The report rechecks the verified project and physical database and retains that
+proof for the verified session during a disconnect.
 
 ### Evidence still needed before promotion
 
 The existing approved readers can certify only periods supported by their
 openings and movement coverage. They do not expose dated cost or selling prices,
-verified multi-day totals, a consolidated historical cutoff, or every transfer
+a consolidated historical cutoff, or every transfer
 and reason field. Older writer coverage, a nonphysical idempotent baseline,
 backfill across the baseline, automatic reconciliation and discrepancy counts,
 service-level report-specific cost/permission projections, stored model and
@@ -38,8 +114,10 @@ filters run against the existing authorized in-memory snapshot and create no
 additional catalogue download. A production-shaped performance run and a
 verified production snapshot are still required for checkout compatibility.
 
-The advanced UI change adds no SQL scripts to either engine and activates no
-prepared migrations. Existing PR #401 schema and capture drafts retain their
+The multi-day reader and Management replica scope extensions are prepared
+PostgreSQL SQL files in `scripts/preparation`. The native code reuses the
+existing SQL Server Stock Report schema. Neither hosted patch has been applied.
+Existing PR #401 schema and capture drafts retain their
 exact-target review and rollout gates. Before a production proposal, compare the
 two deployed schemas read-only, verify the required schema packages and all
 writer paths in isolation, and obtain approval for the exact promotion and any
@@ -53,7 +131,16 @@ In the isolated `codex/advanced-stock-reporting-beta` worktree with its existing
 Node dependencies, run `node scripts/test-stock-report-ui.cjs --preview --port=4180`.
 Open `http://127.0.0.1:4180/` on the same computer. This development server uses
 synthetic inventory and activity fixtures, and its browser network policy stays
-on loopback. Source edits refresh the view through Vite.
+on loopback. Source edits refresh the view through Vite. Select Stock Movement
+from 5 to 6 November 2026 to see a two-day sample for Bandar flagship or
+Central warehouse.
+
+The full POS development server at `http://127.0.0.1:4181/` uses the public
+configuration for Retail POS Beta. The sign-in page can load with its fixed
+Beta hosts and no local server secret. The running loopback preview forwards
+username sign-in only to the hosted Beta Worker after checking its project
+binding. It uses direct Beta Auth for full email sign-in. Other privileged
+local service actions still need authorized Beta relay configuration.
 
 The focused suite passed 86 tests. Two mounted suites passed 29 and 10 cases,
 including permissions, stale responses, exact cutoffs, filtering, paging and
@@ -64,6 +151,16 @@ synthetic current-stock run produced consistent totals for 5,000 products at
 five locations and 25,000 rows. This checks snapshot preparation only. No
 isolated data copy from Production was available for acceptance, so no result
 certifies production checkout throughput or old-client compatibility.
+
+For the follow-up, Chrome verified two-day opening, stock in, stock out and
+closing values for the sample branch and warehouse. The combined focused suite
+passed 193 tests, alongside the 39 mounted cases, TypeScript and the local Beta
+Worker build. The disposable SQL Server
+tests used the actual native reader and history installer, including a new
+reader without cloud access, cross-project rejection and physical database
+replacement. The hosted SQL files were tested only against disposable Postgres
+fixtures. An installed Management Electron test against Retail POS Beta still
+requires the approved schema and verified location data.
 
 Changed areas include the Inventory Reports and Database Connection routes,
 the shared current, historical, movement and verification components, current
@@ -615,3 +712,96 @@ central writers:
    denial, a concurrent sale or count, lost acknowledgement/replay and the
    local-to-grouped result. Historical readers also need verified original
    effective time and membership admission before marking a cutoff complete.
+
+## 26 November Beta rollout readiness
+
+- The prepared rollout opening uses the hosted database clock while the
+  reviewed branch gate and the enrolled tills' persisted fences hold. It
+  captures authorized catalogue quantities, including zero, as reporting
+  evidence. It preserves any existing verified opening. A successful retry
+  returns the same opening and cutoff. The exact cutoff is the initial
+  verified range.
+- Future cutoffs need original movement times and a provably complete writer
+  prefix. Product identity and explicit zero are preserved in membership
+  evidence. A signed device claim alone does not verify birth time. The
+  current movement transport has no accepted zero-quantity birth member.
+  Hold unsupported history and keep provisional balances identified.
+- The existing synthetic Till A has a retained signed shift opening and
+  sale. Its central sale parent already links to that shift, with no sale
+  lines, tender rows or protected sale receipt. The normal opening upload
+  returns `FIN62_OPEN_BIRTH_NOT_EMPTY`. The separate stock movement has no
+  original stock-author proof and remains held. The existing legacy-closing
+  and held-bill review workflows cannot complete this open FIN62 graph.
+  A future app recovery must match the signed originals, the central parent,
+  and any side effects under a reviewed transaction. Never insert a second
+  sale, re-create an opening, manually change the graph, or fabricate the
+  missing stock proof.
+- The local Beta patch keeps the failed opening and sale queued, backs off
+  repeated exact rejections, and keeps the existing manual retry. Diagnostics
+  show the shift review once with its original stages available. The stock
+  author hold stays separately visible. This patch has not been deployed.
+- Opening activation has passed disposable database checks for exact time,
+  zero, scope, retries, and unchanged stock. Hosted activation and offline
+  acceptance for this rollout still require a complete writer cohort and
+  the approved Beta workflow. Keep the prior verified Beta opening intact.
+
+### Automatic recovery for future retries
+
+- The prepared sale-shift constraint verifies new or changed sale bindings
+  at commit. A sale with a shift waits for that same-branch parent. The
+  existing journal can retry the sale when the parent arrives. Unlinked
+  sales and edits that retain an existing binding keep their current behavior.
+- When the original stock proof is missing from a local copy, the existing
+  upload route can retrieve an exact immutable acceptance receipt for the
+  original movement and payload under the same project, branch and till.
+  A new claim still requires its original proof. A returned receipt neither
+  repeats the stock change nor advances historical coverage on its own.
+- The saved Till A shift and totals have original signatures. The full
+  original checkout and a matching stock receipt are absent. Both records
+  stay pending. The prepared SQL contains only schema changes and remains
+  unapplied outside disposable tests.
+
+### Checking a saved verification case on Electron
+
+In **Settings → Database connection → Saving to central database**, select
+**Verify saved record** beside a case under **Needs verification**. The check
+uses the current signed-in operator, registered till, branch and local SQL
+connection to show the saved reference, queued rows, original proof and any
+matching acceptance evidence already saved on the till.
+
+The check reads existing data. **More settings → Sync now** uses the ordinary
+sync path to retry and record central acceptance. A valid stock receipt updates
+the saved movement's ingestion cursor and time alongside the journal
+acknowledgement. An opening receipt is saved separately in
+`local_operation_receipts`. A sale's financial metadata receipt does not
+confirm that the full sale was accepted. Operators can use **Stock History
+Verification** on the same settings page to check report coverage at a
+selected cutoff.
+
+### Release candidate verification
+
+- The queue gives the background upload turn back when it skips a cached stock
+  review hold. An eligible movement can continue without acknowledging the
+  held claim. Explicit retry still uses the original durable evidence.
+- When cloud registration rejects a sale's financial metadata, the fresh
+  rejection is recorded against that exact pending sale in the same branch
+  and connection context. A cached rejection does not increment attempts.
+  The saved comparison is read-only. Exact acknowledged stock receipts
+  require the original payload digest and journal acknowledgement.
+- Historical exports bind even the first page to the displayed cutoff, period
+  and revision. A current-stock export stops if it loses its report scope.
+- The focused checks passed in 30 mounted browser groups and 90 disposable
+  SQL Server groups. The Beta website and Windows renderer builds passed.
+  Hosted two-till acceptance remains pending. A Management terminal needs a
+  verified session and location scope before allowing native report reads;
+  the existing cold offline startup cannot establish that scope.
+
+The sale-shift guard and exact stock-receipt lookup remain schema-only
+preparations. Their review hashes are
+`7f42c6152c2b65cb46ee21c1d18d5d48033c0622b572f359c020078049e1f298` for
+`scripts/preparation/sale-shift-parent-integrity.sql` and
+`a8241c4325ceed2225b8f4db6f3a17a217053ba0d0b0a5c728c159c6f6a049e4` for
+`scripts/preparation/stock-history-accepted-receipt-recovery.sql`. The
+read-only Beta check found neither installed. The retained Till A conflict
+requires original checkout evidence or an independently proved accepted
+receipt before it can be released from the queue.

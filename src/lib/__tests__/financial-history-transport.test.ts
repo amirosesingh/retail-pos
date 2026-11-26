@@ -87,6 +87,75 @@ describe('two-phase exact financial history transport',()=>{
   const f=fixture();f.cloud.pushFinancialEvent.mockRejectedValueOnce(Object.assign(new Error('503'),{status:503}));await expect(f.run()).rejects.toMatchObject({status:503});expect(f.reader.acknowledgeFinancialHistory).not.toHaveBeenCalled();expect(f.cloud.pushAggregate).toHaveBeenCalledOnce();
   expect(await f.run()).toBe(2);expect(await f.run()).toBe(1);expect(f.cloud.pushFinancialEvent.mock.calls[0][0]).toEqual(f.cloud.pushFinancialEvent.mock.calls[1][0]);
  });
+ it('keeps an exact protected opening conflict queued until an explicit retry without re-sending it on each timer',async()=>{
+  const f=fixture(),reason='FIN62_OPEN_BIRTH_NOT_EMPTY';
+  let fingerprint='project-profile-a';
+  Object.assign(f.cloud,{requestContext:()=>({fingerprint})});
+  f.worker.retry=PushWorker.prototype.retry.bind(f.worker);
+  f.worker.checkpoints={list:async()=>[]};
+  Object.assign(f.reader,{changedIds:vi.fn(async()=>[])});
+  const original=Object.assign(new Error(reason),{code:'P0001',status:500});
+  f.cloud.pushAggregate.mockRejectedValue(original);
+  await expect(f.worker.run({branchId:branch})).rejects.toBe(original);
+  await expect(f.worker.run({branchId:branch})).rejects.toMatchObject({code:'P0001',message:reason,table:'shifts'});
+  expect(f.cloud.pushAggregate).toHaveBeenCalledOnce();
+  expect(f.reader.failAggregate).toHaveBeenCalledOnce();
+  expect(f.reader.acknowledgeFinancialOpening).not.toHaveBeenCalled();
+  expect(f.reader.acknowledgeAggregate).not.toHaveBeenCalled();
+  await expect(f.worker.run({branchId:branch,retryReviewHolds:true})).rejects.toBe(original);
+  expect(f.cloud.pushAggregate).toHaveBeenCalledTimes(2);
+  expect(f.cloud.pushAggregate.mock.calls[1][0]).toEqual(f.cloud.pushAggregate.mock.calls[0][0]);
+  fingerprint='project-profile-b';
+  await expect(f.worker.run({branchId:branch})).rejects.toBe(original);
+  expect(f.cloud.pushAggregate).toHaveBeenCalledTimes(3);
+ });
+ it('keeps another PostgreSQL exception on its normal retry path',async()=>{
+  const f=fixture(),error=Object.assign(new Error('A different financial error'),{code:'P0001',status:400});
+  f.cloud.pushAggregate.mockRejectedValue(error);
+  await expect(f.run()).rejects.toBe(error);
+  await expect(f.run()).rejects.toBe(error);
+  expect(f.cloud.pushAggregate).toHaveBeenCalledTimes(2);
+ });
+ it('holds a rejected SALE birth and its same-shift metadata while an independent shift advances',async()=>{
+  const f=fixture(),reason='FIN62_SALE_BIRTH_ALREADY_EXISTS';
+  const otherShift='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',otherOperation='cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const original=f.history[0],payloadJson=json({...JSON.parse(original.payloadJson),shiftId:otherShift,operationId:otherOperation});
+  const payloadHash=hash(payloadJson);
+  const independent={...original,shiftId:otherShift,operationId:otherOperation,payloadJson,payloadHash,
+   proof:f.signed({...f.common,operationId:otherOperation,action:'SALE',payloadHash},financialOperationMessage)};
+  f.reader.pendingAggregates.mockResolvedValue([]);
+  f.worker.checkpoints={list:async()=>[]};
+  Object.assign(f.reader,{changedIds:vi.fn(async()=>[])});
+  f.reader.financialHistory.mockImplementation(async(...args:unknown[])=>{
+   const excluded=args[3] as string[]|undefined;
+   return [...f.history,independent].filter(item=>!f.meta.has(item.operationId)&&!excluded?.includes(item.shiftId)).slice(0,1);
+  });
+  f.cloud.pushFinancialEvent.mockImplementation(async({operationJson})=>{
+   if(operationJson===payloadJson)return f.ackFor(independent);
+   throw Object.assign(new Error(reason),{code:'P0001',status:400});
+  });
+  await expect(f.worker.run({branchId:branch})).rejects.toMatchObject({code:'P0001',message:reason,table:'sales'});
+  expect(f.meta).toEqual(new Set([otherOperation]));
+  expect(f.cloud.registerFinancialBoundary).not.toHaveBeenCalled();
+  expect(f.reader.acknowledgeAggregate).not.toHaveBeenCalled();
+  expect(f.reader.failAggregate).toHaveBeenCalledExactlyOnceWith(saleOp,expect.objectContaining({message:reason,table:'sales'}),branch);
+  await expect(f.worker.run({branchId:branch})).rejects.toMatchObject({code:'P0001',message:reason,table:'sales'});
+  expect(f.cloud.pushFinancialEvent).toHaveBeenCalledTimes(2);
+  expect(f.reader.failAggregate).toHaveBeenCalledOnce();
+  await expect(f.worker.run({branchId:branch,retryReviewHolds:true})).rejects.toMatchObject({code:'P0001',message:reason,table:'sales'});
+  expect(f.cloud.pushFinancialEvent).toHaveBeenCalledTimes(3);
+  expect(f.reader.failAggregate).toHaveBeenCalledTimes(2);
+  expect(f.meta).toEqual(new Set([otherOperation]));
+ });
+ it('never puts a prior Beta profile’s sale rejection in the replacement profile journal',async()=>{
+  const f=fixture(),error=Object.assign(new Error('FIN62_SALE_BIRTH_ALREADY_EXISTS'),{code:'P0001',status:400});
+  let fingerprint='original';
+  Object.assign(f.cloud,{requestContext:()=>({fingerprint})});
+  f.cloud.pushFinancialEvent.mockImplementation(async()=>{fingerprint='replacement';throw error;});
+  await expect(f.run()).rejects.toBe(error);
+  expect(f.reader.failAggregate).not.toHaveBeenCalled();
+  expect(f.reader.acknowledgeFinancialHistory).not.toHaveBeenCalled();
+ });
  it('refuses an ordinary success object as a boundary metadata ACK',async()=>{const f=fixture();f.cloud.registerFinancialBoundary.mockResolvedValue({ok:true} as never);await expect(f.run()).rejects.toMatchObject({code:'EFINANCIAL_HISTORY_UNCONFIRMED'});expect(f.reader.acknowledgeProtectedIntent).not.toHaveBeenCalled();expect(f.meta.has(closeId)).toBe(false);});
  it('requires exact metadata receipt fields and preserves false business flags',()=>{const f=fixture(),item=prepareFinancialHistory(f.history[0],branch,terminal);for(const patch of [{status:'ok'},{businessUploaded:true},{shiftClosed:true},{sequence:'2'},{extra:true}])expect(()=>assertFinancialHistoryAcknowledgement(item,{...f.ackFor(f.history[0]),...patch})).toThrow();});
 });

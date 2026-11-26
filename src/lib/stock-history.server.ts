@@ -1,11 +1,19 @@
 import type {CallerProof} from './privileged-caller.server';
-import type {StockHistoryPage,StockHistoryRequest} from './stock-history-report';
+import type {StockHistoryPage,StockHistoryRequest,StockRolloutOpening,StockRolloutReadiness} from './stock-history-report';
 import {checkedStockHistoryPage,stockHistoryRequestSchema} from './stock-history-validation';
 import {sameBranchId} from './branch-id';
+import {RELEASE_CHANNEL} from './release-channel';
+import {z} from 'zod';
 import {
  checkedStockHistoryMovementPage,stockHistoryMovementRequestSchema,
  type StockHistoryMovementPage,type StockHistoryMovementRequest,
 } from './stock-history-movements';
+
+function isMultiDayPeriod(start:string|undefined,cutoff:string,timeZone:string){
+ if(!start)return false;
+ const date=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'});
+ return date.format(new Date(start))!==date.format(new Date(cutoff));
+}
 
 export async function authorizeStockHistoryRead(proof:CallerProof,request:Pick<StockHistoryRequest,'branchId'|'closedShiftId'|'export'>){
  const {requireCallerScope}=await import('./privileged-caller.server');
@@ -20,6 +28,57 @@ export async function authorizeStockHistoryRead(proof:CallerProof,request:Pick<S
  if(!branchId||((scope.storeId||!canCrossBranches(scope))&&(!scope.storeId||!sameBranchId(scope.storeId,branchId))))
   throw new Error('You can only read historical stock for your authorized branch.');
  return {scope,branchId};
+}
+
+const rolloutBranch=z.string().min(1).max(128);
+const rolloutCutoff=z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/);
+const rolloutOpening=z.discriminatedUnion('status',[
+ z.object({status:z.literal('already_verified'),branchId:rolloutBranch,cutoff:rolloutCutoff}),
+ z.object({status:z.literal('recorded'),branchId:rolloutBranch,cutoff:rolloutCutoff,productCount:z.number().int().min(0).max(10000)}),
+ z.object({status:z.literal('waiting'),branchId:rolloutBranch,reasons:z.array(z.string().max(64)).min(1).max(10)}),
+]);
+
+async function authorizeStockRollout(proof:CallerProof,branch:string){
+ if(RELEASE_CHANNEL!=='beta')throw new Error('Stock Report rollout is available on Beta.');
+ const {scope,branchId}=await authorizeStockHistoryRead(proof,{branchId:branch});
+ if(scope.role!=='admin'&&scope.roleSlug!=='admin')throw new Error('Stock history rollout requires an Administrator.');
+ return {scope,branchId};
+}
+
+export async function readStockRolloutReadiness(proof:CallerProof,branch:string):Promise<StockRolloutReadiness>{
+ const {scope,branchId}=await authorizeStockRollout(proof,branch);
+ const [{serviceRest},{supabaseConfig}]=await Promise.all([
+  import('@/core/api/pos-relay.server'),import('./external-supabase-config'),
+ ]);
+ const response=await serviceRest('rpc/pos_stock_history_rollout_readiness',{method:'POST',body:JSON.stringify({
+  p_actor:scope.staffUserId,p_terminal:scope.terminalId??null,p_branch:branchId,p_project:new URL(supabaseConfig().url).origin,
+ })});
+ const payload=await response.json().catch(()=>null);
+ if(!response.ok){
+  if(response.status===404&&payload?.code==='PGRST202')throw new Error('This database needs the reviewed Stock Report rollout upgrade.');
+  throw new Error('The rollout writer evidence could not be checked.');
+ }
+ const result=z.object({branchId:rolloutBranch,writers:z.number().int().min(0).max(16),
+  confirmed:z.number().int().min(0).max(16),reasons:z.array(z.string().max(64)).max(10)}).parse(payload);
+ if(!sameBranchId(result.branchId,branchId)||result.confirmed>result.writers)throw new Error('The rollout source returned invalid writer evidence.');
+ return result;
+}
+
+export async function recordStockRolloutOpening(proof:CallerProof,branch:string):Promise<StockRolloutOpening>{
+ const {scope,branchId}=await authorizeStockRollout(proof,branch);
+ const {serviceRest}=await import('@/core/api/pos-relay.server');
+ const response=await serviceRest('rpc/pos_stock_history_initialize_rollout_opening',{method:'POST',body:JSON.stringify({
+  p_actor:scope.staffUserId,p_terminal:scope.terminalId??null,p_branch:branchId,
+ })});
+ const payload=await response.json().catch(()=>null);
+ if(!response.ok){
+  if(response.status===404&&payload?.code==='PGRST202')throw new Error('This database needs the reviewed Stock Report rollout upgrade.');
+  if(payload?.message==='STOCK_OPENING_SOURCE_CHANGED')throw new Error('Inventory changed while the opening was being read. Try again.');
+  throw new Error('The rollout opening could not be recorded for this location.');
+ }
+ const result=rolloutOpening.parse(payload);
+ if(!sameBranchId(result.branchId,branchId))throw new Error('The opening source returned a different location.');
+ return result;
 }
 
 /** A report read only; the service key never accepts a renderer ledger write. */
@@ -37,6 +96,7 @@ export async function readStockHistoryPage(proof:CallerProof,input:StockHistoryR
   if(!response.ok){
    const error=result as {code?:string;message?:string}|undefined;
    if(response.status===404&&error?.code==='PGRST202'&&error.message?.includes(rpc))return null;
+   if(error?.message==='STOCK_HISTORY_PERIOD_INVALID'&&isMultiDayPeriod(request.periodStart,request.cutoff,request.timeZone))return null;
    if(error?.message==='STOCK_HISTORY_SOURCE_CHANGED')throw Object.assign(new Error('Stock history changed. Refresh the report before continuing.'),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
    if(response.status===401||response.status===403||error?.code==='42501')throw new Error('Your current account or terminal is not allowed to read this stock report.');
    throw new Error('The recorded stock history could not be verified.');
@@ -65,6 +125,10 @@ export async function readStockHistoryPage(proof:CallerProof,input:StockHistoryR
   if(response.status===404&&error?.code==='PGRST202'&&error.message?.includes(rpc))return{
    status:'unavailable',reasons:['SCHEMA_NOT_INSTALLED'],cutoff:request.cutoff,timeZone:request.timeZone,branchId,rows:[],next:null,
   };
+  if(error?.message==='STOCK_HISTORY_PERIOD_INVALID'&&isMultiDayPeriod(request.periodStart,request.cutoff,request.timeZone))return{
+   status:'unavailable',reasons:['MULTI_DAY_SCHEMA_NOT_INSTALLED'],cutoff:request.cutoff,timeZone:request.timeZone,branchId,rows:[],next:null,
+  };
+  if(error?.message==='STOCK_HISTORY_RANGE_INVALID')throw new Error('The selected stock movement date range is invalid.');
   if(error?.message?.includes('STOCK_HISTORY_SOURCE_CHANGED'))throw Object.assign(new Error('Stock history changed. Refresh the report before continuing.'),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
   if(error?.message?.includes('STOCK_HISTORY_SHIFT_UNAVAILABLE'))throw new Error('The selected shift is not closed or is outside this report branch.');
   if(error?.message?.includes('STOCK_HISTORY_ROW_OVERSIZED'))throw new Error('One historical product record is too large for a safe report page. Ask an administrator to review its saved description.');
@@ -99,6 +163,7 @@ export async function readStockHistoryMovements(proof:CallerProof,input:StockHis
   ...(request.periodStart?{periodStart:request.periodStart}:{}),...(request.closedShiftId?{closedShiftId:request.closedShiftId}:{}),
   status:'unavailable',reasons:['SCHEMA_NOT_INSTALLED'],rows:[],next:null,
  };
+ if(error?.message==='STOCK_HISTORY_RANGE_INVALID')throw new Error('The selected stock movement date range is invalid.');
  if(error?.message?.includes('STOCK_HISTORY_SOURCE_CHANGED'))throw Object.assign(new Error('Stock history changed. Refresh the report before continuing.'),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
  if(response.status===401||response.status===403||error?.code==='42501')throw new Error('Your current account or terminal is not allowed to read these stock movements.');
  if(error?.message?.includes('STOCK_HISTORY_SHIFT_UNAVAILABLE'))throw new Error('The selected shift is not closed or is outside this report branch.');
