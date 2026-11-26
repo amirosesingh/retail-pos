@@ -27,6 +27,7 @@ export function useStockReportActivityPage(
   cutoff: string | undefined,
   side: StockActivityRequest["side"],
   productId?: string,
+  readActivity: typeof loadStockActivityPage = loadStockActivityPage,
 ) {
   const key = JSON.stringify([identity, branchId, cutoff, side, productId]);
   const current = useRef(key);
@@ -43,7 +44,7 @@ export function useStockReportActivityPage(
     setState(previous => ({ ...(previous.key === key ? previous : emptyPage(key, true)), loading: true }));
 
     try {
-      const page = await loadStockActivityPage({ branchId, cutoff, side, productId, cursor, limit: activityPageSize });
+      const page = await readActivity({ branchId, cutoff, side, productId, cursor, limit: activityPageSize });
       if (!isCurrent()) return;
       if (page.branchId !== branchId || stockInstant(page.cutoff) !== stockInstant(cutoff)
         || page.side !== side || (page.productId ?? undefined) !== productId) {
@@ -61,7 +62,7 @@ export function useStockReportActivityPage(
       setState({ ...emptyPage(key, false),
         error: failure instanceof Error ? failure.message : "Inventory activity could not be loaded." });
     }
-  }, [branchId, cutoff, key, productId, side]);
+  }, [branchId, cutoff, key, productId, readActivity, side]);
 
   useEffect(() => {
     void load();

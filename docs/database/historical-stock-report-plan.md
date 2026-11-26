@@ -1,5 +1,77 @@
 # STOCK68: stock at an exact effective time
 
+## 26 November — Advanced Stock Report in the local Beta worktree
+
+The advanced report extends `/reports/inventory`, the existing Inventory
+Reports entry. Its four tabs reuse the current POS inventory snapshot, the
+Stock Report readers from draft PR #401, the same permission checks, and the
+existing synchronization lane. The preview starts on a loopback-only Vite
+server with synthetic retailers, products and history. It uses the actual
+report route and leaves the original draft and operator profiles intact.
+
+| View | Source and behavior |
+| --- | --- |
+| Current Stock | Filter authorized branch and warehouse balances by catalogue fields and stock availability. Product ID plus location is the row key. Alternate barcodes are search aliases. Sorting, grouping, paging, resizable columns, saved visibility and CSV/Excel use the matching snapshot. |
+| Stock As of Date | Day-end or exact configured-zone cutoff using the existing revision-pinned reader. Dated activity is recorded evidence only. A current-only item with no evidence it existed by the cutoff stays out of the historical list. Verified CSV/Excel use the selected search and zero filters and preserve integer quantities. |
+| Stock Movement | Bounded dated activity across a selected range and verified opening, in, out and closing for one supported business day. Product details use the accepted ledger and draw a chart only where the returned evidence supports it. |
+| Stock Valuation | Current cost and price follow the existing scoped catalogue and cost permission. Nonzero stock without a confirmed price makes its matching valuation unavailable. Historical quantities stay usable when supported, with historical monetary values unavailable until dated price evidence exists. |
+| Stock History Verification | Database Connection can inspect coverage for one authorized location/cutoff, including the source-reported opening, read time, writer coverage, pending events and reasons. It is a read-only coverage check. |
+
+Displayed report pages can print through the existing Windows A4 flow or a
+browser print preview that also supports saving as PDF. The report header and
+tab changes do not start synchronization or reload the POS. Report refresh
+updates the selected report view only. An Electron terminal with an invalid
+local source does not use a hosted fallback for this report. Management
+Electron remains gated until there is a scoped, authorized local report reader.
+
+### Evidence still needed before promotion
+
+The existing approved readers can certify only periods supported by their
+openings and movement coverage. They do not expose dated cost or selling prices,
+verified multi-day totals, a consolidated historical cutoff, or every transfer
+and reason field. Older writer coverage, a nonphysical idempotent baseline,
+backfill across the baseline, automatic reconciliation and discrepancy counts,
+service-level report-specific cost/permission projections, stored model and
+supplier fields, independent variant quantities, and large-catalogue server
+pagination remain separate verification or implementation work. Current stock
+filters run against the existing authorized in-memory snapshot and create no
+additional catalogue download. A production-shaped performance run and a
+verified production snapshot are still required for checkout compatibility.
+
+The advanced UI change adds no SQL scripts to either engine and activates no
+prepared migrations. Existing PR #401 schema and capture drafts retain their
+exact-target review and rollout gates. Before a production proposal, compare the
+two deployed schemas read-only, verify the required schema packages and all
+writer paths in isolation, and obtain approval for the exact promotion and any
+schema application. Roll back a UI release with a targeted source revert or the
+previous approved application build. Keep stock balances, original transactions,
+movement evidence, approval receipts and sync progress in place.
+
+### Local preview and verification
+
+In the isolated `codex/advanced-stock-reporting-beta` worktree with its existing
+Node dependencies, run `node scripts/test-stock-report-ui.cjs --preview --port=4180`.
+Open `http://127.0.0.1:4180/` on the same computer. This development server uses
+synthetic inventory and activity fixtures, and its browser network policy stays
+on loopback. Source edits refresh the view through Vite.
+
+The focused suite passed 86 tests. Two mounted suites passed 29 and 10 cases,
+including permissions, stale responses, exact cutoffs, filtering, paging and
+export. The running preview passed desktop and mobile checks across all four
+tabs, historical warehouse selection, shared barcodes, filtered CSV downloads
+and revocation. TypeScript, scoped ESLint and the Beta Worker build passed. A
+synthetic current-stock run produced consistent totals for 5,000 products at
+five locations and 25,000 rows. This checks snapshot preparation only. No
+isolated data copy from Production was available for acceptance, so no result
+certifies production checkout throughput or old-client compatibility.
+
+Changed areas include the Inventory Reports and Database Connection routes,
+the shared current, historical, movement and verification components, current
+stock and movement query helpers, stock history exports, the existing read-only
+product brand mapper and table preferences, the two browser fixtures, and the
+project rules and tracker. The additional read code changes no inventory writer,
+sync checkpoint, schema or baseline.
+
 ## Resumed implementation — 6 November
 
 The owner reactivated PR401 implementation on 6 November, superseding the urgent

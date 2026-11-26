@@ -17,7 +17,8 @@ import { sessionEpoch } from "@/lib/session-epoch";
 import { loadStockHistoryPage } from "@/lib/stock-history-client";
 import { loadStockHistoryMovements } from "@/lib/stock-history-movements-client";
 import { STOCK_MOVEMENT_PAGE_SIZE, type StockHistoryMovementCursor, type StockHistoryMovementPage } from "@/lib/stock-history-movements";
-import { exportStockHistoryXlsx, stockHistoryForExport } from "@/lib/stock-history-export";
+import { exportStockHistoryCsv, exportStockHistoryXlsx, stockHistoryForExport } from "@/lib/stock-history-export";
+import { syncState } from "@/lib/sync-status";
 import { stockDateTimeInput, stockEndOfDay, stockTimeChoices, type StockTimeChoice } from "@/lib/stock-history-selection";
 import { stockHistoryExplanation, type StockHistoryPage, type StockHistoryRequest, type StockHistoryRow } from "@/lib/stock-history-report";
 import { stockReportDay } from "../../../../../electron/shared/stock-report-day.mjs";
@@ -81,16 +82,31 @@ function CurrentStock({ branchId, zeroOnly }: { branchId: string; zeroOnly: bool
   </section>;
 }
 
-export function StockReport({ branchId, branchName }: { branchId: string; branchName: string }) {
+function existedAt(createdAt: string | undefined, cutoff: string | undefined) {
+  if (!createdAt || !cutoff) return false;
+  try { return stockInstant(createdAt) <= stockInstant(cutoff); }
+  catch { return false; }
+}
+
+export function StockReport({ branchId, branchName, initialView = "current", historicalValuation = false, refreshToken = 0 }: {
+  branchId: string;
+  branchName: string;
+  initialView?: "current" | "history";
+  historicalValuation?: boolean;
+  refreshToken?: number;
+}) {
   const { can, isAdmin, authUserId, appUser, terminalUser, user } = useAuth();
   const { state, ready, loadPhase } = usePos();
-  const timeZone = effectiveTimeZone();
+  const separateHistory = initialView === "history";
+  const configuredTimeZone = effectiveTimeZone();
+  const timeZone = separateHistory ? state.settings.integrations.timeZone || "Asia/Brunei" : configuredTimeZone;
   const mayRead = can("can_view_inventory"), mayExport = can("can_export_reports");
   const mayReadShifts = isAdmin || can("can_shift_closing_history_view");
-  const [showCurrent, setShowCurrent] = useState(true);
+  const [showCurrent, setShowCurrent] = useState(!separateHistory);
   const [zeroOnly, setZeroOnly] = useState(false);
+  const [search, setSearch] = useState("");
   const [value, setValue] = useState(() => stockDateTimeInput(new Date(), timeZone));
-  const [mode, setMode] = useState("time"), [shiftId, setShiftId] = useState("");
+  const [mode, setMode] = useState(separateHistory ? "day" : "time"), [shiftId, setShiftId] = useState("");
   const [showPeriod, setShowPeriod] = useState(false);
   const periodId = useId(), quantityFilterId = useId(), movementHeadingId = useId();
   const [choices, setChoices] = useState<StockTimeChoice[]>([]), [choice, setChoice] = useState("");
@@ -113,7 +129,10 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
   const shownBusy = active && busy, shownExporting = active && exporting, shownError = active ? error : "";
   const grade = stockReportDisplayGrade(visiblePage);
   const historicalCutoff = !visiblePage?.reasons.includes("FUTURE_CUTOFF");
-  const visibleRows = zeroOnly ? visiblePage?.rows.filter(zeroQuantity) : visiblePage?.rows;
+  const searchText = search.trim().toLocaleLowerCase();
+  const matchesSearch = (row: StockActivityProduct) => !searchText ||
+    [row.name, row.sku, row.barcode, row.productId].some(value => value?.toLocaleLowerCase().includes(searchText));
+  const visibleRows = visiblePage?.rows.filter(row => (!zeroOnly || zeroQuantity(row)) && matchesSearch(row));
   const canOpenMovements = grade === "verified" && Boolean(visiblePage?.sourceRevision && visiblePage.baselineAt);
   const visibleMovement = canOpenMovements && movement?.identity === identity ? movement : null;
   const movementProductId = visibleMovement?.product.productId, movementPageNumber = visibleMovement?.number;
@@ -141,20 +160,22 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
     if (ready && loadPhase === "ready" && sameBranchId(state.currentStoreId, branchId)) {
       const visible = createCatalogueVisibility(state.settings, state.stores, state.transfers);
       for (const product of state.products) {
-        if (visible(product, branchId)) catalogue.set(product.id, { productId: product.id, name: product.name, sku: product.sku, barcode: product.barcode });
+        if (visible(product, branchId) && existedAt(product.createdAt, activityCutoff)) {
+          catalogue.set(product.id, { productId: product.id, name: product.name, sku: product.sku, barcode: product.barcode });
+        }
       }
     }
     for (const row of visiblePage?.rows ?? []) catalogue.set(row.productId, { productId: row.productId, name: row.name, sku: row.sku, barcode: row.barcode });
-    const activityPages = activityFailed ? [] : [before.evidence, after.evidence, before.page, after.page];
-    if (!itemActivityFailed) activityPages.push(itemBefore.page, itemAfter.page);
+    const activityPages = activityFailed ? [] : [before.evidence, before.page];
+    if (!itemActivityFailed) activityPages.push(itemBefore.page);
     for (const records of activityPages) {
       for (const row of records?.rows ?? []) {
         if (!catalogue.has(row.productId)) catalogue.set(row.productId, { productId: row.productId, name: row.productName || row.productId });
       }
     }
     return catalogue;
-  }, [activityBranch, ready, loadPhase, state.currentStoreId, state.settings, state.stores, state.transfers, state.products, branchId,
-    visiblePage?.rows, activityFailed, itemActivityFailed, before.evidence, after.evidence, before.page, after.page, itemBefore.page, itemAfter.page]);
+  }, [activityBranch, activityCutoff, ready, loadPhase, state.currentStoreId, state.settings, state.stores, state.transfers, state.products, branchId,
+    visiblePage?.rows, activityFailed, itemActivityFailed, before.evidence, before.page, itemBefore.page]);
   const balances = useMemo(() => grade === "unavailable" ? [...activityProducts.values()].map(product => {
     const selected = product.productId === activityProduct && Boolean(itemBefore.evidence || itemActivityFailed);
     const observed = selected ? itemEvidence : evidence;
@@ -179,11 +200,11 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
   useEffect(() => {
     generation.current++; setPage(null); setRequest(null); setMovement(null); setError(""); setBusy(false); setExporting(false);
     setPageIdentity(""); setActivityIdentity(identity);
-    setChoices([]); setChoice(""); setShiftId(""); setMode("time"); setShowPeriod(false);
-    setShowCurrent(true);
-    setZeroOnly(false);
+    setChoices([]); setChoice(""); setShiftId(""); setMode(separateHistory ? "day" : "time"); setShowPeriod(false);
+    setShowCurrent(!separateHistory);
+    setZeroOnly(false); setSearch(""); setValue(stockDateTimeInput(new Date(), timeZone));
     // Identity includes every permission/account/scope used by this view.
-  }, [identity]);
+  }, [identity, separateHistory, timeZone]);
   useEffect(() => {
     if (showCurrent) setValue(stockDateTimeInput(new Date(), timeZone));
   }, [identity, showCurrent, state.products, timeZone]);
@@ -204,7 +225,7 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
     if (!mayRead) return;
     const now = new Date();
     const today = !next && mode === "day" && day === stockDateTimeInput(now, timeZone).slice(0, 10);
-    if (today && !showPeriod) {
+    if (today && !showPeriod && !separateHistory) {
       invalidate();
       setShowCurrent(true);
       return;
@@ -261,6 +282,18 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
       try { assertCurrent(); setError(failure instanceof Error ? failure.message : "The stock report could not be loaded."); } catch { /* Stale read has no visible result. */ }
     } finally { try { assertCurrent(); setBusy(false); } catch { /* New context owns its state. */ } }
   }
+  const latestRefresh = useRef(refreshToken);
+  const refreshVisible = useRef<() => void>(() => {});
+  refreshVisible.current = () => {
+    if (visibleRequest && !shownBusy && !shownExporting) {
+      void read({ ...visibleRequest, after: null, sourceRevision: undefined });
+    }
+  };
+  useEffect(() => {
+    if (refreshToken === latestRefresh.current) return;
+    latestRefresh.current = refreshToken;
+    refreshVisible.current();
+  }, [refreshToken]);
   async function readMovements(product: MovementProduct, after: StockHistoryMovementCursor | null = null, number = 1) {
     if (!canOpenMovements || !visibleRequest || !visiblePage?.sourceRevision || shownBusy || shownExporting) return;
     const assertCurrent = context();
@@ -292,18 +325,32 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
     returnMovementFocus.current = true;
     setMovement(null);
   }
-  async function download() {
-    if (!visibleRequest || !mayExport || grade !== "verified" || visiblePage?.status !== "complete") return;
+  async function download(format: "xlsx" | "csv" = "xlsx") {
+    if (!visibleRequest || !mayExport || historicalValuation || grade !== "verified" || visiblePage?.status !== "complete") return;
     const assertCurrent = context(); setActivityIdentity(identity); setExporting(true); setError("");
     try {
-      const report = await stockHistoryForExport(visibleRequest, loadStockHistoryPage, assertCurrent); assertCurrent();
-      await exportStockHistoryXlsx(report, branchName, assertCurrent); assertCurrent();
+      const report = await stockHistoryForExport(visibleRequest, loadStockHistoryPage, assertCurrent);
+      assertCurrent();
+      const filtered = separateHistory ? { ...report, rows: report.rows.filter(row => (!zeroOnly || zeroQuantity(row)) && matchesSearch(row)) } : report;
+      const options = separateHistory ? {
+        company: state.settings.receipt.companyName,
+        generatedBy: terminalUser?.name || user?.name,
+        freshness: syncState().lastSyncAt ?? "Last successful sync time unavailable",
+        filters: [zeroOnly ? "Zero stock only" : "All quantities", searchText ? `Product search: ${search.trim()}` : "All products"].join(" · "),
+      } : undefined;
+      if (format === "csv" && options) exportStockHistoryCsv(filtered, branchName, assertCurrent, options);
+      else await exportStockHistoryXlsx(filtered, branchName, assertCurrent, options);
+      assertCurrent();
     } catch (failure) {
       try { assertCurrent(); setError(failure instanceof Error ? failure.message : "The stock report could not be exported."); } catch { /* Context changed. */ }
     } finally { try { assertCurrent(); setExporting(false); } catch { /* Context changed. */ } }
   }
   if (!mayRead) return null;
   return <section className="min-w-0 space-y-4" aria-label="Stock report data">
+    {historicalValuation && <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm">
+      <h2 className="font-semibold">Historical cost and retail values are unavailable</h2>
+      <p className="mt-1 text-muted-foreground">The report can show dated quantities where evidence exists. This source has no dated cost or selling prices for valuation.</p>
+    </div>}
     <form className="space-y-3" onSubmit={event => { event.preventDefault(); if (!shownBusy && !shownExporting) void read(); }}>
       <div className="grid gap-3 sm:grid-cols-2">
         <Label className="space-y-1"><span>{mode === "day" ? "Date" : "Date and time"} · {timeZone}</span>
@@ -326,8 +373,12 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
       </div>
       {mode !== "shift" && <div className="flex items-start gap-2 text-sm"><Switch id={periodId} className="mt-0.5" checked={showPeriod}
         onCheckedChange={checked => { invalidate(); setShowCurrent(false); setShowPeriod(checked); }} /><Label htmlFor={periodId} className="block leading-normal">Show inventory changes for this day<span className="block text-xs text-muted-foreground">Opening stock, stock in and stock out through the same selected time.</span></Label></div>}
-      <div className="flex flex-wrap gap-2"><Button type="submit" disabled={shownBusy || shownExporting}>{shownBusy && <Loader2 className="size-4 animate-spin" />}Show stock at selected time</Button>
-        {!showCurrent && <Button type="button" variant="outline" onClick={() => { invalidate(); setChoices([]); setChoice(""); setShiftId(""); setMode("time"); setShowPeriod(false); setShowCurrent(true); }}>Return to current stock</Button>}
+      <div className="flex flex-wrap gap-2"><Button type="submit" disabled={shownBusy || shownExporting}>{shownBusy && <Loader2 className="size-4 animate-spin" />}{separateHistory ? "Generate Report" : "Show stock at selected time"}</Button>
+        {!showCurrent && !separateHistory && <Button type="button" variant="outline" onClick={() => { invalidate(); setChoices([]); setChoice(""); setShiftId(""); setMode("time"); setShowPeriod(false); setShowCurrent(true); }}>Return to current stock</Button>}
+        {separateHistory && <Button type="button" variant="outline" onClick={() => {
+          invalidate(); setChoices([]); setChoice(""); setShiftId(""); setMode("day"); setShowPeriod(false);
+          setZeroOnly(false); setSearch(""); setValue(stockDateTimeInput(new Date(), timeZone));
+        }}>Reset Filters</Button>}
         <div className="flex items-center gap-2">
           <Switch id={quantityFilterId} checked={zeroOnly} onCheckedChange={checked => {
             setZeroOnly(checked);
@@ -335,21 +386,27 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
           }} disabled={shownBusy || shownExporting} />
           <Label htmlFor={quantityFilterId}>Zero stock only</Label>
         </div>
-        {!showCurrent && mayExport && <Button type="button" variant="outline" disabled={shownBusy || shownExporting || grade !== "verified" || visiblePage?.status !== "complete"} onClick={() => void download()}>{shownExporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}{zeroOnly ? "Export full report" : "Export Excel"}</Button>}
+        {!showCurrent && mayExport && !historicalValuation && <Button type="button" data-stock-report-export variant="outline" disabled={shownBusy || shownExporting || grade !== "verified" || visiblePage?.status !== "complete"} onClick={() => void download()}>{shownExporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}{!separateHistory && zeroOnly ? "Export full report" : "Export Excel"}</Button>}
+        {separateHistory && mayExport && !historicalValuation && <Button type="button" variant="outline" disabled={shownBusy || shownExporting || grade !== "verified" || visiblePage?.status !== "complete"} onClick={() => void download("csv")}>Export CSV</Button>}
       </div>
+      {separateHistory && visiblePage && <Label className="block max-w-md space-y-1"><span>Search this page</span>
+        <Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Product, ID, SKU or barcode" />
+      </Label>}
     </form>
     {shownError && <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{shownError}</p>}
     {showCurrent && <CurrentStock key={branchId} branchId={branchId} zeroOnly={zeroOnly} />}
     {visiblePage && <div className="space-y-3" aria-live="polite">
-      <header>
+      <header data-stock-report-locations={branchName}
+        data-stock-report-filters={[`${visiblePage.cutoff} · ${visiblePage.timeZone}`, zeroOnly && "Zero stock only", searchText && `Product search: ${search.trim()}`].filter(Boolean).join(" · ")}>
         <h2 className="text-lg font-semibold">Stock at selected time</h2>
         <p className="break-words text-xs text-muted-foreground">{unresolvedShift ? "The saved closing time could not be resolved." : <>
           <StockActivityTime value={visiblePage.cutoff} format={activityFormat} /> · {visiblePage.timeZone}
         </>}</p>
+        {grade === "verified" && <p className="sr-only" data-stock-report-print-summary>Verified historical balances at {visiblePage.cutoff} · {visiblePage.timeZone}</p>}
       </header>
-      {grade === "unavailable" && !unresolvedShift && <StockRecordedBalances rows={balances} zeroOnly={zeroOnly} selected={activityProduct}
+      {grade === "unavailable" && !unresolvedShift && <StockRecordedBalances rows={balances.filter(matchesSearch)} zeroOnly={zeroOnly} selected={activityProduct}
         selectProduct={selectActivityProduct} format={activityFormat} />}
-      {grade !== "unavailable" && <><div className="overflow-x-auto rounded-md border"><Table aria-label="Stock at selected time"><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>SKU / barcode</TableHead>{visiblePage.period && <TableHead className="text-right">Opening stock</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock in</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock out</TableHead>}<TableHead className="text-right">Stock available</TableHead><TableHead>Last recorded change</TableHead><TableHead>Balance status</TableHead></TableRow></TableHeader><TableBody>
+      {grade !== "unavailable" && <><div className="overflow-x-auto rounded-md border"><Table aria-label="Stock at selected time" data-stock-report-print-table={grade === "verified" && visibleRows?.length ? true : undefined}><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>SKU / barcode</TableHead>{visiblePage.period && <TableHead className="text-right">Opening stock</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock in</TableHead>}{visiblePage.period && <TableHead className="text-right">Stock out</TableHead>}<TableHead className="text-right">Stock available</TableHead><TableHead>Last recorded change</TableHead><TableHead>Balance status</TableHead></TableRow></TableHeader><TableBody>
         {visibleRows?.length ? visibleRows.map(row => <TableRow key={row.productId}>
           <TableCell className="min-w-40 max-w-80 whitespace-normal break-words"><span>{row.name}</span>
             {canOpenMovements && <Button variant="link" size="sm" className="block h-auto px-0 py-1" disabled={shownBusy || shownExporting}
@@ -367,7 +424,7 @@ export function StockReport({ branchId, branchName }: { branchId: string; branch
           <TableCell className={`numeric whitespace-nowrap text-right ${row.negative ? "text-destructive" : ""}`}>{row.quantity}{row.negative && <span className="block text-xs">Negative stock</span>}</TableCell>
           <TableCell className="whitespace-normal text-xs"><StockActivityTime format={activityFormat} value={(activityProduct === row.productId && (itemBefore.evidence || itemActivityFailed) ? itemEvidence : evidence).latest.get(row.productId)} /></TableCell>
           <TableCell className="text-xs">{grade === "verified" ? "Verified" : "Recorded"}</TableCell>
-        </TableRow>) : <TableRow><TableCell colSpan={visiblePage.period ? 8 : 5}>{zeroOnly ? "No zero-stock products on this page." : "No products in the verified opening for this location."}</TableCell></TableRow>}
+        </TableRow>) : <TableRow><TableCell colSpan={visiblePage.period ? 8 : 5}>{searchText ? "No products on this page match your search." : zeroOnly ? "No zero-stock products on this page." : "No products in the verified opening for this location."}</TableCell></TableRow>}
       </TableBody></Table></div>
       {visiblePage.next && visibleRequest && <Button variant="outline" disabled={shownBusy || shownExporting} onClick={() => void read({ ...visibleRequest, after: visiblePage.next })}>Next products</Button>}</>}
       {grade !== "verified" && !unresolvedShift && <p className="text-xs text-muted-foreground">

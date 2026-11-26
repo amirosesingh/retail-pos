@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { DatabaseConnectionSettings } from "@/platforms/web/components/pos/DatabaseConnectionSettings";
+import { StockHistoryVerification } from "@/platforms/web/components/pos/StockHistoryVerification";
 
 
 export const Route = createFileRoute("/settings/database")({
@@ -30,6 +31,7 @@ export const Route = createFileRoute("/settings/database")({
       description="Manage central connectivity and, on authorized Windows tills, the local Microsoft SQL Server database."
     >
       <DatabaseConnectionSettings />
+      <StockHistoryVerification />
     </SettingsFrame>
   ),
 });

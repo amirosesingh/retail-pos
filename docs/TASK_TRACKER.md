@@ -1,3 +1,19 @@
+## 26 November — Advanced Inventory Reports and local Beta preview
+
+The owner requested one existing Stock Report route with Current Stock, Stock
+As of Date, Stock Movement and Stock Valuation tabs. Use the verified Beta
+base and the exact Stock Report draft as the starting point. Deliver a
+loopback-only preview with synthetic inventory and keep saved operator data
+outside preview fixtures. Preserve the original draft and its separate held
+sale acceptance. Production deployment or migration requires fresh approval.
+
+Verify report reads, scope, cost permissions, filtered totals, historical
+coverage and exports. Use local SQL for supported Electron report reads and
+the existing scoped service for web. The new report must preserve current stock,
+existing movement evidence and the one durable sync lane. Historical cost,
+older-writer coverage, Management offline history and a concurrent reporting
+baseline require their own evidence before they can be shown as available.
+
 ## 23 November — approved two-till protected financial rollout
 
 The owner approved an application-managed protected financial enrollment only

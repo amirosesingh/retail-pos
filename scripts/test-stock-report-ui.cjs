@@ -4,27 +4,68 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {pathToFileURL}=require('node:url'),{chromium}=require('@playwright/test');
 async function main(){
- const root=process.cwd(),directory=path.join(root,'.tmp','stock-report-ui');fs.mkdirSync(directory,{recursive:true});
- fs.writeFileSync(path.join(directory,'index.html'),'<div id="root"></div><script type="module" src="/.tmp/stock-report-ui/main.tsx"></script>');
+ const preview=process.argv.includes('--preview'),requestedPort=process.argv.find(arg=>arg.startsWith('--port='));
+ const port=preview?(requestedPort?Number(requestedPort.slice(7)):4180):0;
+ if(preview&&(!Number.isInteger(port)||port<1024||port>65535))throw new Error('Use a loopback preview port between 1024 and 65535.');
+ const root=process.cwd(),name=preview?'advanced-stock-report-preview':'stock-report-ui';
+ const directory=path.join(root,'.tmp',name);fs.mkdirSync(directory,{recursive:true});
+ const pagePath='/.tmp/'+name+'/index.html';
+ fs.writeFileSync(path.join(directory,'index.html'),`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${preview?'Stock Report · Local Beta preview':'Stock Report test'}</title><div id="root"></div><script type="module" src="/.tmp/${name}/main.tsx"></script></html>`);
  fs.writeFileSync(path.join(directory,'fixture.ts'),`import{useMemo,useSyncExternalStore}from'react';
-export let model={branch:'a',name:'Fixture A',open:true,mount:true,inventory:true,export:true,shifts:true,zone:'Asia/Brunei',epoch:1,kind:'complete',liveQuantity:7,inventoryReady:true,inventoryPhase:'ready',movementKind:'complete',activity:false,pagedActivity:false,failActivityContinuation:false};
+${preview?"import{stockDateTimeInput,stockEndOfDay}from'@/lib/stock-history-selection';":""}
+const preview=${preview};
+export let model={branch:'a',name:preview?'Bandar flagship':'Fixture A',open:true,mount:true,inventory:true,export:true,shifts:true,zone:'Asia/Brunei',epoch:1,kind:'complete',liveQuantity:7,inventoryReady:true,inventoryPhase:'ready',movementKind:'complete',activity:preview,pagedActivity:false,failActivityContinuation:false};
 const listeners=new Set();export const calls=[],movementCalls=[],activityCalls=[],exports=[],pending=[],commits=[];let defer=false,deferMovement=false,deferActivity=false;
 export const set=next=>{model={...model,...next};listeners.forEach(fn=>fn());};export const watch=()=>useSyncExternalStore(fn=>{listeners.add(fn);return()=>listeners.delete(fn);},()=>model);
-export const useAuth=()=>{const m=watch();return{isAdmin:false,user:{staffId:'fixture-'+m.epoch},can:key=>key==='can_view_inventory'?m.inventory:key==='can_export_reports'?m.export:key==='can_shift_closing_history_view'?m.shifts:false};};
-const stores=[{id:'a',groupId:'cluster-a'},{id:'b',groupId:'cluster-b'}],settings={integrations:{}},transfers=[];
+export const useAuth=()=>{const m=watch();return{ready:true,isAdmin:preview,canSwitchStores:preview,terminalStoreId:preview?null:m.branch,authUserId:'synthetic-report-user',user:{staffId:'fixture-'+m.epoch,name:'Demo manager'},permissions:{},can:key=>key==='can_view_inventory'?m.inventory:key==='can_export_reports'?m.export:key==='can_shift_closing_history_view'?m.shifts:preview&&key==='can_view_cost_margin'};};
+const stores=[{id:'a',name:preview?'Bandar flagship':'Fixture A',groupId:'cluster-a',locationType:'store',active:true},
+ {id:'b',name:preview?'Central warehouse':'Fixture B',groupId:preview?'cluster-a':'cluster-b',locationType:'central_warehouse',active:true}];
+const settings={integrations:{timeZone:'Asia/Brunei'},inventory:{costColumns:true},receipt:{companyName:'Retail POS Demo'}},transfers=[];
 export const stockAt=(product,branch)=>product.stockByStore[branch]??0;
-export const usePos=()=>{const m=watch(),products=useMemo(()=>[
- {id:'live-a',ownerStoreId:'a',name:'Current branch A stock',sku:'CUR-A',barcode:'101',stockByStore:{a:m.liveQuantity}},
- {id:'live-a-zero',ownerStoreId:'a',name:'Zero stock item',sku:'CUR-Z',barcode:'103',stockByStore:{a:0}},
- {id:'live-b',ownerStoreId:'b',name:'Current branch B stock',sku:'CUR-B',barcode:'102',stockByStore:{b:51}},
- ],[m.liveQuantity]);return{ready:m.inventoryReady,loadPhase:m.inventoryPhase,state:{shifts:[],settings,stores,transfers,currentStoreId:m.branch,products},currentStore:{id:m.branch,name:m.name}};};
+export const money=value=>new Intl.NumberFormat('en-BN',{style:'currency',currency:'BND'}).format(value);
+const createdAt='2026-10-01T00:00:00.000Z';
+const sample=(id,name,sku,barcode,category,subCategory,brand,cost,price,a,b,extra={})=>({id,name,sku,barcode,category,subCategory,brand,cost,price,
+ createdAt,ownerStoreId:'a',reorderLevel:4,variants:[],archived:false,stockByStore:{a,b},...extra});
+const samples=[
+ sample('20000000-0000-4000-8000-000000000001','Canvas Court Sneaker','FW-024-BLK','9556601000248','Footwear','Sneakers','Harbor',24,59,38,17),
+ sample('20000000-0000-4000-8000-000000000002','Ribbed Crew Socks','AC-116-CRM','9556601000248','Accessories','Socks','Kindred',3.2,12,0,28),
+ sample('20000000-0000-4000-8000-000000000003','Everyday Cotton Tee','AP-032-NVY','9556601000323','Apparel','T-shirts','Fieldwork',11,29,24,13),
+ sample('20000000-0000-4000-8000-000000000004','Transit Crossbody Bag','AC-091-OLV','9556601000910','Accessories','Bags','Harbor',19,45,3,8),
+ sample('20000000-0000-4000-8000-000000000005','Weekend Runner','FW-108-CHL','9556601001085','Footwear','Running','Fieldwork',31,79,19,11),
+ sample('20000000-0000-4000-8000-000000000006','Linen Camp Shirt','AP-209-SND','9556601002099','Apparel','Shirts','Kindred',16.5,49,12,5),
+ sample('20000000-0000-4000-8000-000000000007','Daily Canvas Tote','AC-038-NAT','9556601000385','Accessories','Bags','Harbor',8,25,7,10),
+ sample('20000000-0000-4000-8000-000000000008','Classic Slide Sandal','FW-154-INK','9556601001542','Footwear','Sandals','Harbor',14,39,4,3),
+ sample('20000000-0000-4000-8000-000000000009','Oxford Pocket Shirt','AP-044-WHT','9556601000446','Apparel','Shirts','Fieldwork',22,55,2,9),
+];
+export const usePos=()=>{const m=watch(),products=useMemo(()=>preview?samples:[
+ {id:'live-a',ownerStoreId:'a',name:'Current branch A stock',sku:'CUR-A',barcode:'101',createdAt,stockByStore:{a:m.liveQuantity}},
+ {id:'live-a-zero',ownerStoreId:'a',name:'Zero stock item',sku:'CUR-Z',barcode:'103',createdAt,stockByStore:{a:0}},
+ {id:'live-b',ownerStoreId:'b',name:'Current branch B stock',sku:'CUR-B',barcode:'102',createdAt,stockByStore:{b:51}},
+ ...(m.lateProduct?[{id:'live-a-later',ownerStoreId:'a',name:'Added after the cutoff',sku:'NEW-A',createdAt:'2098-01-01T00:00:00.000Z',stockByStore:{a:14}}]:[]),
+ ],[m.liveQuantity,m.lateProduct]);return{ready:m.inventoryReady,loadPhase:m.inventoryPhase,storesLoaded:true,state:{shifts:[],settings,stores,transfers,currentStoreId:m.branch,products},stores,currentStore:{id:m.branch,name:m.name}};};
 export const effectiveTimeZone=()=>watch().zone,sessionEpoch=()=>model.epoch,isCurrentEpoch=epoch=>epoch===model.epoch;
+export const posTimeZone=()=>model.zone,isManagementDevice=()=>preview,isWindowsShell=()=>false;
+export const setManagementDevice=()=>{},bumpSessionEpoch=()=>model.epoch;
+export const effectiveDatabaseMode=()=> 'online',preferredDatabaseMode=()=> 'online',subscribeDatabaseMode=()=>()=>{};
+const sync={phase:'idle',lastSyncAt:new Date().toISOString(),pending:0,failed:0,lastError:null};
+export const syncState=()=>sync,subscribeSyncState=()=>()=>{},useSyncSummary=()=>sync;
+export const setSyncState=()=>{},setLastSuccessfulPull=()=>{},setLastTablePull=()=>{},lastSuccessfulPull=()=>sync.lastSyncAt,lastTablePull=()=>sync.lastSyncAt;
 export const useAuthOptional=()=>null,usePosOptional=()=>null,usePersonalAppearance=()=>({profile:{tableViews:{}},editable:false,update:()=>{}});
+export const usePersonalAppearanceSync=()=>undefined,appearanceCacheKey=()=> 'local-stock-preview';
 export const useReportShifts=(_seed,branch,_from,_to,enabled)=>({shifts:enabled?[{id:'30000000-0000-4000-8000-000000000001',storeId:branch,status:'CLOSED',closedAt:'2026-11-05T13:00:00.1234567Z',cashier:'Fixture cashier'}]:[],loading:false,error:''});
 const first='20000000-0000-4000-8000-000000000001',second='20000000-0000-4000-8000-000000000002';
 function response(r){const cutoff=r.closedShiftId?'2026-11-05T13:00:00.1234567Z':r.cutoff;
  const base={status:model.kind,reasons:[],cutoff,timeZone:r.timeZone,branchId:r.branchId,baselineAt:'2026-11-01T00:00:00.0000000Z',readAt:'2099-01-01T00:00:00.0000000Z',sourceRevision:'source-'+r.branchId,pendingCount:'0',restatable:true,next:null};
- if(r.periodStart)base.period={start:r.periodStart,endExclusive:'2026-11-06T16:00:00.0000000Z',through:cutoff,fullDay:false};
+ if(r.periodStart){
+  const dayEnd=preview?stockEndOfDay(stockDateTimeInput(new Date(r.periodStart),r.timeZone).slice(0,10),r.timeZone).cutoff:null;
+  const endExclusive=dayEnd?new Date(Date.parse(dayEnd)+1).toISOString().slice(0,19)+'.0000000Z':'2026-11-06T16:00:00.0000000Z';
+  base.period={start:r.periodStart,endExclusive,through:cutoff,fullDay:cutoff===dayEnd};
+ }
+ if(preview&&cutoff<base.baselineAt)return{...base,status:'incomplete',baselineAt:undefined,reasons:['NO_VERIFIED_OPENING'],rows:[]};
+ if(preview)return{...base,status:'complete',rows:samples.map(product=>{const closing=stockAt(product,r.branchId);return{
+  productId:product.id,locationId:r.branchId,name:product.name,sku:product.sku,barcode:product.barcode,quantity:String(closing),negative:false,
+  ...(r.periodStart?{openingQuantity:String(closing+3),inQuantity:'4',outQuantity:'7'}:{}),
+ };})};
  const row=(id,negative)=>({productId:id,locationId:r.branchId,name:r.branchId==='a'?'Fixture A product':'Fixture B product',sku:'00001',barcode:'0000001',quantity:negative?'-2':'9007199254740993',negative,
   ...(r.periodStart?{openingQuantity:negative?'1':'9007199254740991',inQuantity:negative?'0':'5',outQuantity:'3'}:{})});
  if(model.kind==='incomplete')return{...base,baselineAt:undefined,reasons:['NO_VERIFIED_OPENING'],rows:[]};
@@ -44,7 +85,7 @@ export const loadStockHistoryMovements=async r=>{
  const first='40000000-0000-4000-8000-000000000001',second='40000000-0000-4000-8000-000000000002';
  const page={...scope,status:model.movementKind,reasons:[],baselineAt:'2026-11-01T00:00:00.0000000Z',next:null,rows:[]};
  if(model.movementKind==='complete'){
-  const row={id:after?second:first,effectiveAt:r.cutoff,recordedAt:'2099-01-01T00:00:00.0000000Z',kind:after?'sale':'receiving',delta:after?'-3':'9007199254740993'};
+  const row={id:after?second:first,effectiveAt:r.cutoff,recordedAt:'2099-01-01T00:00:00.0000000Z',kind:after?'sale':'receiving',delta:preview?(after?'-7':'4'):(after?'-3':'9007199254740993')};
   page.rows=[row];page.next=after?null:{id:row.id,effectiveAt:row.effectiveAt};
  }else if(model.movementKind==='incomplete')page.reasons=['WRITER_COVERAGE_PENDING'];
  if(deferMovement){deferMovement=false;return new Promise(resolve=>pending.push(()=>resolve(page)));}return page;
@@ -77,19 +118,30 @@ export const xlsx={utils:{book_new:()=>({sheets:[]}),aoa_to_sheet:rows=>rows,jso
 `);
  fs.writeFileSync(path.join(directory,'xlsx.ts'),`export{utils,writeFile};import{xlsx}from'./fixture';const{utils,writeFile}=xlsx;`);
  fs.writeFileSync(path.join(directory,'shell.tsx'),`export const AppShell=({children})=><main>{children}</main>;`);
- fs.writeFileSync(path.join(directory,'main.tsx'),`import React,{useLayoutEffect}from'react';import{createRoot}from'react-dom/client';import{StockAtTimeReport}from'@/routes/reports.inventory';import*as f from'./fixture';import'@/styles.css';
-window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits.push({branch:m.branch,epoch:m.epoch,inventory:m.inventory,export:m.export,text:document.getElementById('root')?.textContent});},[m]);return !m.mount?null:<StockAtTimeReport/>;}createRoot(document.getElementById('root')).render(<App/>);`);
+ fs.writeFileSync(path.join(directory,'main.tsx'),`import React,{useLayoutEffect}from'react';import{createRoot}from'react-dom/client';
+${preview?"import{StockAtTimeReport}from'@/routes/reports.inventory';import{setPosTimeZone}from'@/lib/time-zone';":"import{StockReport}from'@/platforms/web/components/pos/StockReport';"}import*as f from'./fixture';import'@/styles.css';
+${preview?"setPosTimeZone('Asia/Brunei');":""}
+window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits.push({branch:m.branch,epoch:m.epoch,inventory:m.inventory,export:m.export,text:document.getElementById('root')?.textContent});},[m]);return !m.mount?null:${preview?"<><div className='border-b border-border bg-muted px-6 py-2 text-xs font-medium text-muted-foreground'>Local Beta preview · Sample inventory</div><StockAtTimeReport/></>":"<main className='pos-page-container'>{m.inventory?<StockReport branchId={m.branch} branchName={m.name}/>:<p role='status'>Inventory permission is required to view this report.</p>}</main>"};}createRoot(document.getElementById('root')).render(<App/>);`);
  const{createServer}=await import('vite'),react=(await import('@vitejs/plugin-react')).default,tailwind=(await import('@tailwindcss/vite')).default;
  const{popupRuntimeAliases}=await import(pathToFileURL(path.join(root,'scripts/popup-runtime-aliases.mjs')).href);
  let server,browser,passed=0;
  try{
-  const fixture=path.join(directory,'fixture.ts');server=await createServer({configFile:false,root,cacheDir:path.join(directory,'.vite'),plugins:[react(),tailwind()],resolve:{alias:[
-   ...['pos-auth','pos-store','time-zone','use-report-shifts','session-epoch','stock-history-client','stock-history-movements-client','stock-activity-client','personal-appearance'].map(name=>({find:new RegExp('^@/lib/'+name+'$'),replacement:fixture})),
-   {find:/^@\/platforms\/web\/components\/pos\/AppShell$/,replacement:path.join(directory,'shell.tsx')},{find:/^xlsx$/,replacement:path.join(directory,'xlsx.ts')},...popupRuntimeAliases(),{find:'@',replacement:path.join(root,'src')},
-  ]},server:{host:'127.0.0.1',port:0,fs:{allow:[root,fs.realpathSync(path.join(root,'node_modules'))]}},logLevel:'error'});
-  await server.listen();const origin='http://127.0.0.1:'+server.httpServer.address().port;browser=await chromium.launch({channel:'chrome',headless:true,args:['--disable-gpu']});
+  const fixture=path.join(directory,'fixture.ts');
+  const entry={name:'stock-report-preview-entry',configureServer(vite){vite.middlewares.use((req,res,next)=>{
+   if(req.url==='/'&&preview){res.writeHead(302,{Location:pagePath});res.end();return;} next();
+  });}};
+  server=await createServer({configFile:false,envFile:false,root,cacheDir:path.join(directory,'.vite'),plugins:[entry,react(),tailwind()],resolve:{alias:[
+   ...['pos-auth','pos-store','use-report-shifts','session-epoch','stock-history-client','stock-history-movements-client','stock-activity-client','personal-appearance','management-device','sync-summary','sync-status',...(!preview?['time-zone']:[])].map(name=>({find:new RegExp('^@/lib/'+name+'$'),replacement:fixture})),
+   {find:/^(?:@\/platforms\/web\/components\/pos\/|\.\/)AppShell$/,replacement:path.join(directory,'shell.tsx')},
+   ...(!preview?[{find:/^xlsx$/,replacement:path.join(directory,'xlsx.ts')}]:[]),...popupRuntimeAliases(),{find:'@',replacement:path.join(root,'src')},
+  ]},server:{host:'127.0.0.1',port,strictPort:preview,
+    headers:preview?{'Content-Security-Policy':"connect-src 'self' ws://127.0.0.1:"+port+"; img-src 'self' data: blob:; form-action 'self'"}:undefined,
+    fs:{allow:[root,fs.realpathSync(path.join(root,'node_modules'))]}},logLevel:'error'});
+  await server.listen();const origin='http://127.0.0.1:'+server.httpServer.address().port;
+  if(preview){console.log('Stock Report local preview: '+origin);await new Promise(resolve=>{process.once('SIGINT',resolve);process.once('SIGTERM',resolve);});return;}
+  browser=await chromium.launch({channel:'chrome',headless:true,args:['--disable-gpu']});
   const fresh=async(width=390,dark=false)=>{const page=await browser.newPage({viewport:{width,height:840},colorScheme:dark?'dark':'light'});
-   await page.route('**/*',route=>route.request().url().startsWith(origin)?route.continue():route.abort());await page.goto(origin+'/.tmp/stock-report-ui/index.html',{waitUntil:'domcontentloaded',timeout:60000});
+   await page.route('**/*',route=>route.request().url().startsWith(origin)?route.continue():route.abort());await page.goto(origin+pagePath,{waitUntil:'domcontentloaded',timeout:60000});
    if(dark)await page.evaluate(()=>document.documentElement.classList.add('dark'));await page.getByRole('region',{name:'Stock report data'}).waitFor();return page;};
   const show=page=>page.getByRole('button',{name:'Show stock at selected time',exact:true}),explain=page=>page.getByRole('switch',{name:/Show inventory changes for this day/});
   const stockHeading=page=>page.getByRole('heading',{name:'Stock at selected time',exact:true});
@@ -112,11 +164,12 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
    await page.screenshot({path:path.join(directory,'stock-report-'+width+'-'+(dark?'dark':'light')+'.png'),fullPage:true});passed++;console.log('PASS selected-time period strings/paging/export/theme/layout '+width+' '+(dark?'dark':'light'));await page.close();
   }
   for(const kind of['incomplete','ungraded','error']){
-   const page=await fresh();await page.evaluate(kind=>window.fixture.set({kind}),kind);await show(page).click();
+   const page=await fresh();await page.evaluate(kind=>window.fixture.set({kind,lateProduct:true}),kind);await show(page).click();
    if(kind==='error')await page.getByRole('alert').getByText('Synthetic stock reader unavailable').waitFor();else await stockHeading(page).waitFor();
    if(kind==='error')assert.equal(await page.getByRole('table').count(),0);else{
     const balances=page.getByRole('table',{name:'Stock at selected time'});
     await balances.getByRole('row',{name:/Current branch A stock/}).getByText('No recorded balance',{exact:true}).waitFor();
+    assert.equal(await balances.getByText('Added after the cutoff',{exact:true}).count(),0);
     assert.equal(await balances.getByText('9007199254740993',{exact:true}).count(),0);
     const opening=page.getByText(/This location needs a verified opening stocktake/);assert.equal(await opening.isVisible(),false);
     assert.equal(await page.getByRole('alert').count(),0);

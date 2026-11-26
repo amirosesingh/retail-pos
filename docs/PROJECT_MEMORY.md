@@ -1,3 +1,18 @@
+## 26 November — Advanced Inventory Reports architecture
+
+Extend the existing report route and admit all reads through the current
+account and terminal permissions. Use stable product and location IDs for stock
+identity. Barcode aliases share the parent stock unless a stored variant
+identity has its own stock. A database reconciliation or a nonphysical system
+snapshot is reporting evidence with its own provenance. A physical stocktake
+retains its existing approval and writer-coverage requirements.
+
+For historical valuation require cost and retail-price evidence applicable to
+the selected cutoff. Keep unavailable prices explicit. Current catalogue prices
+and current-only products cannot complete a historical balance or valuation.
+Prepared schema and live activation stay separate, with automatic backfills
+and test transactions owned by authorized app workflows.
+
 ## 23 November — approved two-till protected financial rollout
 
 The owner approved an application-managed protected financial enrollment only

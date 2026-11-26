@@ -378,8 +378,8 @@ const originalGroups: NavGroup[] = [
         label: "Stock report",
         icon: CalendarClock,
         flag: "can_view_inventory",
-        keywords: "historical stock summary inventory quantity selected date time shift closing",
-        blurb: "Verified stock quantities at a selected date, time or shift closing.",
+        keywords: "inventory reports current stock historical movements quantity valuation date time shift closing",
+        blurb: "Current stock, historical balances, inventory movements and valuation.",
       },
       {
         to: "/reports/payments",

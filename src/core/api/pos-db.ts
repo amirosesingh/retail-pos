@@ -157,6 +157,7 @@ export const rowToProduct = (r: Row): Product => normalizeUuidFields({
   name: r.name,
   sku: r.sku ?? r.barcode ?? "",
   barcode: r.barcode ?? "",
+  brand: productClassification(r.brand) || undefined,
   category: productClassification(r.category),
   group: productClassification(r.product_group),
   subCategory: productClassification(r.sub_category),

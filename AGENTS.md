@@ -399,6 +399,24 @@
 
 ### Stock Report integrity and the first Beta stocktake
 
+- Extend the existing Inventory Reports route and use the current authorized
+  inventory, stock-history and movement sources. Report queries, refresh,
+  filters and tab changes must leave inventory, sync cursors, terminal setup
+  and saved transactions intact. Use the local authorized SQL reader for a
+  configured Electron reporting session, including offline. Show missing local
+  history support explicitly. Keep warehouse and branch authorization on every
+  query, page, export, print and aggregate.
+- Use product or stocked-variant identity and location to count quantities.
+  Keep alternate barcodes as search aliases. Treat current data separately from
+  dated evidence. Show partial coverage and use only dated evidence for
+  historical cost and selling prices. Keep unsupported valuations unavailable.
+- Use reporting-only baselines and existing authorized application workflows.
+  Bind any baseline to a consistent inventory cutoff and correlate committed
+  effects with existing durable identities and original effective timestamps.
+  A reconciled or nonphysical snapshot does not imply a physical count. Keep
+  source reconciliation read-only and route any inventory correction through
+  the existing authorized stock adjustment workflow.
+
 - Use the owner-approved brief pause only for the first stocktake on the isolated
   Retail POS Beta test branch. Verify the project, branch, terminal registrations
   and physical SQL databases. Stop scoped stock changes through the local and

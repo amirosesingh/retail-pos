@@ -48,6 +48,8 @@ export type Product = {
   name: string;
   sku: string;
   barcode: string;
+  /** Catalogue brand when the existing product schema supplies it. */
+  brand?: string;
   category: string;
   /** middle classification level: Category > Group > Sub-category */
   group?: string;
