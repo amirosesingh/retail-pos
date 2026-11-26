@@ -65,6 +65,7 @@ let started=false,groups=0;const sessions=[],pass=name=>{groups++;console.log('P
  await control.query(`BEGIN;${preparedOpening}${preparedStocktake}COMMIT;`);
  await require('./stock-physical-stocktake-postgres-cases.cjs')({control,one,two,f,bind,pass,header,acceptOpeningFrontier});
  await require('./stock-enrollment-postgres-cases.cjs')({control,f,bind,pass});
+ await require('./stock-enrollment-postgres-cases.cjs')({control,f,bind,pass,parallel:true});
  await require('./stock-cutover-postgres-cases.cjs')({control,one,two,f,bind,pass,acceptOpeningFrontier});
  await require('./stock-opening-observation-postgres-cases.cjs')({control,one,two,f,bind,pass,pause,header,acceptOpeningFrontier});
  console.log('PASS '+groups+' actual PostgreSQL frontier groups on '+version+'; provider/installed acceptance separate');

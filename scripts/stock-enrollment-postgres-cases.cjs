@@ -4,7 +4,7 @@ const { readFileSync } = require("node:fs");
 const { stockCoverageFrontierJson } = require("../electron/shared/stock-coverage-frontier.mjs");
 const { stockCoverageFrontierMessage } = require("../electron/security/stock-event-author-protocol.cjs");
 
-module.exports = async function stockEnrollment({ control, f, bind, pass }) {
+module.exports = async function stockEnrollment({ control, f, bind, pass, parallel = false }) {
   const { project } = f.stockSourceFixture;
   const previous = "codex-stock401-111abc", branch = "codex-stock401-222def";
   const cluster = id => id.replace("codex-stock401-", "codex-stock401-cluster-");
@@ -40,6 +40,18 @@ module.exports = async function stockEnrollment({ control, f, bind, pass }) {
     await read("SELECT private.stock_history_install_cutover_guard($1,$2,$3,$4::uuid[],$5::uuid[])",
       [project, previous, previous.toUpperCase(), `{${oldTills.map(w => w.ids.terminalId)}}`, `{${oldTills.map(w => w.ids.databaseId)}}`]);
     await control.query(readFileSync("scripts/preparation/stock-history-stocktake-enrollment.sql", "utf8"));
+    const primaryBaseline = randomUUID();
+    if (parallel) {
+      await control.query(bind(`INSERT INTO public.stock_history_baselines(
+        id,store_id,cutoff_at_raw,cutoff_ticks,captured_at_raw,captured_ticks,source_cursor,opening_kind,
+        verification_state,expected_pairs,terminal_watermarks,verified_by,evidence_hash)
+        SELECT $1,$2,instant,private.stock_history_ticks(instant),instant,private.stock_history_ticks(instant),
+          0,'physical_count','verified',0,'{}'::jsonb,$3,$4
+        FROM (VALUES('2026-11-23T03:01:56.3305270Z')) cutoff(instant);
+        UPDATE private.stock_history_cutover_scope SET gate_revision=7 WHERE store_id=$2;`,
+      [primaryBaseline, previous, oldTills[0].ids.authorId, "a".repeat(64)]));
+      await control.query(readFileSync("scripts/preparation/stock-history-parallel-pilot-enrollment.sql", "utf8"));
+    }
     const signature = "public.pos_stock_history_enroll_stocktake_till(text,text,text,text,text,text,jsonb,uuid,uuid)";
     assert.equal(await read("SELECT has_function_privilege('authenticated',$1,'EXECUTE')", [signature]), "f");
     assert.equal(await read("SELECT has_function_privilege('service_role',$1,'EXECUTE')", [signature]), "t");
@@ -95,12 +107,28 @@ module.exports = async function stockEnrollment({ control, f, bind, pass }) {
     assert.equal((await enroll(cohort[1], proofB, [...cohort].reverse())).cohortReady, true);
     assert.equal((await enroll(cohort[0], await acceptedObservation(newTills[0]))).cohortReady, true);
     assert.equal(await read("SELECT private.stock_history_cutover_guard_ready($1,$2)", [branch, cluster(branch)]), "t");
-    assert.equal(await read("SELECT private.stock_history_cutover_guard_ready($1,$2)", [previous, cluster(previous)]), "f");
-    assert.equal(await read("SELECT count(*) FROM private.stock_history_cutover_scope WHERE retired_at IS NOT NULL"), "1");
+    assert.equal(await read("SELECT private.stock_history_cutover_guard_ready($1,$2)", [previous, cluster(previous)]), parallel ? "t" : "f");
+    assert.equal(await read("SELECT count(*) FROM private.stock_history_cutover_scope WHERE retired_at IS NOT NULL"), parallel ? "0" : "1");
     assert.equal(await read("SELECT count(*) FROM private.stock_history_cutover_enrollment"), "4");
     assert.equal(await read("SELECT count(*) FROM private.stock_history_pilot_enrollment_receipts"), "2");
     assert.equal(await read("SELECT count(*) FROM private.stock_history_cutover_leases"), "0");
     assert.equal(await f.stock(), "7");
+    if (parallel) {
+      assert.equal(await read("SELECT count(*) FROM private.stock_history_cutover_scope WHERE retired_at IS NULL"), "2");
+      assert.equal(await read("SELECT parallel_scope FROM private.stock_history_cutover_scope WHERE store_id=$1", [branch]), "t");
+      assert.equal(await read("SELECT gate_revision FROM private.stock_history_cutover_scope WHERE store_id=$1", [previous]), "7");
+      assert.equal(await read("SELECT id FROM public.stock_history_baselines WHERE store_id=$1", [previous]), primaryBaseline);
+      const { terminalId, authorId } = cohort[0];
+      await json("SELECT public.pos_stock_history_prepare_stocktake_pause($1,$2,$3,$4,$5)",
+        [authorId, terminalId, project, branch, randomUUID()]);
+      await denied(() => control.query(bind("UPDATE public.terminal_tokens SET status='active' WHERE id=$1", [terminalId])),
+        /STOCK_CUTOVER_PAUSED/);
+      const oldTerminal = oldTills[0].ids.terminalId;
+      await control.query(bind("UPDATE public.terminal_tokens SET status='active' WHERE id=$1", [oldTerminal]));
+      assert.equal(await read("SELECT status FROM public.terminal_tokens WHERE id=$1", [oldTerminal]), "active");
+      pass("fresh test tills enroll beside the used pilot, preserve its opening and guard, and pause only their own branch");
+      return;
+    }
     pass("two matching app enrollments replace only the unused pilot guard and replay after a lost reply without new receipts or stock writes");
 
     await control.query(readFileSync("scripts/preparation/stock-history-financial-pilot-enrollment.sql", "utf8"));
