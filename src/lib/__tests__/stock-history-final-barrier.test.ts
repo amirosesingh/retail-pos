@@ -90,6 +90,9 @@ describe('final-barrier callers preserve the distinction between shift acceptanc
   const notify=new Function('printed','synchronized','toast',source.slice(start,end)),toast={warning:vi.fn(),info:vi.fn(),success:vi.fn()};
   notify({ok:true},{ok:true,allUploaded:false,reportHistoryPending:1,failed:1},toast);
   expect(toast.info).toHaveBeenCalledWith('Shift synchronized · stock history needs review',expect.objectContaining({description:expect.stringContaining('not all uploads are complete')}));expect(toast.success).not.toHaveBeenCalled();
-  notify({ok:true},{ok:false,error:'Closing graph conflict'},toast);expect(toast.warning).toHaveBeenCalledWith('Shift closed locally · synchronization pending',expect.any(Object));
+  notify({ok:true},{ok:false,error:'Branch-wide upload could not be verified'},toast);
+  expect(toast.warning).toHaveBeenCalledWith('Shift saved · synchronization needs attention',expect.objectContaining({
+    description: 'Open Sync status to review the result and retry pending uploads.',
+  }));
  });
 });

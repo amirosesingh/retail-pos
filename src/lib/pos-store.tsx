@@ -2006,10 +2006,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
         closedByRole: user?.role ?? terminalUser?.role,
         overdue: isShiftOverdue(activeShift, defaultTradingHours),
       };
-      // Electron's trusted shift-count/approval IPC has already committed the
-      // financial close atomically. Rewriting it from the untrusted renderer
-      // would both duplicate the operation and reopen a privilege bypass.
-      if (!localDb()) await db.commitShift(closed);
+      // The trusted local or hosted closing step has already saved the shift.
+      // Mirror its completed state here without sending a second shift write.
       // Everyone who was signed in on this shift is signed out with it.
       endShiftSessions({ shiftId: closed.id });
       setState((s) => ({
