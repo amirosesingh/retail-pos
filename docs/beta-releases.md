@@ -89,6 +89,17 @@ Production builds/deploys wait for the final
 the final version commit builds and deploys once. The release workflow creates
 that marker even when versioned files were already prepared in the PR.
 
+For an approved web-first Production release, set the GitHub repository
+variable `RETAIL_PRODUCTION_WEB_FIRST` to `true` before the release workflow
+runs. The release marker and stable tag still identify the web release.
+The workflow holds automatic stable installer publication during this rollout.
+
+After the approved Supabase upgrade passes verification, activate the
+reviewed Production Worker version. Verify the live site and SQL Server
+readiness. Dispatch `platform-release.yml` on the exact stable tag with
+`web_and_sql_verified=true`. Keep the variable set until the installer
+feeds pass read-back, then clear it to resume the ordinary stable workflow.
+
 Retail POS Beta uses the isolated Supabase project `irjkmhgrjgcaoixcixut`.
 Beta testing and release verification must target that project, preserving the
 existing beta Worker's connection bindings during deployment. Native devices
