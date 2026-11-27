@@ -1,3 +1,38 @@
+## 26 November — Advanced Inventory Reports architecture
+
+Extend the existing report route and admit all reads through the current
+account and terminal permissions. Use stable product and location IDs for stock
+identity. Barcode aliases share the parent stock unless a stored variant
+identity has its own stock. A database reconciliation or a nonphysical system
+snapshot is reporting evidence with its own provenance. A physical stocktake
+retains its existing approval and writer-coverage requirements.
+
+For historical valuation require cost and retail-price evidence applicable to
+the selected cutoff. Keep unavailable prices explicit. Current catalogue prices
+and current-only products cannot complete a historical balance or valuation.
+Prepared schema and live activation stay separate, with automatic backfills
+and test transactions owned by authorized app workflows.
+
+## 23 November — approved two-till protected financial rollout
+
+The owner approved an application-managed protected financial enrollment only
+for the two registered Retail POS Beta test tills in the Stock Report cohort.
+Reuse the authorized, named, device-bound stocktake workflow and require fresh
+not-pending proof from each distinct till before enabling both together. Keep
+the approved schema review boundary. The app must own enrollment writes and
+the synthetic sale. Production, other branches and saved operator data stay
+outside this task.
+
+## 23 November — Stock Report application-owned enrollment and history
+
+The owner requires authorized application workflows for all record changes,
+including private test enrollment, stocktake and synthetic sales. Schema
+upgrades must preserve existing records. Use only the two isolated Retail POS
+Beta tills for live acceptance, including before/after sale reports and an
+offline restart. Keep PR #401 and the paired installer release conditional on
+those results and required checks. The prepared direct guard scope/enrollment
+SQL is superseded. See the task tracker for the current acceptance gates.
+
 ## 20 November — scoped feed performance authorization
 
 Use a separate Beta branch at 439a4c5a for the feed performance change.
@@ -1820,6 +1855,12 @@ Textual import amounts must also survive decimal serialization into the existing
 IMPORT65 is prepared in beta PR396, runtime commit 7ffb9862d039941946d9a67b0dce2673a44f47c3. Final frozen-source full regression passed 5,660 tests with 7 skipped and 0 failed; 91 focused importer tests, TypeScript, scoped lint and diff checks passed. This is source/isolated-fixture verification only. The exact customer workbook symptom, installed Electron/mobile decimal-entry interaction and deployed beta acceptance remain unverified. No production import, database/schema/registration/permission change or publication was performed by this batch.
 
 
+## STOCK68 — selected-time stock quantity, 5 November
+
+Owner selected actual stock by original operational effective time. Late offline uploads may restate a past report; retain arrival/recording time separately. Inventory report requires selected date+time with explicit zone and exact saved shift.closed_at shortcut. A verified opening and complete deduplicated movement coverage are prerequisites; do not infer arbitrary old balances from current stock, item logs alone, row versions or arrival timestamps. Missing coverage must remain explicit with no invented zero quantities. Historical valuation is separate because current prices/costs do not establish prior value.
+
+The quantity-only kernel and36 synthetic/existing report tests are prepared in codex/historical-stock-report-beta at baseline a73f24e8. No UI/loader/writer/schema integration or database application exists yet. Required ledger/coverage/atomic-writer scope is recorded in docs/database/historical-stock-report-plan.md for review before shared writer changes. This is source preparation, not a complete historical reporting feature.
+
 ## SYNC68 — single data request lane, 5 November
 
 Owner requires one coordinated sync-data HTTP lane within the terminal's existing Main sync client, with fair bounded upload/download page scheduling. Electron durable pending business storage remains SQL Server only; a transient in-memory request scheduler is not a browser/file business outbox. Auth, registration/admission and health control requests remain independent. Preserve existing atomic batch groups, acknowledgements, request timeouts, permissions and checkout. Capture source identity at enqueue and verify before sending/accepting; changing backend/project/terminal/SQL profile may not relabel queued work. This does not imply one physical Supabase database connection or change pool/billing settings.
@@ -1980,6 +2021,41 @@ platform publication, so require the exact final scope, acceptance evidence and
 owner approval before that promotion. Unfinished recovery and stock-report work
 remain in their separate draft PRs; do not imply they are released.
 
+## STOCK401 — retained unfinished stock-history foundation, 5 November
+
+6 November: owner explicitly approved implementation/tests for the dedicated
+stock-event domain in `docs/database/stock-history-author-domain-plan.md`, using
+only existing enrolled Main-owned keys. No generic signing API, rotation, new
+enrollment or live database/deployment action. Reports must expose the same
+historical stock reader alongside its Inventory shortcut. Exact source-effect,
+cohort/opening/time coverage remains required; never certify unknown past stock.
+
+Owner reactivated completion on 6 November; this supersedes the later deferral
+description retained below as history. Continue reviewed report/Main/UI/export
+then actual effect-bound capture, durable single-lane sync and coverage proof.
+No historical quantity may be inferred from current stock or unverified clocks;
+no live schema/baseline application before exact review. The existing standalone
+local025–030 upgrade stays unchanged while prepared031 is unfinished. Keep PR401
+draft until complete independent regression and report acceptance.
+
+Owner approved actual goods-arrival time for receiving, default original
+Main/save stock-operation instant unless authorized explicit arrival is supplied;
+invoice date remains separate. Do not relabel old invoice entry dates as proven
+physical time. Effective-time reporting may restate with late offline evidence.
+
+PR401 now retains an optional storage/capture/read prototype and exact quantity
+kernel, with81 focused tests and20 actual disposable LocalDB groups passing,
+including15 isolated PostgreSQL cases. Its capture hooks default to null; Main/IPC,
+complete writers, validated cloud upload, registry integration, opening activation
+and UI/export remain unfinished. Existing receiving defers local stock effect to
+cloud; pending history must retain the original physical intent without applying
+stock again. Terminal-only ordinary sync does not authenticate a claimed original
+staff author/backdated approval; unknown provenance remains incomplete.
+
+Latest urgent release decision keeps this work DRAFT/unmerged and excludes local
+prepared031 from the urgent SQL72 bundle025–030. No stock schema/data/activation
+or real coverage has been applied. Do not claim a deployed report, full-suite or
+device acceptance. See the historical-stock-report plan for exact remaining work.
 ## Offline approval audit persistence — 5 November
 
 Owner approved a separate narrow helper correction after actual isolated Electron
@@ -2129,6 +2205,25 @@ portals with isolated scoped providers. Retaining the shell does not retain a
 previous branch page: both data and settings must confirm before mounting its
 protected content. Recheck identity/profile/permission changes with the full
 startup gate; do not infer backend access from these presentation fixtures.
+
+STOCK401 source refinement (6 November): the approved dedicated stock-author
+implementation uses a bounded original operation/cohort digest with later exact
+membership/effect proofs for bulk operations. Keep one Main-owned existing key
+and coordinated SQL journal lane, capture the real original author/transaction,
+and bind exact branch/terminal/document/source rows. Do not activate only small
+operations while claiming complete bulk history, use a generic renderer signer,
+or infer physical clock/coverage from a signature. Optional history problems
+retain their evidence and honest status without failing an otherwise accepted
+business upload or weakening required financial acknowledgements. No live SQL,
+opening, enrollment or release is authorized by this implementation refinement.
+
+6 November STOCK401 resumption: the owner reactivated all pending historical-stock
+source/test implementation after the Escape pause. Preserve the retained cohort
+proof and partial fifth-table work; finalize exact physical metadata and accepted
+source/effect/cohort/opening coverage before factory activation or complete-history
+claims. Refresh beta without overwriting existing features. Exact cloud/local
+upgrade files still require final review/approval before application; no real
+enrollment, baseline, business repair, Membership or publication is included.
 ## 6 November — automatic reconciliation before intervention
 
 Owner wants sync to attempt safe resolution of ERECONCILE first and surface a
@@ -2274,3 +2369,13 @@ scoped legacy item count0→6 and foreign feed items3→0. Its migration ledger 
 is20261117052540. Preserve original NULL fields; no financial backfill or cursor
 reset occurred. Native comparison/guard code still requires a new approved beta
 installer before installed-client acceptance; publication is a separate action.
+
+## 21 November — approved Stock Report and project rules
+
+Use the owner-approved brief stock pause only for the first isolated Retail
+POS Beta stocktake. Require each writer's checked cutoff, a full product count
+including zeros, independent review, and exact local/hosted proof. Continue
+approved source work and relevant tests in PR #401 without repeating routine
+approval. Preserve separate authorization for protected database actions,
+installer publication and production. The local rules reconciliation preserves
+the owner's existing sections and has a byte-verified prior copy.

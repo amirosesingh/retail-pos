@@ -21,7 +21,7 @@ const { orderSelfReferencingRows } = require("./self-reference-order.cjs");
 const groupedSettings = require("./grouped-store-settings.cjs");
 
 function governanceRequest(payload) {
-  if (payload?.sqlServerHeldSaleReview || payload?.sqlServerSettingsEdit) return true;
+  if (payload?.sqlServerHeldSaleReview || payload?.sqlServerSettingsEdit || payload?.sqlServerStocktakeCutover || payload?.sqlServerProductMerge) return true;
   const tables = new Set(["pos_settings", "pos_store_settings", "authorization_actions", "authorization_action_history"]);
   const field = row => String(row?.scope ?? "").toLowerCase() === "global" &&
     String(row?.scope_id ?? "") === "" && String(row?.key ?? "").startsWith("pos_field:");
@@ -81,6 +81,7 @@ const legacyRecoveryResponses = new WeakMap();
 // Only a successful existing Management-directory admission creates this
 // capability. A renderer/company flag or NULL branch is not a read grant.
 const managementHistoryScopes = new WeakMap();
+const managementStockScopes = new WeakMap();
 
 function transportDiagnostic(error, payload, stage) {
   // Read data descriptors only: foreign errors must not run getters or leak
@@ -94,7 +95,8 @@ function transportDiagnostic(error, payload, stage) {
       transportOperation: payload?.sqlServerPull || scopedAction==='feed' ? "feed"
         : payload?.sqlServerBootstrap || payload?.sqlServerHistoryReconcile || scopedAction==='bootstrap' || HISTORY_INDEX_ACTIONS.has(scopedAction) ? "bootstrap"
           : payload?.sqlServerShiftGraph ? "graph" : payload?.sqlServerCounts || scopedAction==='counts' ? "count"
-          : payload?.sqlServerBatch || payload?.sqlServerAggregate || payload?.sqlServerLegacyRecovery ? "upload" : "other",
+          : payload?.sqlServerBatch || payload?.sqlServerAggregate || payload?.sqlServerLegacyRecovery ||
+            payload?.sqlServerStockHistory || payload?.sqlServerStockFrontier ? "upload" : "other",
       transportStage: stage,
       transportCode: own(error, "code") ?? own(own(error, "cause"), "code"),
       transportErrorName: own(error, "name") ?? (error instanceof TypeError ? "TypeError" : error instanceof Error ? "Error" : undefined),
@@ -255,7 +257,8 @@ class CloudClient {
       if (!operation && captured?.managementSyncBranches === true && Object.keys(captured).length === 1) return work();
       const upload = captured?.sqlServerBatch || captured?.sqlServerAggregate || captured?.sqlServerFinancialEvent ||
         captured?.sqlServerFinancialObservation || captured?.sqlServerLegacyRecovery || captured?.sqlServerSettingsEdit ||
-        captured?.sqlServerCashCheckout;
+        captured?.sqlServerCashCheckout || captured?.sqlServerStockHistory || captured?.sqlServerStockFrontier ||
+        captured?.sqlServerProductMerge?.action === "merge";
       return this.requestLane.run(upload ? "upload" : "download", Buffer.byteLength(capturedJson, "utf8"), work);
     } catch (error) { return Promise.reject(error); }
   }
@@ -297,6 +300,7 @@ class CloudClient {
     if(payload?.sqlServerFinancialEvent)outbound.sqlServerFinancialEvent={...outbound.sqlServerFinancialEvent,operationJson:payload.sqlServerFinancialEvent.operationJson,proof:payload.sqlServerFinancialEvent.proof,...(payload.sqlServerFinancialEvent.refundApproval!==undefined?{refundApproval:payload.sqlServerFinancialEvent.refundApproval}:{})};
     if (payload?.sqlServerCashCheckout) outbound.sqlServerCashCheckout = payload.sqlServerCashCheckout;
     if (payload?.sqlServerRefund) outbound.sqlServerRefund = payload.sqlServerRefund;
+    if (payload?.sqlServerProductMerge) outbound.sqlServerProductMerge = payload.sqlServerProductMerge;
     if (payload?.sqlServerLegacyRecovery) outbound.sqlServerLegacyRecovery = {
       ...payload.sqlServerLegacyRecovery,
       payloadJson: payload.sqlServerLegacyRecovery.payloadJson,
@@ -317,6 +321,9 @@ class CloudClient {
     const scopedRead=payload?.sqlServerScopedHistory;
     const groupedRead = payload?.sqlServerGroupedFeed || payload?.sqlServerGroupedSnapshot ||
       payload?.sqlServerGroupedRecovery || payload?.sqlServerCashLegacyCoverage;
+    const stockDownload = payload?.sqlServerStockHistoryDownload;
+    const stocktakeCutover = payload?.sqlServerStocktakeCutover;
+    const productMerge = payload?.sqlServerProductMerge;
     const historyRead=HISTORY_INDEX_ACTIONS.has(scopedRead?.action)?scopedRead:payload?.sqlServerHistoryReconcile;
     const historyBegin=historyRead?.action==='begin'?historyRead:null;
     const historyAuthority=historyBegin?this.requestContext(true):null;
@@ -326,10 +333,12 @@ class CloudClient {
       throw Object.assign(new Error("The reviewed closing exceeds the bounded recovery upload. Its saved evidence remains available for review."), { code:"ELEGACY_RECOVERY_OVERSIZED", table:"shifts" });
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
-      ...(groupedRead || payload?.sqlServerSettingsEdit || payload?.sqlServerCashCheckout || payload?.sqlServerRefund ? { redirect: "error" } : {}),
+      ...(groupedRead || payload?.sqlServerSettingsEdit || payload?.sqlServerCashCheckout || payload?.sqlServerRefund ||
+        payload?.sqlServerStockHistory || payload?.sqlServerStockFrontier || stockDownload || stocktakeCutover || productMerge || financialAggregate?.stockSourceCohorts ? { redirect: "error" } : {}),
       headers: { "content-type": "application/json", ...(payload?.sqlServerLegacyRecovery ? { "x-pos-legacy-recovery": "1" } : {}) },
       body: requestBody,
-      signal: AbortSignal.timeout(historyRead || payload?.sqlServerHeldSaleReview ? 12_000 : 30_000),
+      signal: AbortSignal.timeout(stockDownload ? 4_000 : payload?.sqlServerStockFrontier || stocktakeCutover ? 5_000 : productMerge ? 8_000
+        : historyRead || payload?.sqlServerHeldSaleReview ? 12_000 : 30_000),
     });
       transportStage = "body";
       try {
@@ -343,6 +352,11 @@ class CloudClient {
           data = JSON.parse(await boundedText(response, response.ok ? 65536 : 4096));
         } else if (groupedRead) {
           data = JSON.parse(await boundedText(response, response.ok ? groupedSettings.MAX_RESPONSE_BYTES : 4096));
+        } else if (stockDownload) {
+          const { MAX_RESPONSE_BYTES } = require("./stock-history-download.cjs");
+          data = JSON.parse(await boundedText(response, response.ok ? MAX_RESPONSE_BYTES : 4096));
+        } else if (productMerge) {
+          data = JSON.parse(await boundedText(response, response.ok ? 262144 : 4096));
         } else if(payload?.sqlServerHeldStatus || payload?.sqlServerHeldSaleReview){
           data=JSON.parse(await boundedText(response,2*1024*1024));
         }else if(historyBegin&&response.status===409&&response.headers.get('X-POS-History-Reconcile-Version')==='2'&&
@@ -394,7 +408,10 @@ class CloudClient {
       return data;
     }
     if (!response.ok || data?.ok === false) {
-      if([401,403].includes(response.status))managementHistoryScopes.delete(this);
+      if([401,403].includes(response.status)){
+        managementHistoryScopes.delete(this);
+        managementStockScopes.delete(this);
+      }
       // PostgREST reports raised SQL errors in `message`, while the POS relay
       // uses `error`. Preserve both so diagnostics show SYNC_BRANCH_FORBIDDEN
       // instead of an unhelpful generic HTTP 400.
@@ -409,7 +426,7 @@ class CloudClient {
     this.assertRequestContext(source, governance, payload);
     // Versioned history rows already contain exact JSON/decimal text. Generic
     // entity-key JSON parsing would round its evidence before validation.
-    const normalized=groupedRead || historyRead || payload?.sqlServerHeldSaleReview
+    const normalized=groupedRead || historyRead || payload?.sqlServerHeldSaleReview || payload?.sqlServerProductMerge
       ? data : normalizeSyncPayload(data);
     if (legacyRecoveryBody !== undefined && normalized && typeof normalized === "object")
       legacyRecoveryResponses.set(normalized, legacyRecoveryBody);
@@ -429,11 +446,21 @@ class CloudClient {
     managementHistoryScopes.delete(this);
     const source=this.requestContext(false),value=await this.request({managementSyncBranches:true});
     this.assertRequestContext(source,false,{managementSyncBranches:true});
-    if(value?.ok!==true||!Array.isArray(value.branches)||value.branches.some(row=>typeof row?.id!=='string'||!row.id.trim()||row.id.length>128))
+    if(value?.ok!==true||!Array.isArray(value.branches)||value.branches.some(row=>typeof row?.id!=='string'||!row.id.trim()||row.id.length>128)) {
+      managementStockScopes.delete(this);
       throw Object.assign(new Error('The Management synchronization directory could not be verified.'),{code:'EHISTORY_INDEX_SCOPE',table:'change_history'});
+    }
     const branches=[...new Set(value.branches.map(row=>recordId(row.id)))].sort();
-    managementHistoryScopes.set(this,{pool:source.pool,fingerprint:source.fingerprint,branches,stamp:createHash('sha256').update(JSON.stringify(branches)).digest('hex')});
+    const authority={pool:source.pool,fingerprint:source.fingerprint,branches,stamp:createHash('sha256').update(JSON.stringify(branches)).digest('hex')};
+    managementHistoryScopes.set(this,authority);
+    managementStockScopes.set(this,authority);
     return value;
+  }
+  verifiedManagementStockScope() {
+    const proof=managementStockScopes.get(this),source=this.requestContext(false);
+    return proof?.pool && proof.pool===source.pool && proof.fingerprint===source.fingerprint ? {
+      ...source, branches:[...proof.branches], stamp:proof.stamp,
+    } : null;
   }
   verifiedManagementHistoryScope(branchId) {
     const proof=managementHistoryScopes.get(this),source=this.requestContext(false);
@@ -497,8 +524,112 @@ class CloudClient {
     return this.shiftProtocolRequest({sqlServerFinancialObservation:{organizationId,branchId,operationJson}});
   }
   registerFinancialBoundary(batch) { return this.pushAggregate({...batch,registerFinancialBoundary:true}); }
+  requestStockFrontierChallenge(batch){return this.stockFrontierRequest('challenge',batch);}
+  acceptStockFrontier(batch){return this.stockFrontierRequest('accept',batch);}
+  stockFrontierRequest(action,batch){
+    const{identifier,fail}=require('../db/stock-history-contract.cjs'),terminal=this.terminalStore.read()??{},branch=terminal.locationId??terminal.storeId??terminal.branchId;
+    const fields=action==='challenge'?['branchId','terminalId','challengeId','authorId','keyId']:['branchId','terminalId','frontierJson','proofJson'];
+    if(!batch||typeof batch!=='object'||Array.isArray(batch)||Object.keys(batch).length!==fields.length||fields.some(field=>!Object.hasOwn(batch,field))||
+      identifier(batch.terminalId)!==recordId(this.terminalId())||branch==null||identifier(batch.branchId)!==recordId(String(branch)))fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+    const payload={version:1,action,branchId:identifier(batch.branchId),terminalId:identifier(batch.terminalId)};
+    if(action==='challenge'){
+      for(const name of['challengeId','authorId','keyId'])payload[name]=identifier(batch[name],true);
+    }else{
+      if(typeof batch.frontierJson!=='string'||typeof batch.proofJson!=='string'||Buffer.byteLength(batch.frontierJson,'utf8')>8192||Buffer.byteLength(batch.proofJson,'utf8')>8192)fail('ESTOCK_AUTHOR_INVALID');
+      const{stockCoverageFrontierJson}=require('../shared/stock-coverage-frontier.mjs');
+      let frontier,proof;try{frontier=JSON.parse(batch.frontierJson);proof=require('../security/stock-event-author-protocol.cjs').normalizeStockCoverageFrontierProof(JSON.parse(batch.proofJson));
+        if(stockCoverageFrontierJson(frontier)!==batch.frontierJson)fail('ESTOCK_AUTHOR_INVALID');}catch{fail('ESTOCK_AUTHOR_INVALID');}
+      if(frontier.branchId!==payload.branchId||frontier.terminalId!==payload.terminalId||proof.branchId!==payload.branchId||proof.terminalId!==payload.terminalId||
+        proof.authorId!==frontier.authorId||proof.challengeId!==frontier.challengeId||proof.projectOrigin!==frontier.projectOrigin||
+        proof.frontierHash!==createHash('sha256').update(batch.frontierJson,'utf8').digest('hex'))fail('ESTOCK_AUTHOR_INVALID');
+      Object.assign(payload,{frontierJson:batch.frontierJson,proofJson:batch.proofJson});
+    }
+    return this.request({sqlServerStockFrontier:payload});
+  }
+  downloadStockHistory(batch) {
+    const terminal = this.terminalStore.read() ?? {};
+    const scope = require("../verified-activation.cjs").binding(terminal);
+    const branchAuthorized = scope?.mode === "management"
+      ? this.verifiedManagementStockScope()?.branches.includes(batch?.branchId)
+      : scope?.mode === "operations" && batch?.branchId === scope.branchId;
+    if (!scope || scope.platform !== "pc" || !branchAuthorized ||
+      batch?.version !== 1 || batch.terminalId !== scope.id ||
+      !["manifest", "page"].includes(batch.action))
+      require("../db/stock-history-contract.cjs").fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
+    return this.request({ sqlServerStockHistoryDownload: batch });
+  }
+  loadStocktakeLease(batch) { return this.loadStocktakeCutover("lease", batch); }
+  loadStocktakeRelease(batch) { return this.loadStocktakeCutover("release-status", batch); }
+  enrollStocktake(batch) { return this.loadStocktakeCutover("enroll", batch); }
+  approveStocktakeFinancial(batch) { return this.loadStocktakeCutover("approve-financial", batch); }
+  async loadStocktakeCutover(action, batch) {
+    const { identifier, fail } = require("../db/stock-history-contract.cjs");
+    const { branchId, terminalId, databaseId, stocktakeId, purpose, challengeId } = batch ?? {};
+    const terminal = require("../verified-activation.cjs").binding(this.terminalStore.read() ?? {});
+    const tillProof = action === "enroll" || action === "approve-financial";
+    if (terminal?.mode !== "operations" || terminal.platform !== "pc" ||
+        terminal.branchId !== branchId || terminal.id !== terminalId ||
+        (action === "lease" && !["arm", "confirm", "release"].includes(purpose)) ||
+        !(tillProof || ["lease", "release-status"].includes(action))) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
+    const source = this.requestContext(true);
+    const response = await this.request({ sqlServerStocktakeCutover: {
+      version: 1, action, branchId, terminalId, databaseId: identifier(databaseId, true),
+      ...(tillProof ? { challengeId: identifier(challengeId, true) } : { stocktakeId: identifier(stocktakeId, true) }),
+      ...(action === "lease" ? { purpose } : {}),
+    } });
+    this.assertRequestContext(source, true);
+    if (response?.ok !== true || response.version !== 1 || response.branchId !== branchId ||
+        response.terminalId !== terminalId || response.projectOrigin !== source.project.projectOrigin ||
+        !response.result || (tillProof ? typeof response.result.cohortReady !== "boolean"
+          : response.result.stocktakeId !== stocktakeId) || response.result.projectOrigin !== response.projectOrigin ||
+        response.result.branchId !== branchId || response.result.terminalId !== terminalId ||
+        response.result.databaseId !== databaseId) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
+    return response.result;
+  }
+  productMerge(action, command) {
+    const terminal = require("../verified-activation.cjs").binding(this.terminalStore.read() ?? {});
+    if (terminal?.mode !== "operations" || terminal.platform !== "pc" || command?.version !== 1 ||
+        command.branchId !== terminal.branchId || command.terminalId !== terminal.id || !["capability", "merge", "receipt"].includes(action))
+      throw require("./product-merge-command.cjs").fail();
+    return this.request({ sqlServerProductMerge: { ...command, action } });
+  }
+  pushStockHistory(batch){
+    const {identifier,fail}=require('../db/stock-history-contract.cjs');
+    const terminal=this.terminalStore.read()??{},branch=terminal.locationId??terminal.storeId??terminal.branchId;
+    if(!batch||batch.version!==1||identifier(batch.terminalId)!==recordId(this.terminalId())||
+      (branch!=null&&identifier(batch.branchId)!==recordId(String(branch)))||!Array.isArray(batch.rows)||!batch.rows.length||batch.rows.length>8)
+      fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+    const rows=batch.rows.map(row=>{
+      if(!row||Object.keys(row).length!==(3+(Object.hasOwn(row,'authorProofJson')?1:0)+(Object.hasOwn(row,'sourceCohortJson')?1:0))||!Object.hasOwn(row,'id')||!Object.hasOwn(row,'payloadHash')||!Object.hasOwn(row,'payloadJson')||
+        identifier(row.id,true)!==row.id||typeof row.payloadHash!=='string'||! /^[a-f0-9]{64}$/.test(row.payloadHash)||
+        typeof row.payloadJson!=='string'||createHash('sha256').update(row.payloadJson,'utf8').digest('hex')!==row.payloadHash)
+        fail('ESTOCK_HISTORY_ACK_UNCONFIRMED');
+      if(Object.hasOwn(row,'authorProofJson')){
+        if(typeof row.authorProofJson!=='string'||Buffer.byteLength(row.authorProofJson,'utf8')>16384)fail('ESTOCK_AUTHOR_INVALID');
+        let proof;try{proof=require('../security/stock-event-author-protocol.cjs').normalizeStockEvent(JSON.parse(row.authorProofJson));}catch{fail('ESTOCK_AUTHOR_INVALID');}
+        if(proof.movementId!==row.id||proof.payloadHash!==row.payloadHash||proof.branchId!==batch.branchId||proof.terminalId!==batch.terminalId)fail('ESTOCK_AUTHOR_INVALID');
+      }
+      if(Object.hasOwn(row,'sourceCohortJson')&&(typeof row.sourceCohortJson!=='string'||Buffer.byteLength(row.sourceCohortJson,'utf8')>65536))fail('ESTOCK_AUTHOR_INVALID');
+      return{id:row.id,payloadHash:row.payloadHash,payloadJson:row.payloadJson,...(Object.hasOwn(row,'authorProofJson')?{authorProofJson:row.authorProofJson}:{}),
+        ...(Object.hasOwn(row,'sourceCohortJson')?{sourceCohortJson:row.sourceCohortJson}:{})};
+    });
+    const payload={version:1,branchId:identifier(batch.branchId),terminalId:identifier(batch.terminalId),rows};
+    if(Buffer.byteLength(JSON.stringify(payload),'utf8')>126976)fail('ESTOCK_HISTORY_OVERSIZED');
+    return this.request({sqlServerStockHistory:payload});
+  }
   pushAggregate(batch) {
     if(batch.financialRefundApprovals!==undefined&&(!batch.financialLedgerProjection||!Array.isArray(batch.financialRefundApprovals)||batch.financialRefundApprovals.length>100))throw Object.assign(new Error("The saved refund approvals do not match this financial upload."),{code:"ESYNC_REFUND_APPROVAL_REQUIRED",table:"sales"});
+    if(batch.stockSourceCohorts!==undefined){
+      if(batch.shiftIntent||batch.shiftFinancialBasis||batch.shiftFinancialOpening||batch.financialLedgerProjection||batch.registerFinancialBoundary||
+        !Array.isArray(batch.stockSourceCohorts)||batch.stockSourceCohorts.length<1||batch.stockSourceCohorts.length>8)
+        throw Object.assign(new Error('The optional stock source evidence is not valid for this business group.'),{code:'ESTOCK_AUTHOR_INVALID'});
+      for(const entry of batch.stockSourceCohorts){
+        if(!entry||Object.keys(entry).length!==1||typeof entry.proofJson!=='string'||Buffer.byteLength(entry.proofJson,'utf8')>8192)
+          throw Object.assign(new Error('The optional stock source evidence is invalid.'),{code:'ESTOCK_AUTHOR_INVALID'});
+        const proof=require('../security/stock-event-author-protocol.cjs').normalizeStockSourceCohortProof(JSON.parse(entry.proofJson));
+        if(proof.branchId!==batch.branchId||proof.terminalId!==recordId(this.terminalId()))throw Object.assign(new Error('The original stock source scope changed.'),{code:'ESTOCK_AUTHOR_INVALID'});
+      }
+    }
     if((batch.registerFinancialBoundary!==undefined && (batch.registerFinancialBoundary!==true||!batch.shiftIntent||!batch.shiftFinancialBasis))||
       (batch.financialLedgerProjection!==undefined&&(batch.financialLedgerProjection!==true||batch.shiftIntent))||
       (batch.shiftFinancialOpening!==undefined&&(!batch.shiftFinancialOpening||batch.shiftIntent||typeof batch.shiftFinancialOpening.openingJson!=="string"||!batch.shiftFinancialOpening.proof)))
@@ -519,6 +650,7 @@ class CloudClient {
         ...(batch.financialLedgerProjection===true?{financialLedgerProjection:true}:{}),
         ...(batch.financialRefundApprovals!==undefined?{financialRefundApprovals:batch.financialRefundApprovals}:{}),
         ...(batch.shiftFinancialOpening!==undefined?{shiftFinancialOpening:{openingJson:batch.shiftFinancialOpening.openingJson,proof:batch.shiftFinancialOpening.proof}}:{}),
+        ...(batch.stockSourceCohorts!==undefined?{stockSourceCohorts:batch.stockSourceCohorts.map(entry=>({proofJson:entry.proofJson}))}:{}),
       },
     };
     return batch.shiftIntent ? this.shiftProtocolRequest(payload) : this.request(payload);

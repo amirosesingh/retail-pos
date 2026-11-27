@@ -14,6 +14,7 @@ import type { SyncOp } from "@/lib/sync-outbox";
 import { centralAuthAccessToken, hasCentralAuthSession } from "@/lib/session-presence";
 
 import { sessionEpoch } from "@/lib/session-epoch";
+import type { StockHistoryProductMergeRelay } from "@/lib/stock-history-product-merge";
 
 const credentials = readCredentials;
 
@@ -142,6 +143,23 @@ export function canRelay(): boolean {
  * the identical caller checks.
  */
 const syncPath = (): string => (serverOrigin() ? "/api/public/sync" : "/api/v1/pos/sync");
+
+export async function relayProductMerge(input: StockHistoryProductMergeRelay): Promise<unknown> {
+  const startedAt = sessionEpoch();
+  const response = await fetchWithDeadline(serverUrl(syncPath()), {
+    method: "POST",
+    headers: await relayHeaders(),
+    cache: "no-store",
+    redirect: "error",
+    body: JSON.stringify({ ...(await credentials()), sqlServerProductMerge: input }),
+  });
+  const raw = await response.text();
+  if (new TextEncoder().encode(raw).length > 2_000_000) throw new Error("Product merge receipt is too large");
+  const body = JSON.parse(raw) as { ok?: boolean; code?: string } | null;
+  await inspectRelay(response, body, startedAt);
+  if (!body || response.ok !== (body.ok === true)) throw new Error("Product merge receipt is unverified");
+  return body;
+}
 
 /** Push one operation through the relay. */
 export type RelayOpResult = { ok: boolean; error?: string; code?: string; data?: unknown; status?: number };

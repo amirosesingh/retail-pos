@@ -27,6 +27,13 @@ it("recognizes a closing graph as a device-only download without granting staff 
   sqlServerShiftGraph: { organizationId: "default", branchId: "shop", shiftId: "shift" } });
  expect(result).toMatchObject({ terminalId: "terminal", managementReplica: true, storeId: null, isSupervisor: false, permissions: {} });
 });
+it("admits stock history as a replica read only with both existing Management proofs", async () => {
+ const request = { terminalToken: "terminal", sqlServerStockHistoryDownload: { action: "manifest" } };
+ expect(await managementReplicaScope(request)).toBeNull();
+ await expect(managementReplicaScope({ ...request, deviceClaimProof: proof })).rejects.toThrow("Device proof required");
+ await expect(managementReplicaScope({ ...request, deviceClaimProof: proof, deviceBindingProof: proof }))
+   .resolves.toMatchObject({ terminalId: "terminal", managementReplica: true, permissions: {} });
+});
 it.each([
  { ops: [{ kind: "delete", table: "shifts", match: { id: "shift" } }] },
  { sqlServerBatch: {} }, { sqlServerAggregate: {} }, { read: { kind: "health" } },
@@ -71,6 +78,21 @@ it("downloads every server-approved branch sequentially without uploading local 
  const f=fixture(); await f.replica.run();
  expect(f.lifecycle.bootstrap.mock.calls.map(c => c[0])).toEqual(["a", "b"]);
  expect(f.pull.mock.calls.map(c => c[0].branchId)).toEqual(["a", "b"]);
+ expect(f.push).not.toHaveBeenCalled();
+});
+it("queues stock history outside the ordinary replica lease and independently of its outcome", async () => {
+ const f = fixture();
+ let leaseHeld: boolean | undefined;
+ let completed: string[] = [];
+ f.replica.downloadStockHistory = vi.fn(() => {
+   leaseHeld = f.replica.coordinator.ownsExclusive();
+   completed = f.pull.mock.calls.map(call => call[0].branchId);
+   return Promise.reject(new Error("Stock history source offline"));
+ });
+ await expect(f.replica.run()).resolves.toMatchObject({ ok: true });
+ expect(f.replica.downloadStockHistory).toHaveBeenCalledOnce();
+ expect(leaseHeld).toBe(false);
+ expect(completed).toEqual(["a", "b"]);
  expect(f.push).not.toHaveBeenCalled();
 });
 it("shares concurrent triggers and never advances to another branch after a failed download", async () => {

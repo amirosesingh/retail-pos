@@ -30,7 +30,7 @@ function fixture({ initialState }: { initialState?: Promise<object> } = {}) {
   const epoch = main.slice(main.indexOf("function captureSessionAdoption()"), main.indexOf("\nfunction enrollCurrentShiftAuthor"));
   const account = { id: author, username: "fixture.admin", role: "admin", store_id: branch, permissions: {} };
   const fetch = vi.fn(async () => Response.json({ ok: true, cashier: account, sessionToken: "synthetic-session" }));
-  new Function("ipcMain", "guard", "adminSession", "databaseManager", "terminalStore", "cloudCredentials", "authorizationServerUrl", "localBranchId", "fetch", "syncCloud", "enrollCurrentShiftAuthor", "rememberVerifiedBranch", `let sessionAdoptionRevision=0;${epoch}${auth}`)(
+  new Function("ipcMain", "guard", "adminSession", "databaseManager", "terminalStore", "cloudCredentials", "authorizationServerUrl", "localBranchId", "fetch", "syncCloud", "enrollCurrentShiftAuthor", "rememberVerifiedBranch", `let sessionAdoptionRevision=0,offlineStaffLoginWitness=null;${epoch}${auth}`)(
     ipc, guard, session, manager, { read: () => terminal }, { read: () => ({ url: "https://fixture.supabase.co" }) }, () => "https://fixture.invalid", () => branch, fetch, { setAuthorizationProof() {} }, () => {}, () => {});
   const sender = {}, frame = {}, event = { sender, senderFrame: frame };
   const list = vi.fn(async (): Promise<Record<string, unknown>> => ({ available: true, items: [] }));

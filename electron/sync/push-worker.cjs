@@ -1,4 +1,9 @@
+const { createHash } = require("node:crypto");
 const {prepareFinancialOpening,prepareFinancialHistory,assertFinancialHistoryAcknowledgement}=require("./financial-history-ack.cjs");
+const OPEN_BIRTH_CONFLICT = "FIN62_OPEN_BIRTH_NOT_EMPTY";
+const SALE_BIRTH_CONFLICT = "FIN62_SALE_BIRTH_ALREADY_EXISTS";
+const isFinancialReviewError = (error, code) =>
+  error?.code === code || (error?.code === "P0001" && error.message === code);
 const { recordId } = require("./uuid-fields.cjs");
 const { retryDelay } = require("./retry.cjs");
 const { stableUuid } = require("../db/repositories/aggregates.cjs");
@@ -170,11 +175,15 @@ function isSharedPosFieldChange(change) {
 }
 
 /** A child-only retry must carry its locally owned parent into the same cloud transaction. */
-async function includeMissingParents(operations, reader, registry, branchId, {exactFinancial=false}={}) {
+async function includeMissingParents(operations, reader, registry, branchId, { exactFinancial = false, terminalId } = {}) {
   branchId = recordId(branchId);
-  const completed = (operations.find(op => op.table === "held_orders" && !op.deletePhase)?.rows ?? []).filter(row => row.status === "completed");
+  const originalSales = exactFinancial ? operations.find(op => op.table === "sales" && !op.deletePhase)?.rows ?? [] : [];
+  const originalBills = new Set(originalSales.filter(row => row.store_id === branchId && row.bill_number).map(row => row.bill_number));
+  const completed = (operations.find(op => op.table === "held_orders" && !op.deletePhase)?.rows ?? [])
+    .filter(row => row.status === "completed" && (row.store_id !== branchId ||
+      String(row.note ?? "").startsWith("booking:") || !originalBills.has(row.bill_no)));
   if (completed.length) {
-    const parents = await reader.ticketCompletionParents(completed, branchId);
+    const parents = await reader.ticketCompletionParents(completed, branchId, terminalId);
     for (const parent of parents) {
       const existing = operations.find(op => op.table === parent.table && !op.deletePhase);
       if (existing) existing.rows.push(...parent.rows.filter(row => !existing.rows.some(saved => saved.id === row.id)));
@@ -243,7 +252,7 @@ function terminalWritableChanges(tableName, changes, { branchId = "", terminalId
 
 class PushWorker {
   constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart, validateFinancialBasis, financialHistoryEnabled=false, validateFinancialOperation,
-    uploadCashCheckout = null, uploadGroupedRefund = null }) {
+    uploadCashCheckout = null, uploadGroupedRefund = null, stockHistory = null }) {
     this.financialHistoryEnabled=financialHistoryEnabled===true;
     this.validateFinancialOperation=validateFinancialOperation;
     this.validateAuthor = validateAuthor;
@@ -255,6 +264,8 @@ class PushWorker {
     this.registry = registry;
     this.uploadCashCheckout = uploadCashCheckout;
     this.uploadGroupedRefund = uploadGroupedRefund;
+    this.stockHistory = stockHistory;
+    this.financialReviewHolds = new Map();
   }
   async assertLegacyCashWrites(branchId, operations) {
     if (this.reader.assertLegacyCashWrites) {
@@ -280,6 +291,8 @@ class PushWorker {
         // of the same immutable facts (even if a gateway reports it as 500).
         if ([error?.code, error?.message].some(value =>
           /^SYNC_SHIFT_CLOSURE_(CONFLICT|DUPLICATE)$/.test(String(value ?? "")))) throw error;
+        if (isFinancialReviewError(error, OPEN_BIRTH_CONFLICT) ||
+            isFinancialReviewError(error, SALE_BIRTH_CONFLICT)) throw error;
         const status = Number(error?.status ?? 0);
         const retryable = status === 408 || status === 429 || status >= 500 ||
           ["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "TimeoutError", "AbortError"].includes(error?.code ?? error?.name) ||
@@ -291,18 +304,70 @@ class PushWorker {
     }
     throw new Error("The synchronization retry loop ended unexpectedly.");
   }
-  async registerFinancialHistory(branchId,terminalId,onProgress){
+  async sendFinancialReviewable(branchId, terminalId, code, identity, work) {
+    const pool = this.reader.connectionManager?.pool;
+    // Use the same site, connection profile, relay and binding as the actual request.
+    const scope = JSON.stringify([branchId, terminalId, this.cloud.requestContext?.().fingerprint]);
+    if (this.financialReviewPool !== pool || this.financialReviewScope !== scope) {
+      this.financialReviewHolds.clear();
+      this.financialReviewPool = pool;
+      this.financialReviewScope = scope;
+    }
+    const key = JSON.stringify([code, identity]);
+    const table = code === OPEN_BIRTH_CONFLICT ? "shifts" : "sales";
+    const prior = this.financialReviewHolds.get(key);
+    if (prior && performance.now() < prior.retryAt)
+      throw Object.assign(new Error(code), { code: prior.code, status: prior.status, table, cachedFinancialReview: true });
+    this.financialReviewHolds.delete(key);
+    try {
+      return await this.retry(work);
+    } catch (error) {
+      if (!isFinancialReviewError(error, code)) throw error;
+      if (this.financialReviewHolds.size >= 100)
+        this.financialReviewHolds.delete(this.financialReviewHolds.keys().next().value);
+      this.financialReviewHolds.set(key, { code: error.code, status: error.status, retryAt: performance.now() + 300000 });
+      error.table ??= table;
+      throw error;
+    }
+  }
+  async registerFinancialHistory(branchId,terminalId,onProgress,review = null){
     if(!this.financialHistoryEnabled)return;
     const seen=new Set();
     for(let page=0;page<100;page++){
-      const items=await this.reader.financialHistory?.(branchId,terminalId,100)??[];if(!items.length)return;
+      if(review?.shifts.size>=100)return;
+      const items=await this.reader.financialHistory?.(branchId,terminalId,100,[...(review?.shifts??[])])??[];if(!items.length)return;
       for(const raw of items){
         const item=prepareFinancialHistory(raw,branchId,terminalId),key=item.shiftId+':'+item.operationId+':'+item.payloadHash;
+        if(review?.shifts.has(item.shiftId))continue;
         if(seen.has(key))throw Object.assign(new Error('The metadata receipt was not persisted. Work remains pending.'),{code:'EFINANCIAL_HISTORY_UNCONFIRMED',table:'shifts'});seen.add(key);
         let ack;
         if(item.kind==='MUTATION'){
           const proof=this.validateFinancialOperation?this.validateFinancialOperation(item.proof):item.proof;
-          ack=await this.retry(()=>this.cloud.pushFinancialEvent({branchId,operationJson:item.payloadJson,proof,...(item.refundApproval?{refundApproval:item.refundApproval}:{})}));
+          const send=()=>this.cloud.pushFinancialEvent({branchId,operationJson:item.payloadJson,proof,...(item.refundApproval?{refundApproval:item.refundApproval}:{})});
+          const sale = proof.action === 'SALE';
+          const pool = sale && this.reader.connectionManager?.pool;
+          const fingerprint = sale && this.cloud.requestContext?.().fingerprint;
+          try {
+            ack=sale
+              ? await this.sendFinancialReviewable(branchId,terminalId,SALE_BIRTH_CONFLICT,key,send)
+              : await this.retry(send);
+          } catch(error) {
+            if(!sale || !isFinancialReviewError(error,SALE_BIRTH_CONFLICT))throw error;
+            // The rejected metadata can belong to a different aggregate from
+            // the current business upload. Only its exact local sale gets
+            // the verification case.
+            error.financialSaleRegistration = true;
+            if (pool !== this.reader.connectionManager?.pool ||
+                fingerprint !== this.cloud.requestContext?.().fingerprint ||
+                terminalId !== (this.cloud.terminalId?.() ?? "")) throw error;
+            if (!error.cachedFinancialReview)
+              await this.reader.failAggregate(item.operationId,error,branchId);
+            if(!review)throw error;
+            review.shifts.add(item.shiftId);
+            review.error??=error;
+            if(review.shifts.size>=100)return;
+            continue;
+          }
         }else if(item.kind==='OBSERVE'){
           ack=await this.retry(()=>this.cloud.pushFinancialObservation({branchId,operationJson:item.payloadJson}));
         }else{
@@ -320,14 +385,16 @@ class PushWorker {
       }
     }
   }
-  async pushAggregates(branchId, batchSize, isolate = false, onProgress = () => {}, includeActivity = true) {
+  async pushAggregates(branchId, batchSize, isolate = false, onProgress = () => {}, includeActivity = true, stockHistoryBudget = null) {
     branchId = recordId(branchId);
     this.pushErrors = []; this.blockedTables = new Set();
+    this.stockHistoryHolds = new Set();
     this.cashUploadHeld = null;
     this.refundUploadHeld = null;
     let pushed = 0;
     const terminalId = this.cloud.terminalId?.() ?? "";
-    await this.registerFinancialHistory(branchId,terminalId,onProgress);
+    const metadataReview = isolate ? { shifts: new Set(), error: null } : null;
+    await this.registerFinancialHistory(branchId,terminalId,onProgress,metadataReview);
     const deferred = new Set();
     const protectedSettings = new Set(["pos_settings", "pos_store_settings",
       "authorization_actions", "authorization_action_history"]);
@@ -374,10 +441,29 @@ class PushWorker {
         for (const change of aggregate.changes) this.blockedTables.add(change.entity_type);
         originalIds.forEach(id => deferred.add(id)); continue;
       }
+      if(this.stockHistory?.accepts(aggregate)){
+        // Background report evidence shares the normal upload lane, but may
+        // not monopolize it. This deferral is neither failure nor review.
+        // Final passes retain the existing complete drain and exact barriers.
+        if(stockHistoryBudget?.remaining===0){originalIds.forEach(id=>deferred.add(id));continue;}
+        if(stockHistoryBudget)stockHistoryBudget.remaining--;
+        const result=await this.stockHistory.upload(aggregate,branchId,terminalId);
+        if(result.held){
+          // An in-memory hold made no upload request. Leave the turn available
+          // for a later, eligible movement without clearing the older evidence.
+          if(stockHistoryBudget&&result.held.fresh===false)stockHistoryBudget.remaining++;
+          if(result.held.fresh)for(const id of originalIds)await this.reader.failAggregate(id,{code:result.held.code,message:result.held.message,table:'stock_history_movements'});
+          originalIds.forEach(id=>{deferred.add(id);this.stockHistoryHolds.add(id);});
+          continue; // A truthful own-domain hold does not block core trading.
+        }
+        pushed+=result.acknowledged;
+        onProgress({direction:'push',table:'stock_history_movements',completed:result.acknowledged});
+        continue;
+      }
       const financialRequired=await this.reader.financialAggregateRequired?.(aggregate.aggregateId,branchId,terminalId)??false;
       const financialOpening=await this.reader.financialOpening?.(aggregate.aggregateId,branchId,terminalId)??null;
       if((financialRequired||financialOpening)&&!this.financialHistoryEnabled)throw Object.assign(new Error('The matching financial history capability is required. Saved work remains pending.'),{code:'EFINANCIAL_PROTOCOL_UNAVAILABLE',table:'shifts'});
-      await this.registerFinancialHistory(branchId,terminalId,onProgress);
+      await this.registerFinancialHistory(branchId,terminalId,onProgress,metadataReview);
       const intent=await this.reader.protectedIntent?.(aggregate.aggregateId,branchId);
       if(intent){
         if(financialRequired && this.reader.financialHistoryReady && !await this.reader.financialHistoryReady(branchId,terminalId,{shiftId:intent.shiftId})){deferred.add(aggregate.aggregateId);continue;}
@@ -472,7 +558,8 @@ class PushWorker {
       if(waitingForIntent){originalIds.forEach(id=>deferred.add(id));continue;}
       for(let index=operations.length-1;index>=0;index--)if(!operations[index].rows.length&&!operations[index].changes.length)operations.splice(index,1);
       try {
-        if (!frozenBooking) await includeMissingParents(operations, this.reader, this.registry, branchId,{exactFinancial:financialRequired});
+        if (!frozenBooking) await includeMissingParents(operations, this.reader, this.registry, branchId,
+          { exactFinancial: financialRequired, terminalId });
         await includeClosedShiftGraphs(operations, this.reader, this.registry, branchId);
       } catch (error) {
         throw error;
@@ -506,22 +593,44 @@ class PushWorker {
         let openingSidecar;
         if(financialOpening){
           const verified=prepareFinancialOpening(financialOpening,branchId,terminalId);
-          if(operations.length!==1||operations[0].table!=='shifts'||operations[0].deletePhase||operations[0].rows.length!==1||recordId(operations[0].rows[0].id)!==verified.shiftId)throw Object.assign(new Error('The protected opening requires its exact original business group.'),{code:'EFINANCIAL_HISTORY_INVALID',table:'shifts'});
+          const [operation] = operations;
+          const [change] = operation?.changes ?? [];
+          const frozen = openings.get(verified.shiftId);
+          const exactRow = JSON.stringify(frozen);
+          const ownsBirth = originalIds.length === 1 && recordId(originalIds[0]) === verified.operationId &&
+            operations.length === 1 && operation.table === "shifts" && !operation.deletePhase && operation.rows.length === 1 &&
+            operation.changes.length === 1 && recordId(changeKey(change).id) === verified.shiftId &&
+            frozen?.terminal_id === terminalId && JSON.stringify(operation.rows[0]) === exactRow &&
+            createHash("sha256").update(exactRow, "utf8").digest("hex") === verified.rowHash;
+          const isOriginalUpsert = change?.operation === "update" && aggregate.operationType === "shift" &&
+            recordId(change.aggregate_id) === verified.operationId;
+          if (!ownsBirth || (change.operation !== "insert" && !isOriginalUpsert))
+            throw Object.assign(new Error("The protected opening requires its exact original business group."),
+              { code: "EFINANCIAL_HISTORY_INVALID", table: "shifts" });
+          // The local journal represents every upsert as an update. Only the
+          // signed, frozen opening can establish that this one created a shift.
+          if (isOriginalUpsert) operation.changes = [{ ...change, operation: "insert" }];
           openingSidecar={openingJson:verified.openingJson,proof:verified.proof};
         }
         const batchId = frozenBooking
           ? stableUuid({ branchId, bookingUpload: aggregate.aggregateId, checksum: frozenBooking.checksum })
           : stableUuid({ branchId, aggregateId: aggregate.aggregateId, operations });
+        const stockSource=!frozenBooking&&!financialRequired&&!openingSidecar&&originalIds.length===1
+          ?await this.stockHistory?.prepareBusiness?.(originalIds[0],branchId,terminalId,batchId):null;
         const refundSales=financialRequired?operations.filter(op=>op.table==='sales'&&!op.deletePhase).flatMap(op=>op.rows).filter(row=>row.is_refunded===true).map(row=>recordId(row.id)):[];
         const financialRefundApprovals=refundSales.length?await this.reader.financialRefundApprovals?.(branchId,terminalId,refundSales)??[]:[];
         const financialCoverageToken=financialRequired?this.reader.prepareFinancialBusinessCoverage?.({operations,batchId,branchId,terminalId}):null;
-        const acknowledged = await this.retry(() =>
-          this.cloud.pushAggregate({ batchId, branchId, operations,...(openingSidecar?{shiftFinancialOpening:openingSidecar}:{}),...(financialRequired?{financialLedgerProjection:true}:{}),...(financialRefundApprovals.length?{financialRefundApprovals}:{}) }),
-        );
+        const send = () =>
+          this.cloud.pushAggregate({ batchId, branchId, operations,...(openingSidecar?{shiftFinancialOpening:openingSidecar}:{}),...(financialRequired?{financialLedgerProjection:true}:{}),...(financialRefundApprovals.length?{financialRefundApprovals}:{}),
+            ...(stockSource?{stockSourceCohorts:stockSource.cohorts}:{}) });
+        const acknowledged = openingSidecar
+          ? await this.sendFinancialReviewable(branchId,terminalId,OPEN_BIRTH_CONFLICT,batchId,send)
+          : await this.retry(send);
         assertBatchAcknowledgement(acknowledged, batchId);
         assertShiftClosureAcknowledgement(acknowledged, operations, branchId);
         if(financialRequired)await this.reader.acknowledgeFinancialBusinessRows?.({token:financialCoverageToken,operations,batchId,acknowledgement:acknowledged,branchId,terminalId});
         if(financialOpening){if(typeof this.reader.acknowledgeFinancialOpening!=='function')throw Object.assign(new Error('The opening acknowledgement cannot be persisted.'),{code:'EFINANCIAL_HISTORY_UNCONFIRMED',table:'shifts'});await this.reader.acknowledgeFinancialOpening(financialOpening,acknowledged,branchId,terminalId);}
+        if(stockSource)await this.stockHistory.acknowledgeBusiness(stockSource,acknowledged);
         if (frozenBooking) await this.reader.acknowledgeBookingUpload(aggregate, frozenBooking, branchId);
         else for (const id of originalIds) await this.reader.acknowledgeAggregate(id);
         pushed += aggregate.changes.length;
@@ -534,6 +643,7 @@ class PushWorker {
         throw error;
       }
       } catch(error) {
+        if (error.financialSaleRegistration) throw error;
         if (error?.code === 'EFINANCIAL_BUSINESS_PENDING') {
           originalIds.forEach(id => deferred.add(id));
           continue;
@@ -559,7 +669,8 @@ class PushWorker {
         // identify every affected table rather than blaming its first product.
         error.tables ??= [...new Set(aggregate.changes.map(change => change.entity_type).filter(Boolean))];
         error.table ??= "transaction batch";
-        for (const id of originalIds) await this.reader.failAggregate(id, error);
+        if (!error.cachedFinancialReview)
+          for (const id of originalIds) await this.reader.failAggregate(id, error);
         if (!isolate || [401,403].includes(Number(error?.status))) throw error;
         originalIds.forEach(id => deferred.add(id));
         for (const change of aggregate.changes) this.blockedTables.add(change.entity_type);
@@ -568,16 +679,23 @@ class PushWorker {
       }
       if (deferred.size >= 2000) break;
     }
+    if (metadataReview?.error) this.pushErrors.push(metadataReview.error);
     return pushed;
   }
-  async run({ branchId, batchSize = 500, onProgress = () => {}, includeActivity = true }) {
+  async run({ branchId, batchSize = 500, onProgress = () => {}, includeActivity = true, final = false, retryReviewHolds = false }) {
     branchId = recordId(branchId);
     if (!branchId) throw new Error("A branch is required for synchronization.");
+    if (retryReviewHolds) {
+      this.financialReviewHolds.clear();
+      this.stockHistory?.retryMissingAuthorReview?.(branchId, this.cloud.terminalId?.() ?? "");
+    }
     batchSize = Math.max(100, Math.min(2000, Number(batchSize) || 500));
     const terminalId = this.cloud.terminalId?.() ?? "";
-    let pushed = await this.pushAggregates(branchId, batchSize, true, onProgress, includeActivity);
+    const stockHistoryBudget=final?null:{remaining:1};
+    let pushed = await this.pushAggregates(branchId, batchSize, true, onProgress, includeActivity, stockHistoryBudget);
     let cashUploadHeld = this.cashUploadHeld;
     let refundUploadHeld = this.refundUploadHeld;
+    const stockHistoryHolds = new Set(this.stockHistoryHolds);
     const deferredTables = new Set();
     let historyUploadHeld=null;
     let financialCoverageAdvanced=false;
@@ -708,7 +826,7 @@ class PushWorker {
         // draft can arrive before its sale, followed by orphan payment/items.
         const operations = [{ table: table.cloudTable, dependencyOrder: table.dependencyOrder,
           deletePhase: false, rows, changes: changes.filter(change => change.operation !== "D") }];
-        await includeMissingParents(operations, this.reader, this.registry, branchId);
+        await includeMissingParents(operations, this.reader, this.registry, branchId, { terminalId });
         const closedGraph = await includeClosedShiftGraphs(operations, this.reader, this.registry, branchId);
         const withParents = operations.length > 1;
         if (withParents) {
@@ -786,14 +904,18 @@ class PushWorker {
     // Exact acknowledged business CT rows may have been the only remaining
     // prerequisite. Drain that protected intent now, without another bootstrap
     // or a blind checkpoint advance. Ordinary legacy passes stay unchanged.
-    if(financialCoverageAdvanced)pushed+=await this.pushAggregates(branchId,batchSize,true,onProgress,includeActivity);
+    if (financialCoverageAdvanced) {
+      pushed += await this.pushAggregates(branchId,batchSize,true,onProgress,includeActivity,stockHistoryBudget);
+      for (const id of this.stockHistoryHolds) stockHistoryHolds.add(id);
+    }
     if (this.pushErrors.length) throw Object.assign(this.pushErrors[0], {pushed, failures:this.pushErrors.length});
     cashUploadHeld ??= this.cashUploadHeld;
     refundUploadHeld ??= this.refundUploadHeld;
     if (cashUploadHeld || refundUploadHeld) deferredTables.add("sales");
     return { pushed, deferredTables:[...deferredTables], ...(cashUploadHeld ? { cashUploadHeld, allUploaded:false } : {}),
       ...(refundUploadHeld ? { refundUploadHeld, allUploaded:false } : {}),
-      ...(historyUploadHeld?{historyUploadHeld,allUploaded:false}:{}) };
+      ...(historyUploadHeld?{historyUploadHeld,allUploaded:false}:{}),
+      ...(stockHistoryHolds.size?{heldStockHistoryAggregates:stockHistoryHolds.size}:{}) };
   }
 }
 module.exports = { PushWorker, collapseChanges, rowsForBranch, terminalWritableChanges, batchAuditAggregates };

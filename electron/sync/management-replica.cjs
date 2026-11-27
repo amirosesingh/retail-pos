@@ -1,7 +1,7 @@
 // Branch checkpoints and snapshot jobs stay separate; a failed branch resumes on the next pass.
 class ManagementReplica {
-  constructor({ cloud, databaseService, connectionManager, lifecycle, jobs, coordinator }) {
-    Object.assign(this, { cloud, databaseService, connectionManager, lifecycle, jobs, coordinator });
+  constructor({ cloud, databaseService, connectionManager, lifecycle, jobs, coordinator, downloadStockHistory, verifyCurrentInventory }) {
+    Object.assign(this, { cloud, databaseService, connectionManager, lifecycle, jobs, coordinator, downloadStockHistory, verifyCurrentInventory });
     this.active = null;
     this.failures = 0;
     this.retryAt = 0;
@@ -19,6 +19,10 @@ class ManagementReplica {
       queuedComplete=Boolean(result.ok&&!result.skipped&&(!historyOnly||result.history?.completed||result.history?.status==='completed'));
       queuedPaused=Boolean(result.paused);
       if (result.ok) this.resetRetry();
+      if (queuedComplete && !historyOnly && this.downloadStockHistory)
+        void Promise.resolve().then(() => this.downloadStockHistory()).catch(() => undefined);
+      if (queuedComplete && !historyOnly && this.verifyCurrentInventory)
+        void Promise.resolve().then(() => this.verifyCurrentInventory()).catch(() => undefined);
       return result;
     }).catch(error => {
       queuedError=error;

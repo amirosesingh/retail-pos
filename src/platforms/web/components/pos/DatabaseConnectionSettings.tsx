@@ -27,8 +27,9 @@ function Stat({ label, value }: { label: string; value: string }) {
 export function DatabaseConnectionSettings() {
   const status = useSystemStatus();
   const { currentStore } = usePos();
-  const { isAdmin, can } = useAuth();
+  const { isAdmin, can, user, authUserId } = useAuth();
   const mayManageLocal = isAdmin || can("can_manage_sync_backup");
+  const reviewOperator = user?.staffId ?? authUserId ?? undefined;
 
   return (
     <div className="w-full space-y-3">
@@ -51,7 +52,7 @@ export function DatabaseConnectionSettings() {
       {isWindowsShell() && mayManageLocal && (
         <>
           <LocalDatabaseWizard />
-          <LocalDatabaseOperations branchId={currentStore.id} />
+          <LocalDatabaseOperations key={JSON.stringify([currentStore.id, reviewOperator])} branchId={currentStore.id} reviewOperator={reviewOperator} />
         </>
       )}
     </div>
