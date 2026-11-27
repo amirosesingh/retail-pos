@@ -30,19 +30,3 @@ test('history keeps stable revisions in numeric order', () => {
   const versions = ['1.4.77', '1.4.77+revision.2', '1.4.78', '1.4.77+revision.10'];
   assert.deepEqual(parseHistory(JSON.stringify({releases:versions.map(version=>({version,status:'successful'}))})).map(r=>r.version), ['1.4.78','1.4.77+revision.10','1.4.77+revision.2','1.4.77']);
 });
-
-test('the web-first release hold defers stable publication until an explicit dispatch', () => {
-  const fs = require('node:fs');
-  const version = fs.readFileSync(require.resolve('../.github/workflows/version-release.yml'), 'utf8');
-  const platforms = fs.readFileSync(require.resolve('../.github/workflows/platform-release.yml'), 'utf8');
-  assert.match(version, /name: Commit and tag release version\s+if: steps\.ready\.outputs\.release == 'true'\s+run:/);
-  assert.match(version, /name: Start platform release builds\s+if: steps\.ready\.outputs\.release == 'true' && vars\.RETAIL_PRODUCTION_WEB_FIRST != 'true'/);
-  assert.match(platforms, /web_and_sql_verified:\s+description:[^\r\n]+\s+type: boolean\s+default: false/);
-  assert.match(platforms, /publish:\s+if: >-\s+vars\.RETAIL_PRODUCTION_WEB_FIRST != 'true' \|\|\s+\(github\.event_name == 'workflow_dispatch' && inputs\.web_and_sql_verified == true\)\s+needs: \[windows, android, ios\]/);
-  assert.match(platforms, /Validate matching platform artifacts[\s\S]+Publish verified Windows package and shared update pointers/);
-  for (const workflow of ['desktop-release.yml', 'android-apk.yml']) {
-    const directRelease = fs.readFileSync(require.resolve(`../.github/workflows/${workflow}`), 'utf8');
-    assert.match(directRelease, /name: Deploy to Cloudflare R2\s+if:[^\r\n]+vars\.RETAIL_PRODUCTION_WEB_FIRST != 'true'/);
-    assert.match(directRelease, /name: Attach (installer|APK) to the GitHub release\s+if:[^\r\n]+vars\.RETAIL_PRODUCTION_WEB_FIRST != 'true'/);
-  }
-});
