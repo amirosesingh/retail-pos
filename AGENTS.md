@@ -1,3 +1,19 @@
+## Application-owned data changes
+
+- Create, edit, delete, import, correct, reconcile, restore and backfill records
+  through authorized application workflows or their existing service interfaces.
+  The application owns scope, permissions, validation, atomic writes, retries,
+  synchronization and audit evidence. Apply this rule to Supabase and local
+  SQL Server, including Beta and saved operator profiles.
+- Limit SQL migrations to reviewed schema changes that preserve existing records.
+  Use read-only SQL for live diagnostics. Handle seeding, backfills, repairs
+  and test enrollment through the application. If the application lacks the
+  operation, implement and verify the authorized workflow before changing records.
+- Use synthetic transactions through the normal UI or approved application
+  interfaces for hosted smoke tests. Verify the expected effects through the
+  app and read-only database checks. Keep direct fixture setup confined to
+  disposable databases owned by automated tests.
+
 ## Beta-first changes and production approval
 
 - Start feature/fix branches from the current `beta` branch and open PRs into
@@ -300,6 +316,20 @@
   an unexplained error. Revoked permissions hold work for review, not silent loss.
   Keep one coordinated recovery attempt per retry cycle and one persistent
   status for an unchanged review hold. Preserve raw diagnostics and manual retry.
+- Reuse the exact acceptance receipt for a matching operation on reconnect or
+  after a lost reply. Retain unmatched work with its original evidence. A cached
+  review hold consumes no upload turn. Allow unrelated eligible stock-history
+  work to proceed while that hold backs off without advancing its checkpoint.
+- Keep **Needs verification** in the existing Database connection sync view.
+  Verify a selected case read-only in Main against the current POS operator,
+  registered till, branch and local database. Bound the read and recheck that
+  context after waiting for SQL or authority. Show original evidence, queued
+  work and the exact saved receipt separately. A metadata receipt never proves
+  acceptance of a complete sale. Confirm a stock receipt only against the
+  original payload and acknowledged journal. Attach a fresh sale rejection to
+  its exact pending operation and scope so it opens the right verification
+  case. Keep ordinary retry and authorized corrections in their existing
+  application workflows.
 
 ## Fleet recovery, checkout and presentation isolation
 
@@ -380,6 +410,75 @@
   report incomplete coverage rather than inventing historical stock or valuation
   from today's quantities/prices. Resolve effective-time versus recorded-time
   semantics before implementing historical reconstruction.
+- Bind every historical export page, including a single-page export, to the
+  report's location, displayed cutoff, timezone, period and source revision.
+  Cancel pending exports when the report closes or its session or scope
+  changes. Do not release files from an earlier authorized view after that
+  change.
+
+### Stock Report integrity and the first Beta stocktake
+
+- Extend the existing Inventory Reports route and use the current authorized
+  inventory, stock-history and movement sources. Report queries, refresh,
+  filters and tab changes must leave inventory, sync cursors, terminal setup
+  and saved transactions intact. Use the local authorized SQL reader for a
+  configured Electron reporting session, including offline. Show missing local
+  history support explicitly. Keep warehouse and branch authorization on every
+  query, page, export, print and aggregate.
+- Use product or stocked-variant identity and location to count quantities.
+  Keep alternate barcodes as search aliases. Treat current data separately from
+  dated evidence. Show partial coverage and use only dated evidence for
+  historical cost and selling prices. Keep unsupported valuations unavailable.
+- Verify movement totals from the first selected business-day boundary through
+  the final inclusive cutoff, up to 31 local calendar days. Pin a supported
+  opening and complete movement coverage to the same source revision. Keep
+  recorded activity available independently, with page totals labeled by scope.
+- Management Electron reports must read its verified local SQL replica through
+  dedicated Main admission. Recheck the active operator, terminal, physical
+  database and authorized location. A previously verified session can read its
+  ready replica during a disconnect. Keep cold offline sign-in and unverified
+  locations gated under existing authority rules. Download proven history via
+  the existing Management coordinator and retain the scoped source proof.
+- Use reporting-only baselines and existing authorized application workflows.
+  Bind any baseline to a consistent inventory cutoff and correlate committed
+  effects with existing durable identities and original effective timestamps.
+  A reconciled or nonphysical snapshot does not imply a physical count. Keep
+  source reconciliation read-only and route any inventory correction through
+  the existing authorized stock adjustment workflow.
+- Show Stock As of Date in one product, barcode and quantity table. Read
+  authorized, revision-pinned pages. Use supported activity balances internally
+  when coverage is incomplete and leave unknown quantities unavailable.
+  Record a rollout snapshot once at its actual observation time. Certify
+  subsequent history only when opening and writer coverage evidence supports it.
+
+- Use the owner-approved brief pause only for the first stocktake on the isolated
+  Retail POS Beta test branch. Verify the project, branch, terminal registrations
+  and physical SQL databases. Stop scoped stock changes through the local and
+  cloud write paths, and prove that every stock writer is accounted for and its
+  outbound work has drained through the cutoff. An offline, retired, missing or
+  unverified writer with unresolved work keeps publication on hold. Scope and
+  time-limit the pause, verify its release or expiry, and preserve pending work.
+  Obtain separate approval for any other hosted or production stocktake pause.
+- Freeze the branch's eligible product roster and record an explicit physical
+  quantity for every product, including zero stock. Require a different
+  authorized Administrator to review the sealed count and its exact cutoff.
+  Publish only the coverage supported by that evidence. Keep the dates before
+  the first opening and the exact time of unproved movements unavailable.
+- Bind an Electron stock-history download to the verified project, branch, till,
+  opening, movement cursor and source revision. Check every scoped page, count
+  and digest and revalidate the revision before one SQL Server transaction
+  installs the evidence and advances the report head. Preserve local pending
+  work, its original payloads, and its acknowledgement path. A report download
+  grants no authority to clear a business upload or rewrite current stock.
+- Conserve each branch's stock in a product merge. In the same authoritative
+  operation, credit the surviving product only with quantities from products
+  actually accepted for removal. Held products retain their stock and audit
+  references. Preserve the surviving canonical SKU, branch rights and exact
+  retry receipt. Verify the matching local and central accepted effects.
+- Catalogue-only bulk imports create no stock movement. Posting receiving,
+  transfer or adjustment work applies the approved stock change through its
+  own authorized writer and durable acknowledgement. Keep zero-stock catalogue
+  membership distinct from quantity and stock movement.
 
 ## Approved-scope autonomy and release evidence
 
@@ -489,9 +588,14 @@
 - This rule grants no additional migration, schema/data repair or production
   approval. Missing/unreadable previous SQL configuration must not be interpreted
   as a fresh terminal or proof that no pending transactions exist.
-- When local SQL is unavailable, use the configured online database through the
-  approved fallback. Explicit replacement registration may proceed online only
-  through native-authorized recovery that seals and preserves the prior binding,
+- Distinguish three connection states. Use the configured online database when
+  local SQL is intentionally disabled or verified unconfigured. An approved
+  online-only session may use the configured online route within its verified
+  authority. Enabled SQL that failed, is unreadable or is awaiting recovery
+  retains pending work and follows the existing recovery or authorized
+  online-session flow. A failed local write stays a failed save.
+- Explicit replacement registration may proceed online only through
+  native-authorized recovery that seals and preserves the prior binding,
   settings and retained evidence, and holds prior local storage from reopening,
   business writes and synchronization under the replacement identity until its
   recovery is verified. Never turn that hold into an empty-queue acknowledgement
@@ -555,7 +659,8 @@ that device builds require. The guard lives in
   command/result, environment and unverified behavior. A visible page, enabled
   checkbox, source assertion, build, merged PR or published installer alone is
   not end-to-end verification. Track database application, merge, deployment
-  and publication separately.
+  and publication separately. Link the current release evidence in the
+  relevant tracker entry or PR and retain dated reports as historical evidence.
 - Record the hosted project/patch, installed version and tested source SHA
   independently. A hosted repair does not certify an older installed client.
   Trace installed sync acceptance through the requested UI action, local SQL
@@ -663,16 +768,13 @@ that device builds require. The guard lives in
 - Membership is **ON HOLD**. Do not redesign, activate or modify it. A confirmed
   critical shared dependency requires the owner's approval before any Membership
   change; do not treat general stabilization approval as that exception.
-- Read the tracker's current batch authorization before editing. Batch 0 approved
-  documentation only; on 2026-10-27 the owner separately approved Batch 1 to review
-  Electron/mobile Operations and Management activation and fix trusted branch
-  locking while preserving cashier checkout. This does not authorize unrelated
-  corrections, live database changes, publication or production promotion.
-  Approval for one batch is not approval for the remainder of the roadmap.
+- Read the tracker's current scope and approval boundaries. Older batch approvals
+  remain historical evidence for the work they name.
 - Investigate first and present confirmed defects separately from suspected
-  risks and unverified behavior. For each proposed implementation batch identify
-  its recoverable Git baseline, affected files/dependencies, behavior, regression
-  risks, tests and recovery plan; obtain approval before implementation.
+  risks and unverified behavior. Identify the recoverable baseline, affected
+  dependencies and focused verification for the approved work. Follow the
+  approved-scope autonomy rule for routine implementation and tests. Obtain
+  separate approval for scope changes and protected actions.
 - Preserve unrelated behavior and existing permission grants/denials. Never
   bypass authorization, widen access or silently change operator settings to
   make a test pass. Keep UI-only changes separate from financial/access changes

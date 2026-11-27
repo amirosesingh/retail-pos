@@ -197,7 +197,7 @@ describe("actual Main scoped recovery reports the final operation outcome", () =
     expect(f.calls.map(row => row.event)).toEqual([
       "synchronization.manual.recovering", "synchronization.bootstrap.succeeded", "synchronization.manual.succeeded",
     ]);
-    expect(f.runNow).toHaveBeenCalledExactlyOnceWith({ batchSize: 7, branchId: "A" });
+    expect(f.runNow).toHaveBeenCalledExactlyOnceWith({ batchSize: 7, branchId: "A", retryReviewHolds: true });
     expect(f.ensure).toHaveBeenCalledTimes(1); expect(f.log.databaseErrors()).toEqual([]);
     expect(f.log.entries("failure.log")).toEqual([]);
   });

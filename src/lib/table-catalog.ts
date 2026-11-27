@@ -1,5 +1,6 @@
 /** Stable settings keys for POS tables; update entries when adding a table. */
 export const TABLE_CATALOG = [
+  {id:"reports/inventory-current",title:"Current Stock and Valuation",columns:["Product","Product ID","SKU","Barcode","Brand","Category","Subcategory","Location","On hand","Unit cost","Stock cost value","Selling price","Retail stock value","Data status","Product status"]},
   {id:"routes/sponsorship#1",title:"Sponsorship",columns:["Reference / requested","Recipient","Products / value","Discount","Approval / handover","Actions"]},
   {
     "id": "platforms/web/components/pos/BulkImportDialog#1",

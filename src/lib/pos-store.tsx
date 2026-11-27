@@ -105,6 +105,8 @@ import {
   setKnownBranches,
 } from "./active-branch";
 import { isShiftOverdue, localTerminalId } from "./shift-hours";
+import { loadProductMergeClient } from "./stock-history-product-merge-browser";
+import { applyProductMergeReceipt, explainHeldProduct } from "./stock-history-product-merge";
 import { beginShiftSession, endShiftSessions } from "./shift-sessions";
 import { setPublicHosts } from "./coupon-hosts";
 import { branchDisplayName } from "./human-readable";
@@ -416,7 +418,7 @@ type Ctx = {
   patchProducts: (ids: string[], patch: Partial<Product>) => Promise<CommitTarget>;
   archiveProducts: (ids: string[]) => Promise<CommitTarget>;
   restoreProducts: (ids: string[]) => Promise<CommitTarget>;
-  mergeProducts: (masterId: string, duplicateIds: string[]) => Promise<BlockedDelete[]>;
+  mergeProducts: (masterId: string, duplicateIds: string[], resumeOperationId?: string) => Promise<BlockedDelete[]>;
   adjustStock: (id: string, delta: number, storeId?: string) => Promise<CommitTarget | null>;
   moveStock: (
     id: string,
@@ -3343,8 +3345,24 @@ export function PosProvider({ children }: { children: ReactNode }) {
    * scanning the old code still finds the item.
    */
   const mergeProducts = useCallback(
-    async (masterId: string, duplicateIds: string[]): Promise<BlockedDelete[]> => {
+    async (masterId: string, duplicateIds: string[], resumeOperationId?: string): Promise<BlockedDelete[]> => {
       const all = stateRef.current.products;
+      const branchId = stateRef.current.currentStoreId;
+      const actorId = actorStaffIdRef.current;
+      const epoch = sessionEpoch();
+      const isCurrent = () => sessionEpoch() === epoch &&
+        stateRef.current.currentStoreId === branchId && actorStaffIdRef.current === actorId;
+      const { tryPilotProductMerge } = await loadProductMergeClient();
+      if (!isCurrent()) throw new Error("The branch or signed-in user changed. Open the merge again.");
+      const receipt = await tryPilotProductMerge({
+        branchId, actorId, masterId, duplicateIds, products: all, resumeOperationId, isCurrent,
+      });
+      if (!isCurrent()) throw new Error("The branch or signed-in user changed. Open the merge again.");
+      if (receipt) {
+        setState(s => ({ ...s, products: applyProductMergeReceipt(s.products, receipt) }));
+        return receipt.held.map(explainHeldProduct);
+      }
+      if (resumeOperationId) throw new Error("The saved merge is unavailable for this terminal.");
       const master = all.find((p) => p.id === masterId);
       if (!master) return [];
       const losers = all.filter((p) => duplicateIds.includes(p.id) && p.id !== masterId);

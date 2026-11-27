@@ -213,5 +213,5 @@ export async function runFinancialCorrectionFeed({ db, read, fn, scalar, test, l
   });
   const { verifyNativeRefundGateway } = await import("./pos-sync-refund-fixture.mjs");
   await test("native refund gateway binds database, epoch and author and returns archived exact replay",
-    () => verifyNativeRefundGateway({ db, read, scalar, liveSale, branch, epoch, terminal, author, product }));
+    () => verifyNativeRefundGateway({ db, read, fn, scalar, liveSale, branch, epoch, terminal, author, product }));
 }

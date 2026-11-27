@@ -1,6 +1,7 @@
 /** Parameterized SQL Server read scope matching the application's cluster catalogue rules. */
-function catalogueReadPredicate(registry, alias = "source") {
+function catalogueReadPredicate(registry, alias = "source", branchExpression = "@branch") {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(alias)) throw new Error("Invalid catalogue SQL alias.");
+  if (!/^(@branch|[A-Za-z_][A-Za-z0-9_]*\.\[id\])$/.test(branchExpression)) throw new Error("Invalid catalogue branch expression.");
   const table = name => (registry.tables ?? []).find(entry => entry.cloudTable === name);
   const has = (name, columns) => {
     const entry = table(name);
@@ -16,7 +17,7 @@ function catalogueReadPredicate(registry, alias = "source") {
   // An incomplete old registry cannot safely prove a catalogue relationship.
   // Do not turn a missing cluster/provenance schema into a company-wide read.
   if (!has("stores", ["id", "group_id", "private_catalogue"]) || !has("products", ["id", "owner_store_id", "stock_by_store"]))
-    return `${owner}=@branch`;
+    return `${owner}=${branchExpression}`;
   const targetGroup = `(SELECT TOP(1) NULLIF(LTRIM(RTRIM(ct.[group_id])),N'') FROM dbo.[stores] ct WHERE ${same("ct.[id]", "@branch")})`;
   const ownerGroup = `(SELECT TOP(1) NULLIF(LTRIM(RTRIM(co.[group_id])),N'') FROM dbo.[stores] co WHERE ${same("co.[id]", owner)})`;
   const groupCount = `(SELECT COUNT(DISTINCT NULLIF(LTRIM(RTRIM(cg.[group_id])),N'')) FROM dbo.[stores] cg)`;
@@ -39,7 +40,7 @@ function catalogueReadPredicate(registry, alias = "source") {
     posted = `EXISTS(SELECT 1 FROM dbo.[stock_transfers] cv JOIN dbo.[stock_transfer_items] ci ON ci.[transfer_id]=cv.[id] LEFT JOIN dbo.[stores] cd ON ${same("cd.[id]", "cv.[to_store_id]")} WHERE ${same("ci.[product_id]", product)} AND cv.[status] IN(N'completed',N'completed_with_discrepancy') AND cv.[posted_at] IS NOT NULL AND COALESCE(ci.[quantity_verified],ci.[quantity_received],0)>0 AND (${same("cv.[to_store_id]", "@branch")} OR ${sameGroup("cd.[group_id]", targetGroup)}))`;
   }
   if (has("products", ["catalogue_store_ids"])) posted = `(${posted} OR EXISTS(SELECT 1 FROM OPENJSON(CASE WHEN ISJSON(${alias}.[catalogue_store_ids])=1 THEN ${alias}.[catalogue_store_ids] ELSE N'[]' END) cached_proof LEFT JOIN dbo.[stores] cached_store ON ${same("cached_store.[id]", "cached_proof.[value]")} WHERE ${same("cached_proof.[value]", "@branch")} OR ${sameGroup("cached_store.[group_id]", targetGroup)}))`;
-  return `(@branch IS NOT NULL AND EXISTS(SELECT 1 FROM dbo.[stores] ct_exists WHERE ${same("ct_exists.[id]", "@branch")}) AND (${own} OR ${sibling} OR ${posted} OR (${unowned} AND (${stock} OR ${sharedLegacy})) OR (NOT (${unowned}) AND ${ungroupedOwned})))`;
+  return `(@branch IS NOT NULL AND EXISTS(SELECT 1 FROM dbo.[stores] ct_exists WHERE ${same("ct_exists.[id]", "@branch")}) AND (${own} OR ${sibling} OR ${posted} OR (${unowned} AND (${stock} OR ${sharedLegacy})) OR (NOT (${unowned}) AND ${ungroupedOwned})))`.replaceAll("@branch", branchExpression);
 }
 /** Compact read projection; never exposes transfer participants or references. */
 function catalogueStoreIdsProjection(registry, alias = "source") {
