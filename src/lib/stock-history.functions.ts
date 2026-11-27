@@ -3,6 +3,7 @@ import {z} from 'zod';
 import {stockHistoryRequestSchema} from './stock-history-validation';
 import {stockHistoryMovementRequestSchema} from './stock-history-movements';
 import {stockActivityRequestSchema} from './stock-activity-query';
+import {stockActivityBalancesRequestSchema} from './stock-activity-balances';
 const callerProofSchema=z.object({
  sessionToken:z.string().max(400).optional(),cashierToken:z.string().max(2000).optional(),terminalToken:z.string().max(200).optional(),
  accessToken:z.string().max(4000).optional(),deviceBindingProof:z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -10,6 +11,7 @@ const callerProofSchema=z.object({
 const inputSchema=callerProofSchema.extend({request:stockHistoryRequestSchema});
 const movementInputSchema=callerProofSchema.extend({request:stockHistoryMovementRequestSchema});
 const activityInputSchema=callerProofSchema.extend({request:stockActivityRequestSchema});
+const activityBalancesInputSchema=callerProofSchema.extend({request:stockActivityBalancesRequestSchema});
 const openingInputSchema=callerProofSchema.extend({branchId:z.string().min(1).max(128)});
 export const loadStockHistoryPageDirect=createServerFn({method:'POST'}).validator((input:unknown)=>inputSchema.parse(input))
  .handler(async({data})=>{
@@ -25,6 +27,11 @@ export const loadStockActivityPageDirect=createServerFn({method:'POST'}).validat
  .handler(async({data})=>{
   const {request,...proof}=data;
   return(await import('./stock-activity.server')).readStockActivityPage(proof,request);
+ });
+export const loadStockActivityBalancesDirect=createServerFn({method:'POST'}).validator((input:unknown)=>activityBalancesInputSchema.parse(input))
+ .handler(async({data})=>{
+  const {request,...proof}=data;
+  return(await import('./stock-activity-balances.server')).readStockActivityBalances(proof,request);
  });
 export const recordStockRolloutOpeningDirect=createServerFn({method:'POST'}).validator((input:unknown)=>openingInputSchema.parse(input))
  .handler(async({data})=>{

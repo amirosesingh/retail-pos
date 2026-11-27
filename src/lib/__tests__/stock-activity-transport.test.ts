@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RelayScope } from "@/core/api/relay-policy.server";
 import { readStockActivityPage } from "../stock-activity.server";
+import { readStockActivityBalances } from "../stock-activity-balances.server";
+import { stockActivityAtCutoff } from "../stock-activity-history";
 import type { StockActivityRequest } from "../stock-activity-query";
 
 const mocks = vi.hoisted(() => ({ rest: vi.fn(), verify: vi.fn(), scope: vi.fn() }));
@@ -94,6 +96,47 @@ describe("authorized hosted item activity", () => {
       mocks.rest.mockImplementation(async (path: string) => Response.json(path.startsWith("stock_adjustments?") ? [adjustment] : [invalid]));
       await expect(readStockActivityPage({}, request)).rejects.toThrow();
     }
+  });
+});
+
+describe("hosted per-product balance evidence", () => {
+  const evidenceRequest = { branchId, cutoff, productIds: [productId] };
+  const at = (digit: number) => `2026-11-23T03:00:00.12345${digit}+00:00`;
+  const id = (digit: number) => `00000000-0000-4000-8000-00000000001${digit}`;
+  const adjustAt = (digit: number) => ({
+    ...adjustment, id: id(digit), created_at: at(digit), delta: -1, previous_stock: null, updated_stock: null,
+  });
+  const reply = (activity: unknown[], adjustments: unknown[]) => Response.json([{
+    product_id: productId, through_activity: activity, through_adjustments: adjustments, after_activity: [], after_adjustments: [],
+  }]);
+
+  it("does not use an old anchor across activity that a bounded source may have omitted", async () => {
+    mocks.rest.mockResolvedValue(reply([
+      { ...sale, id: id(6), created_at: at(6), stock_before: null, stock_after: null },
+      { ...sale, id: id(2), created_at: at(2) },
+    ], [adjustAt(5), adjustAt(4), adjustAt(3)]));
+    const result = await readStockActivityBalances({}, evidenceRequest);
+    if (!("products" in result)) throw new Error("Expected deployed balance reader");
+    const through = result.products[0].through;
+    expect(through.map(row => row.id)).toEqual([id(6), id(5), id(4)]);
+    expect(stockActivityAtCutoff(through, { branchId, cutoff, productId, throughCoverage: "all" }).balance).toBeNull();
+  });
+
+  it("uses the newer full-source boundary and drops every row tied to it", async () => {
+    const tied = { ...sale, id: movementId, created_at: at(4) };
+    mocks.rest.mockResolvedValue(reply([
+      { ...sale, id: id(6), created_at: at(6) }, { ...sale, id: id(2), created_at: at(4) }, tied,
+    ], [adjustAt(5), adjustAt(4), adjustAt(3)]));
+    await expect(readStockActivityBalances({}, evidenceRequest)).resolves.toMatchObject({
+      products: [{ through: [{ id: id(6) }, { id: id(5) }] }],
+    });
+  });
+
+  it("rejects a conflicting adjustment before dropping the boundary", async () => {
+    mocks.rest.mockResolvedValue(reply([
+      { ...sale, id: id(3), created_at: at(3), activity_type: "adjustment" },
+    ], [adjustAt(5), adjustAt(4), { ...adjustAt(3), updated_stock: 0 }]));
+    await expect(readStockActivityBalances({}, evidenceRequest)).rejects.toThrow(/conflicting records/);
   });
 });
 

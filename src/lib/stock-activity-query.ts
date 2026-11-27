@@ -17,9 +17,11 @@ const branch = z.string().min(1).max(128).refine(value => value.trim() === value
   .transform(canonicalBranchId);
 const uuid = z.string().regex(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i).transform(value => value.toLowerCase());
 const cursor = z.object({ occurredAt: instant, id: uuid }).strict();
-const scope = z.object({
+export const stockActivityScopeSchema = z.object({
   branchId: branch,
   cutoff: instant,
+});
+const scope = stockActivityScopeSchema.extend({
   side: z.enum(["through-cutoff", "after-cutoff"]),
   productId: uuid.optional(),
 });
@@ -30,7 +32,7 @@ export const stockActivityRequestSchema = scope.extend({
   "The activity cursor must be inside the selected stock interval.");
 
 const boundedUnits = z.number().int().min(-2_147_483_648).max(2_147_483_647).nullable();
-const rowSchema = cursor.extend({
+export const stockActivityRowSchema = cursor.extend({
   branchId: branch,
   productId: uuid,
   productName: z.string().max(300).optional(),
@@ -40,7 +42,7 @@ const rowSchema = cursor.extend({
   before: boundedUnits,
   after: boundedUnits,
 }).strict();
-const pageSchema = scope.extend({ rows: z.array(rowSchema).max(STOCK_ACTIVITY_PAGE_MAX), next: cursor.nullable() }).strict();
+const pageSchema = scope.extend({ rows: z.array(stockActivityRowSchema).max(STOCK_ACTIVITY_PAGE_MAX), next: cursor.nullable() }).strict();
 
 export type StockActivityCursor = z.infer<typeof cursor>;
 export type StockActivityRequest = z.infer<typeof stockActivityRequestSchema>;

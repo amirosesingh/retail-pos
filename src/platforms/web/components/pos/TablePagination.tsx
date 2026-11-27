@@ -56,6 +56,7 @@ type Props = {
   from: number;
   to: number;
   label?: string;
+  pageSizeOptions?: readonly number[];
   onPage: (p: number) => void;
   onPageSize: (n: number) => void;
 };
@@ -68,6 +69,7 @@ export function TablePagination({
   from,
   to,
   label = "items",
+  pageSizeOptions = PAGE_SIZES,
   onPage,
   onPageSize,
 }: Props) {
@@ -81,7 +83,7 @@ export function TablePagination({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PAGE_SIZES.map((n) => (
+            {pageSizeOptions.map((n) => (
               <SelectItem key={n} value={String(n)}>
                 {n}
               </SelectItem>

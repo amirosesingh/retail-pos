@@ -2,6 +2,7 @@ const { createHash } = require('node:crypto');
 const { StockHistoryStore } = require('./db/stock-history.cjs');
 const { identifier, fail } = require('./db/stock-history-contract.cjs');
 const { activityRequest, readStockActivity } = require('./db/stock-activity.cjs');
+const { activityBalancesRequest, readStockActivityBalances } = require('./db/stock-activity-balances.cjs');
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const reportKeys = new Set(['cutoff','timeZone','branchId','after','sourceRevision','limit','export','closedShiftId','periodStart']);
 const movementKeys = new Set(['cutoff','timeZone','branchId','after','sourceRevision','limit','productId','closedShiftId','periodStart']);
@@ -18,11 +19,12 @@ function safeRequest(value, movements) {
 }
 /** Dedicated read admission; no SQL text, ledger writes or renderer-selected identity. */
 function createStockHistoryReader({manager,session,terminal,branch,isPosSender,context=()=>[],managementHistoryAdmission}, mode=false) {
-  const activity = mode === 'activity';
+  const activity = mode === 'activity' ? { parse: activityRequest, read: readStockActivity } :
+    mode === 'activity-balances' ? { parse: activityBalancesRequest, read: readStockActivityBalances } : null;
   return async (event,raw) => {
     try {
       if (!isPosSender(event) || !session.hasPosAuthority()) fail('PERMISSION_DENIED');
-      const request = activity ? activityRequest(raw) : safeRequest(raw,mode === true), pool = manager.pool, epoch = session.epoch();
+      const request = activity ? activity.parse(raw) : safeRequest(raw,mode === true), pool = manager.pool, epoch = session.epoch();
       const actor = session.identity(), registered = terminal();
       if (registered?.deviceUse === 'management') {
         const branchId = identifier(request.branchId);
@@ -96,7 +98,7 @@ function createStockHistoryReader({manager,session,terminal,branch,isPosSender,c
       assertCurrent();
       const before = await authorizeRead(false);
       if (!before?.canViewInventory || before.branchId !== branchId) fail('PERMISSION_DENIED');
-      const page = await readStockActivity(pool, request);
+      const page = await activity.read(pool, request);
       const after = await authorizeRead(false);
       if (!after?.canViewInventory || after.branchId !== branchId || after.contextKey !== before.contextKey) {
         fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
@@ -112,6 +114,7 @@ function registerStockHistoryRead(options) {
   options.ipcMain.handle('business:stock-history',handler);
   options.ipcMain.handle('business:stock-history-movements',createStockHistoryReader(options,true));
   options.ipcMain.handle('business:stock-activity',createStockHistoryReader(options,'activity'));
+  options.ipcMain.handle('business:stock-activity-balances',createStockHistoryReader(options,'activity-balances'));
   return handler;
 }
 function registerStocktakeControl({ ipcMain, session, isPosSender, coordinator, run }) {

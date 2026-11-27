@@ -20,7 +20,7 @@ const standardRow = z.object({ ...rowShape, activity_type: z.string().min(1).max
 }).strict();
 const adjustmentRow = z.object({ ...rowShape, delta: units, previous_stock: units, updated_stock: units }).strict();
 
-async function readBoundedActivity(response: Response): Promise<unknown> {
+export async function readBoundedActivity(response: Response, maxBytes = 512 * 1024): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("The company database returned an empty item activity response.");
   const decoder = new TextDecoder();
@@ -30,7 +30,7 @@ async function readBoundedActivity(response: Response): Promise<unknown> {
       const part = await reader.read();
       if (part.done) return JSON.parse(text + decoder.decode()) as unknown;
       total += part.value.byteLength;
-      if (total > 512 * 1024) {
+      if (total > maxBytes) {
         void reader.cancel().catch(() => undefined);
         throw new Error("The company database returned an oversized item activity page.");
       }
@@ -51,7 +51,7 @@ function commonRow(row: z.infer<z.ZodObject<typeof rowShape>>) {
 
 // PostgreSQL retains microseconds. Floor rather than round the selected SQL
 // Server 100ns cutoff so events exactly on the next tick stay on the later side.
-const hostedInstant = (value: string) => `${value.slice(0, -2)}Z`;
+export const hostedActivityInstant = (value: string) => `${value.slice(0, -2)}Z`;
 
 function scopedQuery(request: StockActivityRequest, branchId: string, columns: string) {
   const through = request.side === "through-cutoff";
@@ -59,13 +59,13 @@ function scopedQuery(request: StockActivityRequest, branchId: string, columns: s
   const params = new URLSearchParams({
     select: `${commonColumns},${columns}`,
     store_id: `eq.${branchId}`,
-    created_at: `${through ? "lte" : "gt"}.${hostedInstant(request.cutoff)}`,
+    created_at: `${through ? "lte" : "gt"}.${hostedActivityInstant(request.cutoff)}`,
     product_id: request.productId ? `eq.${request.productId}` : "not.is.null",
     order: `created_at.${order},id.${order}`,
     limit: String((request.limit ?? STOCK_ACTIVITY_PAGE_SIZE) + 1),
   });
   if (request.cursor) {
-    const when = hostedInstant(request.cursor.occurredAt);
+    const when = hostedActivityInstant(request.cursor.occurredAt);
     // A local cursor can carry a seventh fractional digit. Provider equality
     // at its floored microsecond cannot be used for the key comparison then.
     if (request.cursor.occurredAt.at(-2) !== "0") {
@@ -104,6 +104,32 @@ function mergeRecords(activity: StockActivityRecord[], adjustments: StockActivit
   return [...records.values()].sort((a, b) => sign * compareActivityPosition(a, b));
 }
 
+export function readStockActivityRecords(
+  rawActivity: unknown, rawAdjustments: unknown, perSourceLimit: number, request: StockActivityRequest,
+  options?: { contiguousThroughCutoff: true },
+): StockActivityRecord[] {
+  const activity = z.array(standardRow).max(perSourceLimit).parse(rawActivity).map((row): StockActivityRecord => ({
+    ...commonRow(row), kind: row.activity_type, reference: row.reference?.slice(0, 240) ?? null,
+    delta: row.quantity_delta ?? null, before: row.stock_before ?? null, after: row.stock_after ?? null,
+  }));
+  const adjustments = z.array(adjustmentRow).max(perSourceLimit).parse(rawAdjustments).map((row): StockActivityRecord => ({
+    ...commonRow(row), kind: "adjustment", reference: null,
+    delta: row.delta ?? null, before: row.previous_stock ?? null, after: row.updated_stock ?? null,
+  }));
+  const records = mergeRecords(activity, adjustments, request);
+  if (!options?.contiguousThroughCutoff || request.side !== "through-cutoff") return records;
+
+  // A full source may have omitted older rows, including other rows at its
+  // oldest timestamp. Only the newer suffix is contiguous across both sources.
+  let boundary = "";
+  for (const source of [activity, adjustments]) {
+    if (source.length !== perSourceLimit) continue;
+    const oldest = source.reduce((at, row) => row.occurredAt < at ? row.occurredAt : at, request.cutoff);
+    if (oldest > boundary) boundary = oldest;
+  }
+  return records.filter(row => row.occurredAt > boundary);
+}
+
 /** Read-only inventory evidence. The report's verified balances remain independent. */
 export async function readStockActivityPage(proof: CallerProof, value: StockActivityRequest): Promise<StockActivityPage> {
   const request = stockActivityRequestSchema.parse(value);
@@ -120,13 +146,5 @@ export async function readStockActivityPage(proof: CallerProof, value: StockActi
   if (!activity.ok || !adjustments.ok) throw new Error("The company database could not read item activity. Try again shortly.");
   const pageMax = (request.limit ?? STOCK_ACTIVITY_PAGE_SIZE) + 1;
   const [rawActivity, rawAdjustments] = await Promise.all([readBoundedActivity(activity), readBoundedActivity(adjustments)]);
-  const activityRows = z.array(standardRow).max(pageMax).parse(rawActivity).map((row): StockActivityRecord => ({
-    ...commonRow(row), kind: row.activity_type, reference: row.reference?.slice(0, 240) ?? null,
-    delta: row.quantity_delta ?? null, before: row.stock_before ?? null, after: row.stock_after ?? null,
-  }));
-  const adjustmentRows = z.array(adjustmentRow).max(pageMax).parse(rawAdjustments).map((row): StockActivityRecord => ({
-    ...commonRow(row), kind: "adjustment", reference: null,
-    delta: row.delta ?? null, before: row.previous_stock ?? null, after: row.updated_stock ?? null,
-  }));
-  return makeStockActivityPage(request, mergeRecords(activityRows, adjustmentRows, request));
+  return makeStockActivityPage(request, readStockActivityRecords(rawActivity, rawAdjustments, pageMax, request));
 }
