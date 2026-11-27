@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
+import { reasonCode, recordDiagnostic } from "@/lib/diagnostics";
 import {
   Dialog,
   DialogContent,
@@ -221,10 +222,7 @@ export function ShiftCloseDialog({
       countedCard: counted.card,
       countedDigital: counted.digital,
     });
-    if (!closed) {
-      toast.error("The shift close was not accepted.");
-      return false;
-    }
+    if (!closed) return false;
     if (otherClosure) {
       await logSystemAction({
         actorId,
@@ -271,8 +269,8 @@ export function ShiftCloseDialog({
     if (!printed.ok) toast.warning("Shift closed · Z report could not print", {
       description: printed.error ?? "Check the printer and reprint the Z report from Shifts.",
     });
-    if (!synchronized.ok) toast.warning("Shift closed locally · synchronization pending", {
-      description: synchronized.error + " Your data remains saved on this terminal. Retry from Sync status.",
+    if (!synchronized.ok) toast.warning("Shift saved · synchronization needs attention", {
+      description: "Open Sync status to review the result and retry pending uploads.",
       duration: 10000,
     });
     else if (synchronized.reportHistoryPending) toast.info("Shift synchronized · stock history needs review", {
@@ -284,14 +282,35 @@ export function ShiftCloseDialog({
     onOpenChange(false);
     // Only exit automatically after both effects succeed. Other exits use the
     // main-process drain guard, which preserves the local queue while offline.
-    if (synchronized.ok && printed.ok) await localDb()?.closeWindow?.();
+    if (synchronized.ok && printed.ok) {
+      try {
+        await localDb()?.closeWindow?.();
+      } catch (error) {
+        console.warn("Automatic window close after saved shift failed", reasonCode(error));
+        toast.warning("Shift saved · the app could not close automatically");
+      }
+    }
     return true;
   }
 
   async function handleState(next: ShiftState) {
     setServerState(next);
     if (next === "CLOSED") {
-      await finish();
+      try {
+        if (await finish()) return;
+      } catch (error) {
+        recordDiagnostic({
+          kind: "compatibility_projection_failed",
+          entity: "shift close display",
+          code: reasonCode(error),
+          recordId: shiftId,
+        });
+      }
+      // CLOSED already came from the authoritative close. A display or
+      // follow-up failure cannot turn it back into a failed submission.
+      toast.warning("Shift saved · refresh Shifts to view the closing");
+      setStep("done");
+      onOpenChange(false);
     } else if (next === "VARIANCE_REVIEW_REQUIRED") {
       setStep("review");
     } else {
@@ -546,7 +565,7 @@ export function ShiftCloseDialog({
           )}
           {syncingClose && (
             <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-              Closing shift… Synchronizing pending transactions.
+              Shift saved. Synchronizing pending transactions.
             </p>
           )}
 
