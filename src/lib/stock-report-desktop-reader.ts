@@ -9,6 +9,6 @@ const managementDesktop = () => isWindowsShell() && isManagementDevice();
 export const usesLocalStockHistory = () => managementDesktop() || effectiveDatabaseMode() === "local";
 
 /** Management's ordinary business bridge is disabled; these channels each enforce Main's report admission. */
-export function stockHistoryDesktopReader(): Pick<PosBridge, "stockHistory" | "stockHistoryMovements" | "stockActivity"> | null {
+export function stockHistoryDesktopReader(): Pick<PosBridge, "stockHistory" | "stockHistoryMovements" | "stockActivity" | "stockActivityBalances"> | null {
   return managementDesktop() ? desktopBridge("pos", window.pos ?? null) : localDb();
 }

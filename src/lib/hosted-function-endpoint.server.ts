@@ -53,6 +53,7 @@ const handlers: Record<string, (data: unknown) => Promise<unknown>> = Object.fre
   "stock-history.page": async (data) => (await import("./stock-history.functions")).loadStockHistoryPageDirect({ data: data as never }),
   "stock-history.movements": async (data) => (await import("./stock-history.functions")).loadStockHistoryMovementsDirect({ data: data as never }),
   "stock-history.activity": async (data) => (await import("./stock-history.functions")).loadStockActivityPageDirect({ data: data as never }),
+  "stock-history.activity-balances": async (data) => (await import("./stock-history.functions")).loadStockActivityBalancesDirect({ data: data as never }),
   "stock-history.rollout-opening": async (data) => (await import("./stock-history.functions")).recordStockRolloutOpeningDirect({ data: data as never }),
   "stock-history.rollout-readiness": async (data) => (await import("./stock-history.functions")).readStockRolloutReadinessDirect({ data: data as never }),
   "sku.reserveSkuLease": async (data) => (await import("./sku.functions")).reserveSkuLease({ data: data as never }),

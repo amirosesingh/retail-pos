@@ -108,4 +108,4 @@ async function readStockActivity(pool, request) {
   return activityPage(request, result.recordset);
 }
 
-module.exports = { activityRequest, readStockActivity };
+module.exports = { activityPage, activityRequest, readStockActivity };

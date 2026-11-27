@@ -80,6 +80,66 @@ describe("Main-owned stock history read admission", () => {
     expect(authorizeRead).toHaveBeenCalledTimes(4);
     expect(f.counts()).toEqual({ reads: 0, touched: 2 });
   });
+  it("returns batched activity evidence only with a current authorized branch and actor", async () => {
+    const f = fixture();
+    const batch = { branchId: request.branchId, cutoff: request.cutoff, productIds: [databaseGuid, actorId] };
+    const row = {
+      source_key: 0, side_key: 0, id: actorId, product_id: databaseGuid, store_id: request.branchId,
+      occurred_at: request.cutoff, kind: "sale", delta: -2, before: 2, after: 0,
+    };
+    const statement = {
+      input: vi.fn().mockReturnThis(),
+      query: vi.fn(async (sql: string) => ({ recordset: sql.includes("dbo.app_users") ? [f.person] : [row] })),
+    };
+    f.manager.pool.request = () => statement;
+    const readBalances = createStockHistoryReader(f.options, "activity-balances");
+    await expect(readBalances("customer", batch)).resolves.toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+    await expect(readBalances("pos", { ...batch, branchId: "b" })).resolves.toMatchObject({ ok: false, code: "SYNC_BRANCH_FORBIDDEN" });
+    await expect(readBalances("pos", { ...batch, productIds: [actorId, actorId] })).resolves.toMatchObject({ ok: false, code: "ESTOCK_HISTORY_INVALID" });
+    expect(statement.query).not.toHaveBeenCalled();
+    await expect(readBalances("pos", batch)).resolves.toMatchObject({
+      ok: true, page: { branchId: batch.branchId, cutoff: batch.cutoff, products: [
+        { productId: databaseGuid, through: [{ id: actorId, before: 2, after: 0 }], after: [] },
+        { productId: actorId, through: [], after: [] },
+      ] },
+    });
+    expect(statement.query).toHaveBeenCalledTimes(3);
+    expect(statement.input).toHaveBeenCalledWith("products_json", JSON.stringify(batch.productIds));
+    expect(statement.query.mock.calls[1]?.[0]).not.toContain(databaseGuid);
+    statement.query.mockImplementation(async sql => {
+      if (sql.includes("dbo.app_users")) return { recordset: [f.person] };
+      f.person.permissions.can_view_inventory = false;
+      return { recordset: [row] };
+    });
+    await expect(readBalances("pos", batch)).resolves.toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+    expect(f.counts().touched).toBe(1);
+  });
+  it("keeps only contiguous recent activity when a source is truncated", async () => {
+    const f = fixture();
+    const batch = { branchId: "a", cutoff: request.cutoff, productIds: [databaseGuid, actorId] };
+    const at = (day: number) => `2026-11-0${day}T00:00:00.0000000Z`;
+    const event = (key: number, day: number, source: number, productId = databaseGuid) => ({
+      id: `00000000-0000-4000-8000-${String(key).padStart(12, "0")}`,
+      occurred_at: at(day), source_key: source, side_key: 0, product_id: productId, store_id: "a",
+      kind: source === 0 ? "sale" : "adjustment", delta: -1, before: 2, after: 1,
+    });
+    const oldestUnclipped = event(20, 1, 0, actorId);
+    const newest = event(10, 6, 0), middle = event(11, 5, 0);
+    const rows = [newest, middle, event(12, 3, 0), event(13, 2, 0), event(14, 3, 1), event(15, 1, 1),
+      event(18, 4, 0, actorId), event(19, 2, 0, actorId), oldestUnclipped];
+    const statement = {
+      input: vi.fn().mockReturnThis(),
+      query: vi.fn(async (sql: string) => ({ recordset: sql.includes("dbo.app_users") ? [f.person] : rows })),
+    };
+    f.manager.pool.request = () => statement;
+    const readBalances = createStockHistoryReader(f.options, "activity-balances");
+    const result = await readBalances("pos", batch);
+    expect(result.ok).toBe(true);
+    expect(result.page.products[0].through.map((row: { id: string }) => row.id)).toEqual([newest.id, middle.id]);
+    expect(result.page.products[1].through).toHaveLength(3);
+    expect(result.page.products[1].through.at(-1).id).toBe(oldestUnclipped.id);
+    expect(statement.input).toHaveBeenCalledWith("through_limit", 4);
+  });
 });
 
 it("admits stocktake control only from the verified admin POS frame under the live sync lease", async () => {

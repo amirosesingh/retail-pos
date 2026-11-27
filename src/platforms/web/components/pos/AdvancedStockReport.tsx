@@ -236,7 +236,8 @@ function ReportWorkspace({ branchId, branchName, canExport, canPrint, canValue, 
           <CurrentInventoryReport branchId={branchId} branchName={branchName} refreshToken={revision.current} managementLocations={managementLocations} />
         </TabsContent>
         <TabsContent value="history" forceMount hidden={tab !== "history"} data-stock-report-panel="history" className="mt-4">
-          {visited.has("history") && <StockReport branchId={historicalBranchId} branchName={historicalBranchName} initialView="history" refreshToken={revision.history} />}
+          {visited.has("history") && <StockReport branchId={historicalBranchId} branchName={historicalBranchName}
+            initialView="history" refreshToken={revision.history} refreshOnInventoryChange={tab === "history"} />}
         </TabsContent>
         <TabsContent value="movement" forceMount hidden={tab !== "movement"} data-stock-report-panel="movement" className="mt-4">
           {visited.has("movement") && <StockMovementReport branchId={historicalBranchId} branchName={historicalBranchName} refreshToken={revision.movement} />}

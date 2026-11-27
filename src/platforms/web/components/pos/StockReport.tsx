@@ -24,8 +24,10 @@ import { stockDateTimeInput, stockEndOfDay, stockTimeChoices, type StockTimeChoi
 import { stockHistoryExplanation, type StockHistoryPage, type StockHistoryRequest, type StockHistoryRow } from "@/lib/stock-history-report";
 import { stockReportDay } from "../../../../../electron/shared/stock-report-day.mjs";
 import { canonicalStockInstant, stockInstant } from "@/lib/stock-as-of";
+import { STOCK_ACTIVITY_BALANCE_PAGE_SIZE } from "@/lib/stock-activity-balances";
 import { StockActivityTime, StockRecordedBalances, StockReportActivity } from "./StockReportActivity";
 import { reportActivityEvidence, useStockReportActivityPage, type StockActivityProduct } from "./use-stock-report-activity";
+import { useStockAsOfBalances } from "./use-stock-as-of-balances";
 
 const zeroQuantity = (row: StockHistoryRow) => row.quantity === "0" || row.quantity === "-0";
 const unresolvedClosedShiftCutoff = "1970-01-01T00:00:00.0000000Z";
@@ -89,18 +91,32 @@ function existedAt(createdAt: string | undefined, cutoff: string | undefined) {
   catch { return false; }
 }
 
-type AsOfBalance = StockActivityProduct & { quantity: string | number | null };
+type AsOfBalance = StockActivityProduct & { quantity: string | number | null; supportedAt?: string };
+type AsOfEvidenceScope = { identity: string; cutoff: string; branchId: string; zeroOnly: boolean; format: Intl.DateTimeFormat };
 
-function AsOfBalanceTable({ rows, verified, paginate, empty, checkingProduct, checkProduct }: {
+function AsOfBalanceTable({ rows, verified, paginate, empty, checkingProduct, checkProduct, evidenceScope }: {
   rows: AsOfBalance[];
   verified: boolean;
   paginate: boolean;
   empty: string;
   checkingProduct?: string;
   checkProduct?: (productId: string) => void;
+  evidenceScope?: AsOfEvidenceScope;
 }) {
-  const { pageItems, setPage, setPageSize, ...pagination } = usePagination(rows, 50);
-  const visible = paginate ? pageItems : rows;
+  const { pageItems, setPage, setPageSize, ...pagination } = usePagination(rows, STOCK_ACTIVITY_BALANCE_PAGE_SIZE);
+  const candidates = paginate ? pageItems : rows;
+  const uncovered = candidates.filter(row => row.quantity === null &&
+    /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(row.productId));
+  const productIds = uncovered.map(row => row.productId.toLowerCase());
+  const evidence = useStockAsOfBalances(evidenceScope?.identity ?? "", evidenceScope && productIds.length
+    ? { branchId: evidenceScope.branchId, cutoff: evidenceScope.cutoff, productIds } : null);
+  const withEvidence = candidates.map(row => {
+    const recorded = evidence?.balances?.get(row.productId.toLowerCase());
+    return recorded ? { ...row, quantity: recorded.quantity, supportedAt: recorded.supportedAt } : row;
+  });
+  const visible = evidenceScope?.zeroOnly
+    ? withEvidence.filter(row => row.quantity === 0 || row.quantity === "0" || row.quantity === "-0") : withEvidence;
+  const checkingEvidence = productIds.length > 0 && (!evidence || evidence.state === "loading");
   return <>
     <div className="overflow-x-auto rounded-md border">
       <Table aria-label="Stock at selected time" data-stock-report-print-table={verified && visible.length ? true : undefined}>
@@ -113,23 +129,31 @@ function AsOfBalanceTable({ rows, verified, paginate, empty, checkingProduct, ch
           <TableCell className="min-w-36 whitespace-normal break-words">{row.name}</TableCell>
           <TableCell className="whitespace-nowrap">{row.barcode || "—"}</TableCell>
           <TableCell className="numeric whitespace-nowrap text-right">
-            {row.quantity !== null ? row.quantity : checkProduct ? <Button type="button" variant="link" size="sm" className="h-auto p-0"
+            {row.quantity !== null ? <>{row.quantity}
+              {row.supportedAt && evidenceScope && <span className="block text-xs text-muted-foreground">
+                Recorded <StockActivityTime format={evidenceScope.format} value={row.supportedAt} />
+              </span>}</> : checkingEvidence && productIds.includes(row.productId.toLowerCase()) ? "Checking…" : checkProduct ? <Button type="button" variant="link" size="sm" className="h-auto p-0"
               disabled={checkingProduct === row.productId} aria-label={`Check recorded balance for ${row.name}`}
               onClick={() => checkProduct(row.productId)}>{checkingProduct === row.productId ? "Checking…" : "Unavailable"}</Button> : "Unavailable"}
           </TableCell>
-        </TableRow>) : <TableRow><TableCell colSpan={3}>{empty}</TableCell></TableRow>}</TableBody>
+        </TableRow>) : <TableRow><TableCell colSpan={3}>{checkingEvidence ? "Checking recorded stock balances…" : empty}</TableCell></TableRow>}</TableBody>
       </Table>
     </div>
-    {paginate && <TablePagination {...pagination} onPage={setPage} onPageSize={setPageSize} label="products" />}
+    {evidence?.state === "failed" && <p role="status" className="text-sm text-muted-foreground">
+      Recorded balances could not be checked for this page. Refresh the report or check an individual product.
+    </p>}
+    {paginate && <TablePagination {...pagination} onPage={setPage} onPageSize={setPageSize}
+      pageSizeOptions={[10, 25, STOCK_ACTIVITY_BALANCE_PAGE_SIZE]} label="products" />}
   </>;
 }
 
-export function StockReport({ branchId, branchName, initialView = "current", historicalValuation = false, refreshToken = 0 }: {
+export function StockReport({ branchId, branchName, initialView = "current", historicalValuation = false, refreshToken = 0, refreshOnInventoryChange = true }: {
   branchId: string;
   branchName: string;
   initialView?: "current" | "history";
   historicalValuation?: boolean;
   refreshToken?: number;
+  refreshOnInventoryChange?: boolean;
 }) {
   const { can, isAdmin, authUserId, appUser, terminalUser, user } = useAuth();
   const { state, ready, loadPhase } = usePos();
@@ -340,10 +364,19 @@ export function StockReport({ branchId, branchName, initialView = "current", his
     } finally { try { assertCurrent(); setBusy(false); } catch { /* New context owns its state. */ } }
   }
   const latestRefresh = useRef(refreshToken);
+  const latestInventory = useRef(state.products);
+  const hasVisibleRequest = Boolean(visibleRequest);
   const refreshVisible = useRef<() => void>(() => {});
   refreshVisible.current = () => {
     if (visibleRequest && !shownBusy && !shownExporting) {
-      void read({ ...visibleRequest, after: null, sourceRevision: undefined });
+      const now = new Date();
+      const todayThroughNow = mode === "day" && day === stockDateTimeInput(now, timeZone).slice(0, 10);
+      void read({
+        ...visibleRequest,
+        cutoff: todayThroughNow ? canonicalStockInstant(now.toISOString()) : visibleRequest.cutoff,
+        after: pageStart,
+        sourceRevision: undefined,
+      });
     }
   };
   useEffect(() => {
@@ -351,6 +384,15 @@ export function StockReport({ branchId, branchName, initialView = "current", his
     latestRefresh.current = refreshToken;
     refreshVisible.current();
   }, [refreshToken]);
+  useEffect(() => {
+    if (!simpleHistory || !refreshOnInventoryChange) return;
+    if (state.products === latestInventory.current) return;
+    latestInventory.current = state.products;
+    if (!hasVisibleRequest || !ready || loadPhase !== "ready") return;
+    // Existing POS state changes wake the report. Coalesce related product updates.
+    const timer = setTimeout(() => refreshVisible.current(), 300);
+    return () => clearTimeout(timer);
+  }, [state.products, simpleHistory, refreshOnInventoryChange, hasVisibleRequest, ready, loadPhase]);
   async function readMovements(product: MovementProduct, after: StockHistoryMovementCursor | null = null, number = 1) {
     if (!canOpenMovements || !visibleRequest || !visiblePage?.sourceRevision || shownBusy || shownExporting) return;
     const assertCurrent = context();
@@ -466,13 +508,15 @@ export function StockReport({ branchId, branchName, initialView = "current", his
           {grade === "provisional" ? "Recorded balances may change when outstanding stock movements arrive."
             : unresolvedShift || !historicalCutoff ? asOfCoverageMessage
               : before.loading || after.loading ? "Checking recorded stock balances…"
-                : balances.some(row => row.quantity !== null) ? "Some balances come from recorded activity. Other quantities are unavailable for this time."
-                  : asOfCoverageMessage}
+                : `${asOfCoverageMessage} Available activity can show recorded quantities for individual products.`}
         </p>}
         <AsOfBalanceTable key={JSON.stringify([visiblePage.cutoff, searchText, zeroOnly])}
           rows={grade === "unavailable"
-            ? balances.filter(row => (!zeroOnly || row.quantity === 0) && matchesSearch(row))
+            ? balances.filter(matchesSearch)
             : visibleRows ?? []}
+          evidenceScope={grade === "unavailable" && activityBranch && activityCutoff ? {
+            identity: activityScope, branchId: activityBranch, cutoff: activityCutoff, zeroOnly, format: activityFormat,
+          } : undefined}
           verified={grade === "verified"} paginate={grade === "unavailable"}
           checkingProduct={itemBefore.loading || itemAfter.loading ? activityProduct : undefined}
           checkProduct={grade === "unavailable" && activityBranch && activityCutoff ? selectActivityProduct : undefined}
