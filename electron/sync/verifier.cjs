@@ -70,13 +70,16 @@ function keyset(primary, alias = "source") {
   return primary.map((column, index) => `(${primary.slice(0, index).map((prior, part) => `${alias}.[${prior.sqlServerColumn}]=@cursor${part}`).concat(`${alias}.[${column.sqlServerColumn}]>@cursor${index}`).join(" AND ")})`).join(" OR ");
 }
 
-async function localSignature({ connectionManager, registry, table, branchId, historyDays, terminalId = "",historyScope=null }) {
+async function localSignature({ connectionManager, registry, table, branchId, historyDays, terminalId = "",historyScope=null,
+  assertSource = () => {}, maxRows = Infinity, maxPages = Infinity, projectRow = (_table, row) => row }) {
   const primary = table.columns.filter((column) => column.primaryKey);
   if (!primary.length) throw new Error(`No stable key is registered for ${table.sqlServerTable}.`);
   const state = accumulator();
   let cursor = null;
   const cutoff = new Date(Date.now() - Math.max(30, Number(historyDays) || 90) * 86400000);
-  for (;;) {
+  for (let pages = 0; ; pages++) {
+    assertSource();
+    if (pages >= maxPages) throw new Error("The inventory source verification reached its page limit.");
     const request = connectionManager.pool.request().input("branch", String(branchId)).input("terminal", String(terminalId ?? "")).input("cutoff", cutoff).input("limit", PAGE);
     if(table.cloudTable==='change_history')request.input('history_organization',require('./history-read-scope.cjs').historyOrganization(historyScope));
     if (cursor) primary.forEach((column, index) => request.input(`cursor${index}`, cursor[column.sqlServerColumn]));
@@ -85,34 +88,46 @@ async function localSignature({ connectionManager, registry, table, branchId, hi
     const order = primary.map((column) => `source.[${column.sqlServerColumn}]`).join(",");
     const result = await request.query(`SELECT TOP (@limit) source.* FROM dbo.[${table.sqlServerTable}] source WHERE ${scope}${after} ORDER BY ${order};`);
     const rows = result.recordset ?? [];
-    for (const row of rows) add(state, table, toCloudRow(table, row));
+    assertSource();
+    if (Number(state.count) + rows.length > maxRows) throw new Error("The inventory source verification reached its row limit.");
+    for (const row of rows) add(state, table, projectRow(table, toCloudRow(table, row), branchId));
     if (rows.length < PAGE) break;
     cursor = Object.fromEntries(primary.map((column) => [column.sqlServerColumn, rows.at(-1)[column.sqlServerColumn]]));
   }
   return finish(state);
 }
 
-async function cloudSignature({ cloud, table, branchId, historyDays }) {
+async function cloudSignature({ cloud, table, branchId, historyDays, assertSource = () => {}, maxRows = Infinity, maxPages = Infinity,
+  projectRow = (_table, row) => row }) {
   const state = accumulator();
   let cursor = null;
+  let pages = 0;
   do {
+    assertSource();
+    if (pages++ >= maxPages) throw new Error("The inventory source verification reached its page limit.");
     const batch = await cloud.bootstrapPage({ table: table.cloudTable, branchId, historyDays, cursor, limit: PAGE });
+    if (Number.isFinite(maxPages) && (!Array.isArray(batch?.rows) ||
+        (batch.cursor != null && (typeof batch.cursor !== "string" || !batch.cursor.length || batch.cursor === cursor || !batch.rows.length))))
+      throw new Error("The inventory source verification page is incomplete.");
     const rows = batch.rows ?? [];
-    for (const row of rows) add(state, table, row);
+    assertSource();
+    if (Number(state.count) + rows.length > maxRows) throw new Error("The inventory source verification reached its row limit.");
+    for (const row of rows) add(state, table, projectRow(table, row, branchId));
     cursor = batch.cursor ?? null;
   } while (cursor);
   return finish(state);
 }
 
-async function verifyTables({ connectionManager, registry, cloud, branchId, historyDays = 90, tableNames = null, onTable = null }) {
+async function verifyTables({ connectionManager, registry, cloud, branchId, historyDays = 90, tableNames = null, onTable = null,
+  assertSource, maxRows, maxPages, projectRow }) {
   const wanted = tableNames?.length ? new Set(tableNames.map(String)) : null;
   const tables = [];
   for (const table of registry.tables) {
     if (wanted && !wanted.has(table.cloudTable)) continue;
     const [localSignatureValue, cloudSignatureValue] = await Promise.all([
-      localSignature({ connectionManager, registry, table, branchId, historyDays, terminalId: cloud.terminalId?.() ?? "",
+      localSignature({ connectionManager, registry, table, branchId, historyDays, assertSource, maxRows, maxPages, projectRow, terminalId: cloud.terminalId?.() ?? "",
         historyScope:table.cloudTable==='change_history'?require('./history-read-scope.cjs').captureHistoryScope(cloud,connectionManager,branchId):null }),
-      cloudSignature({ cloud, table, branchId, historyDays }),
+      cloudSignature({ cloud, table, branchId, historyDays, assertSource, maxRows, maxPages, projectRow }),
     ]);
     const result = {
       table: table.cloudTable,

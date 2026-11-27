@@ -271,6 +271,54 @@ test("completed draft upload carries its saved sale before the draft", async () 
   assert.equal(pending,false);
 });
 
+test("a completed draft waits for its protected sale in the journal and change tracking", async () => {
+  for (const journal of [true, false]) {
+    const tables = [
+      { ...table, cloudTable: "sales", sqlServerTable: "sales", dependencyOrder: 1 },
+      { ...table, cloudTable: "held_orders", sqlServerTable: "held_orders", dependencyOrder: 4 },
+    ];
+    const stableDraft = { id: "draft", store_id: "B1", bill_no: "BILL-1", status: "completed" };
+    const group = { aggregateId: "draft", changes: [{ entity_type: "held_orders", key: { id: "draft" }, operation: "update" }] };
+    const sends = [];
+    let protectedSalePending = true;
+    let acked = false;
+    let checkpoint = 0;
+    const worker = new PushWorker({ registry: { tables }, reader: {
+      pendingAggregates: async (_branch, _size, deferred) => journal && !acked && !deferred.includes("draft") ? [group] : [],
+      changedIds: async (table, version) => !journal && table.cloudTable === "held_orders" && !version
+        ? [{ operation: "U", version: 5, key: { id: "draft" } }] : [],
+      rows: async () => [stableDraft],
+      ticketCompletionParents: async (tickets, branch, terminal) => {
+        assert.deepEqual(tickets, [stableDraft]);
+        assert.equal(branch, "B1");
+        assert.equal(terminal, "T1");
+        if (protectedSalePending) throw Object.assign(new Error("The original sale is pending"), { code: "EFINANCIAL_BUSINESS_PENDING" });
+        return []; // The receipt proves that the protected parent already exists centrally.
+      },
+      acknowledgeAggregate: async () => { acked = true; },
+      failAggregate: async () => assert.fail("A dependency hold must not fail the journal"),
+    }, checkpoints: {
+      list: async () => [],
+      save: async (_branch, _table, _direction, entry) => { checkpoint = entry.change_tracking_version; },
+    }, cloud: {
+      terminalId: () => "T1",
+      pushAggregate: async batch => { sends.push(batch); return { ok: true, batch_id: batch.batchId }; },
+      pushBatch: async batch => { sends.push(batch); return { ok: true, batch_id: batch.batchId }; },
+    } });
+    await worker.run({ branchId: "B1" });
+    assert.equal(acked, false);
+    assert.equal(checkpoint, 0);
+    assert.deepEqual(sends, []);
+
+    protectedSalePending = false;
+    await worker.run({ branchId: "B1" });
+    assert.equal(acked, journal);
+    assert.equal(checkpoint, journal ? 0 : 5);
+    assert.equal(sends.length, 1);
+    assert.deepEqual(journal ? sends[0].operations.map(operation => operation.table) : [sends[0].table], ["held_orders"]);
+  }
+});
+
 test("completed draft download fetches its missing sale once before applying the draft", async()=>{
   const events=[];let present=false;
   class Transaction {async begin(){} async commit(){} async rollback(){}}

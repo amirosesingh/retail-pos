@@ -3,6 +3,8 @@ const { createHash } = require("node:crypto");
 const { branchPredicate, rendererReadBranchPredicate } = require("../branch-scope.cjs");
 const { isFinancialStockUpdate, assertFinancialStockUpdate } = require("../financial-stock-policy.cjs");
 const { capturesBooking, bookingStorage, assertBookingPredecessors, captureBookingUpload } = require("../booking-upload.cjs");
+const { stockAdjustmentScope, prepareStockAdjustment, stampStockAdjustments, saveStockAdjustmentReceipts } = require("../stock-adjustment-receipts.cjs");
+const { stockMap } = require("../stock-history-contract.cjs");
 
 const { projection } = require("../../sync/shift-recovery-exact.cjs");
 const SALE_STOCK_MUTABLE = new Set(["stock_quantity", "stock_by_store", "row_version", "updated_at", "is_archived", "archived_at"]);
@@ -41,12 +43,34 @@ function branchFor(operation, fallback) {
   return String(row.store_id ?? row.branch_id ?? row.from_store_id ?? row.to_store_id ?? fallback ?? "global").slice(0, 128);
 }
 
+function saleActivityPlan(operations, branchId) {
+  const inserts = table => operations.filter(operation => operation.table === table && ["insert", "upsert"].includes(operation.kind))
+    .flatMap(operation => operation.rows ?? (operation.values ? [operation.values] : []));
+  const sales = inserts("sales");
+  if (sales.length !== 1 || sales[0].store_id !== branchId || !sales[0].bill_number) return null;
+  const counts = new Map();
+  for (const { product_id } of inserts("item_activity_logs")) counts.set(product_id, (counts.get(product_id) ?? 0) + 1);
+  return counts.size ? { id: sales[0].id, branchId, counts, balances: new Map() } : null;
+}
+
+function recordedSaleStock(row, branchId) {
+  // The exact product projection casts SQL Server's integer to text.
+  if (typeof row.stock_quantity !== "string" || !/^-?(?:0|[1-9]\d{0,9})$/.test(row.stock_quantity)) return null;
+  try {
+    const stock = stockMap(row.stock_by_store);
+    if ([...stock.values()].reduce((total, quantity) => total + quantity, 0n) !== BigInt(row.stock_quantity)) return null;
+    const quantity = stock.get(branchId) ?? 0n;
+    return quantity >= -2147483648n && quantity <= 2147483647n ? Number(quantity) : null;
+  } catch { return null; }
+}
+
 class AggregateRepository {
-  constructor(connectionManager, operationsRepository, {financialOperations=null, saleOutbox=null} = {}) {
+  constructor(connectionManager, operationsRepository, {financialOperations=null, saleOutbox=null, stockHistory=operationsRepository.stockHistory??null} = {}) {
     this.connectionManager = connectionManager;
     this.operationsRepository = operationsRepository;
     this.financialOperations = financialOperations;
     this.saleOutbox = saleOutbox;
+    this.stockHistory = stockHistory;
   }
 
   async assertBranch(transaction, table, record, match, branchId, financialStock = false) {
@@ -97,6 +121,27 @@ class AggregateRepository {
     // values. Ownership/catalogue facts must remain unchanged; consuming the
     // last stock unit may remove the transient read predicate's stock proof.
     assertFinancialStockUpdate({ ...operation, values: { stock_quantity: result.recordset[0].stock_quantity, stock_by_store: result.recordset[0].stock_by_store } }, aggregate, captured.before);
+    return result.recordset[0];
+  }
+
+  async stampSaleActivity(transaction, operation, plan) {
+    if (!plan?.balances.size || operation.table !== "item_activity_logs" || !["insert", "upsert"].includes(operation.kind) ||
+        this.operationsRepository.tables.get(operation.table)?.conflictRule !== "movement_delta") return operation;
+    if (plan.bill === undefined) {
+      const result = await new (this.connectionManager.sql().Request)(transaction).input("sale", plan.id)
+        .query("SELECT store_id,bill_number FROM dbo.sales WITH(UPDLOCK,HOLDLOCK) WHERE id=@sale;");
+      const saved = result.recordset?.[0];
+      plan.bill = saved?.store_id === plan.branchId ? saved.bill_number : null;
+    }
+    if (!plan.bill) return operation;
+    const stamp = row => {
+      const stock = plan.balances.get(row.product_id);
+      if (!stock || row.store_id !== plan.branchId || row.reference !== plan.bill || row.activity_type !== "sale" ||
+          (row.sale_id != null && row.sale_id !== plan.id) || row.quantity_delta !== stock.delta) return row;
+      return { ...row, stock_before: stock.before, stock_after: stock.after };
+    };
+    return operation.rows ? { ...operation, rows: operation.rows.map(stamp) }
+      : operation.values ? { ...operation, values: stamp(operation.values) } : operation;
   }
 
   async assertNewSaleIdentities(transaction, operations) {
@@ -157,9 +202,16 @@ class AggregateRepository {
     aggregate = normalizeUuidFields(aggregate);
     if (!AGGREGATE_KINDS.has(kind)) throw new Error("Unsupported aggregate type.");
     const operations = this.operationsRepository.validate(aggregate?.operations);
+    const adjustmentScope = stockAdjustmentScope(kind, operations, aggregate);
+    let stockArrival;
+    if(aggregate.stockArrival!==undefined){
+      if(kind!=="receiving")throw Object.assign(new Error("An arrival time belongs only to receiving stock."),{code:"ESTOCK_ARRIVAL_INVALID"});
+      stockArrival=require("../../stock-arrival.cjs").normalizeStockArrival(aggregate.stockArrival);
+      if(!this.stockHistory)throw Object.assign(new Error("Update stock history before entering a separate arrival time. The receiving invoice has not been saved."),{code:"ESTOCK_HISTORY_SCHEMA_REQUIRED"});
+    }
     const operationId = aggregate?.operationId || stableUuid({ kind, operations });
     if (!/^[0-9a-f-]{36}$/i.test(operationId)) throw new Error("A stable aggregate UUID is required.");
-    const payloadHash = createHash("sha256").update(JSON.stringify(canonical({ kind, operations }))).digest("hex");
+    const payloadHash = createHash("sha256").update(JSON.stringify(canonical({ kind, operations,...(stockArrival?{stockArrival}:{}) }))).digest("hex");
     const financialStore=this.financialOperations?.enabled===true?this.financialOperations:null;
     const financialContext=financialStore?await financialStore.prepareContext({branchId:aggregate.branchId,terminalId:aggregate.terminalId,operationId,kind}):null;
     const saleOutbox = kind === "sale" ? this.saleOutbox : null;
@@ -237,10 +289,30 @@ class AggregateRepository {
           const token=await financialStore.captureMutation(transaction,{branchId:aggregate.branchId,terminalId:aggregate.terminalId,shiftId:shiftId||null,operationId,action,preparedContext:financialContext,saleIds:[...sales]});financialTokens.push(token);
         }
       }
+      // Keep the existing shift/financial-head lock order before product locks.
+      stage = "stock adjustment preimage";
+      const adjustmentPlan = adjustmentScope ? await prepareStockAdjustment(sql, transaction, operations, adjustmentScope) : null;
+      // The origin capture must read the generated receipt from this same
+      // transaction. The regular operation loop must not write it a second time.
+      const stockSources = adjustmentPlan?.movements.length
+        ? [...operations, { kind: "insert", table: "stock_delta_applied", rows: adjustmentPlan.movements }]
+        : operations;
+      const financialSaleOrigin = kind === "sale" && financialTokens.length === 1 && financialTokens[0] !== null;
+      const stockCapture=this.stockHistory?await this.stockHistory.begin(transaction,stockSources,{
+        operationId,branchId:aggregate.branchId,terminalId:aggregate.terminalId,
+        actorId:aggregate.activityOperator?.subject,kind,
+        groupedCashOrigin: Boolean(saleOutbox?.installedHandoff && cashAuthor),
+        financialSaleOrigin,
+        ...(stockArrival?{effectiveAt:stockArrival.effectiveAt,arrivalReason:stockArrival.reason}:{}),
+      }):null;
+      if(stockArrival&&stockCapture==null)throw Object.assign(new Error("The stock-history update is not available. The receiving invoice has not been saved."),{code:"ESTOCK_HISTORY_SCHEMA_REQUIRED"});
       const newOpenings = new Set();
       const confirmedStock = saleOutbox ? new Map() : null;
+      // Grouped checkout retains its existing signed movement projection.
+      const saleActivity = kind === "sale" && !saleOutbox ? saleActivityPlan(operations, aggregate.branchId) : null;
       const bookingChanges = [];
-      for (const operation of operations) {
+      for (const requestedOperation of operations) {
+        const operation = await this.stampSaleActivity(transaction, stampStockAdjustments(requestedOperation, adjustmentScope), saleActivity);
         stage = "business rows";
         tableName = operation.table;
         if (this.operationsRepository.tables.get(operation.table)?.direction === "pull")
@@ -299,10 +371,15 @@ class AggregateRepository {
         affected += operationAffected;
         if (operation.kind !== "delete") {
           if (stockPreimage) {
-            await this.confirmSaleStock(transaction, table, operation, aggregate, stockPreimage, operationAffected);
+            const saved = await this.confirmSaleStock(transaction, table, operation, aggregate, stockPreimage, operationAffected);
+            const productId = recordId(operation.match.id);
+            const delta = aggregate.financialStockDeltas.get(productId);
             if (confirmedStock) {
-              const productId = recordId(operation.match.id);
-              confirmedStock.set(productId, { delta: aggregate.financialStockDeltas.get(productId), product: stockPreimage.before });
+              confirmedStock.set(productId, { delta, product: stockPreimage.before });
+            } else if (saleActivity?.counts.get(productId) === 1 && Number.isInteger(delta) && delta < 0) {
+              const before = recordedSaleStock(stockPreimage.before, saleActivity.branchId);
+              const after = recordedSaleStock(saved, saleActivity.branchId);
+              if (before !== null && after !== null && after - before === delta) saleActivity.balances.set(productId, { before, after, delta });
             }
           }
           else for (const record of records) await this.assertBranch(transaction, table, record, operation.match, aggregate.branchId, isFinancialStockUpdate(operation, aggregate));
@@ -322,6 +399,11 @@ class AggregateRepository {
           if (bookingSource) bookingChanges.push({ table: operation.table, entity, op: journalOperation });
         }
       }
+      if (adjustmentPlan) {
+        stage = "stock adjustment receipt";
+        tableName = "stock_delta_applied";
+        affected += await saveStockAdjustmentReceipts(sql, transaction, adjustmentPlan, adjustmentScope.branchId, operationId);
+      }
       if (saleOutbox) {
         stage = "sale event capture";
         tableName = "pos_sync_sale_outbox_v1";
@@ -335,7 +417,12 @@ class AggregateRepository {
         const store=new ShiftIntentStore(this.connectionManager,this.operationsRepository.registry);
         for(const shiftId of newOpenings){await store.freezeOpening(transaction,operationId,aggregate.branchId,shiftId,{exactFinancial:financialStore!==null});if(financialStore)await financialStore.finalizeOpening(transaction,openingTokens.get(shiftId));}
       }
-      for(const token of financialTokens)await financialStore.finalizeMutation(transaction,token);
+      let finalizedSale;
+      for (const token of financialTokens) {
+        const finalized = await financialStore.finalizeMutation(transaction, token);
+        if (financialSaleOrigin) finalizedSale = finalized;
+      }
+      if (this.stockHistory) await this.stockHistory.finish(transaction, stockCapture, finalizedSale);
       tableName = "local_operation_receipts";
       await new sql.Request(transaction)
         .input("operation_id", sql.UniqueIdentifier, operationId)
@@ -361,7 +448,8 @@ class AggregateRepository {
           (stage === "sale event capture" && error?.code === "ESALE_EVENT_UNVERIFIED")))
         throw Object.assign(new Error("The unsupported cash capture rolled back before the existing sale route."),
           { code: "ESALE_CASH_LEGACY_ONLY" });
-      if (["EIDEMPOTENCY", "EEXISTING_SALE_RECONCILIATION", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL", "ESALE_EVENT_UNVERIFIED", "ESALE_CASH_BRIDGE_UNVERIFIED"].includes(error?.code))
+      if (["EIDEMPOTENCY", "EEXISTING_SALE_RECONCILIATION", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL", "ESALE_EVENT_UNVERIFIED", "ESALE_CASH_BRIDGE_UNVERIFIED",
+        "ESTOCK_ADJUSTMENT_UNVERIFIED", "ESTOCK_ARRIVAL_INVALID", "ESTOCK_ARRIVAL_SOURCE_REQUIRED", "ESTOCK_HISTORY_SCHEMA_REQUIRED", "ESTOCK_HISTORY_FUTURE"].includes(error?.code))
         throw error;
       const target = tableName ? ` while writing ${tableName}` : "";
       const native = error?.originalError?.info ?? error?.originalError ?? error;

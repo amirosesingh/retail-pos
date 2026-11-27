@@ -1,4 +1,9 @@
 import { effectiveDatabaseMode } from "./db-mode";
+import type {StockHistoryRequest,StockHistoryPage} from '@/lib/stock-history-report';
+import type { StockHistoryMovementPage, StockHistoryMovementRequest } from "@/lib/stock-history-movements";
+import type { StockActivityPage, StockActivityRequest } from "@/lib/stock-activity-query";
+import type { StockHistoryProductMergeCapability, StockHistoryProductMergeFailure, StockHistoryProductMergeReceipt,
+  StockHistoryProductMergeRequest } from "@/lib/stock-history-product-merge";
 import { isManagementDevice } from "@/lib/management-device";
 /**
  * Bridge to the Windows desktop shell's local Microsoft SQL Server database.
@@ -308,6 +313,21 @@ export type StoreSettingsEditReview = {
   decisionSha256: string;
 };
 
+export type RecoveryEvidenceKind = "shift" | "sale" | "stock";
+
+export type SavedRecoveryEvidence = {
+  ok: true;
+  batchId: string;
+  branchId: string;
+  kind: RecoveryEvidenceKind;
+  reference: string;
+  savedAt: string;
+  savedRows: number;
+  queuedRows: number;
+  originalProof: "saved" | "missing" | "partial";
+  receipt: "opening" | "financial-metadata" | "stock" | null;
+};
+
 export type LocalSyncStatus = {
   connected: boolean;
   tradingReady?: boolean;
@@ -483,6 +503,8 @@ export type PosBridge = {
   }) => Promise<{ ok: boolean; eventId?: string; error?: string; code?: string }>;
   database?: {
     getState: () => Promise<{ enabled: boolean; configured?: boolean; connected: boolean; tradingReady?: boolean; state: string; localRecoveryPending?: boolean }>;
+    /** Existing native database:state notifications; consumers need not inspect configuration. */
+    subscribe?: (callback: (state: { enabled?: boolean; configured?: boolean; connected?: boolean; tradingReady?: boolean; state?: string; localRecoveryPending?: boolean }) => void) => () => void;
   };
   telemetry?: {
     presence: (value: { sessionStatus: "signed_in" | "idle"; staffName: string | null; staffRole: string | null }) => Promise<{ ok: boolean }>;
@@ -498,6 +520,8 @@ export type PosBridge = {
         offline?: boolean;
         pushed?: number;
         merged?: number;
+        allUploaded?: boolean;
+        reportHistoryPending?: number;
         error?: string;
         code?: string;
       }
@@ -509,6 +533,8 @@ export type PosBridge = {
     pause?: () => Promise<LocalSyncStatus>;
     resume?: () => Promise<LocalSyncStatus>;
     getFailures?: () => Promise<Record<string, unknown>>;
+    getRecoveryEvidence?: (input: { batchId: string; kind: RecoveryEvidenceKind }) =>
+      Promise<SavedRecoveryEvidence | { ok: false; code: string; error: string }>;
     reconcile?: (options?: Record<string, unknown>) => Promise<Record<string, unknown>>;
     subscribe?: (cb: (status: LocalSyncStatus) => void) => () => void;
   };
@@ -522,6 +548,8 @@ export type PosBridge = {
     operationId?: string;
     branchId?: string;
     operations: SyncOp[];
+    /** Optional original arrival; current receiving permission/capability required in Main. */
+    stockArrival?: {effectiveAt:string;reason:string};
   }) => Promise<{ ok: boolean; replayed?: boolean; operationId?: string; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null; sqlDetail?: string | null }>;
   connect: (
     config: LocalDbConfig,
@@ -737,6 +765,17 @@ export type PosBridge = {
   managementReport?: (options: { kind: "sales" | "totals" | "shifts"; storeIds: string[]; from: string; to: string; zone: string; cursor?: { ts: string; id: string } | null; limit?: number; includeProfit?: boolean; shiftId?: string }) => Promise<{
     ok: boolean; complete?: boolean; source?: string; code?: string; error?: string; rows?: LocalSaleRow[]; storeTotals?: LocalSaleRow[]; hasMore?: boolean; cursor?: { ts: string; id: string } | null;
   }>;
+  managementInventory?: (request: import("@/lib/management-inventory-client").ManagementInventoryRequest) =>
+    Promise<import("@/lib/management-inventory-client").ManagementInventoryResult>;
+  stockHistory?: (request:StockHistoryRequest)=>Promise<{ok:boolean;page?:StockHistoryPage;code?:string;error?:string}>;
+  stockHistoryMovements?: (request: StockHistoryMovementRequest) => Promise<{ ok: boolean; page?: StockHistoryMovementPage; code?: string; error?: string }>;
+  stockActivity?: (request: StockActivityRequest) => Promise<{ ok: boolean; page?: StockActivityPage; code?: string; error?: string }>;
+  productMergeCapability?: (request: { branchId: string }) => Promise<StockHistoryProductMergeCapability | StockHistoryProductMergeFailure>;
+  mergeProducts?: (request: StockHistoryProductMergeRequest) => Promise<StockHistoryProductMergeReceipt | StockHistoryProductMergeFailure>;
+  stocktakeControl?: (request: { action: "enroll" | "approve-financial" } | ({ stocktakeId: string } & ({ action: "arm" } |
+    { action: "prove"; phase: "arm" | "confirm" } | { action: "release"; fenceGeneration: string }))) =>
+    Promise<{ ok: boolean; result?: unknown; code?: string; error?: string }>;
+  stockArrivalCapability?: ()=>Promise<{ok:boolean;available?:boolean;reason?:string;code?:string;error?:string}>;
   onReadProgress?: (cb: (progress: { table: string; completed: number }) => void) => () => void;
   onBusinessChanged?: (
     cb: (change: {

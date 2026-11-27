@@ -19,11 +19,13 @@ class SyncCoordinator {
   #groupedSettingsPilotMode;
   #uploadStoreSettingsEdit;
   constructor({ pushWorker, pullWorker, publish = () => {}, recoverHeldStatuses = null, groupedSettingsPilot = null,
-    groupedSettingsPilotMode = null, uploadStoreSettingsEdit = null }) {
+    groupedSettingsPilotMode = null, uploadStoreSettingsEdit = null, observeStockFrontier = null, downloadStockHistory = null }) {
     this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.recoverHeldStatuses=recoverHeldStatuses;
     this.#groupedSettingsPilot=pilotEnrollment(groupedSettingsPilot);
     this.#groupedSettingsPilotMode=["run", "handback"].includes(groupedSettingsPilotMode) ? groupedSettingsPilotMode : null;
     this.#uploadStoreSettingsEdit=uploadStoreSettingsEdit;
+    this.observeStockFrontier=observeStockFrontier;
+    this.downloadStockHistory=downloadStockHistory;
     this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false;
     this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 };
   }
@@ -193,7 +195,16 @@ class SyncCoordinator {
     const remaining=reader?.pendingSummary
       ? await reader.pendingSummary(options.branchId)
       : { pending:0,failed:0 };
-    if(Number(remaining.pending??0)>0||Number(remaining.failed??0)>0){
+    const pending=Number(remaining.pending??0),failed=Number(remaining.failed??0),total=pending+failed;
+    if(!Number.isSafeInteger(pending)||pending<0||!Number.isSafeInteger(failed)||failed<0||!Number.isSafeInteger(total))
+      return {...result,...remaining,ok:false,code:"ESYNC_PENDING",error:"Pending transaction status could not be verified."};
+    let reportHistoryPending=0;
+    if(total>0&&this.pushWorker?.stockHistory?.reviewHeldCount){
+      try{const reviewed=await this.pushWorker.stockHistory.reviewHeldCount(remaining,options.branchId,this.pushWorker.cloud?.terminalId?.()??'');
+        if(Number.isSafeInteger(reviewed)&&reviewed>0&&reviewed<=total)reportHistoryPending=reviewed;
+      }catch{/* Unknown schema/context/metadata remains critical; never guess. */}
+    }
+    if(total-reportHistoryPending>0){
       return {
         ...result,
         ...remaining,
@@ -202,7 +213,7 @@ class SyncCoordinator {
         error:"Required local transactions are still waiting for central acknowledgement.",
       };
     }
-    return { ...result, ...remaining, final:true };
+    return { ...result, ...remaining, final:true,allUploaded:total===0,...(reportHistoryPending?{reportHistoryPending}: {}) };
   }
   async runOnce(options = {}) {
     this.running=true;
@@ -279,6 +290,20 @@ class SyncCoordinator {
       }
       this.status.pushed=Number(pushed.pushed??this.status.pushed); this.status.merged=Number(pulled.merged??this.status.merged);
       if (pushError) { failedDirection="push"; throw pushError; }
+      if (this.downloadStockHistory && options.branchId && !options.final && !options.pushOnly && !this.paused) {
+        // All network requests run outside the trading lane. The lease only
+        // protects the local SQL Server stock-report metadata installation.
+        syncLease.exit(() => {
+          void Promise.resolve().then(() => this.downloadStockHistory({ branchId: options.branchId,
+            runInstall: work => this.withExclusive(() => work(() => this.ownsExclusive() && !this.paused)),
+          })).catch(() => undefined);
+        });
+      }
+      if (this.observeStockFrontier && options.branchId && !options.final && !options.pushOnly && !options.pullOnly && !this.paused) {
+        try {
+          await this.observeStockFrontier({branchId:options.branchId,assertLease:()=>this.ownsExclusive()&&!this.paused});
+        } catch { /* Optional observation cannot change the outcome of business sync. */ }
+      }
       this.status.phase="idle"; this.publishFailureStatus(options.branchId);
       result={ ok:true,...pushed,...pulled,historyHoldOnly:Boolean(this.status.historyUploadHeld&&![...this.unresolved().values()].some(failure=>failure.branchId===String(options.branchId??''))) };
     } catch(error) {

@@ -83,11 +83,14 @@ async function createCloud(branch, terminal, { financialRolloutStub = true } = {
     return db;
   } catch (error) { await db.close(); throw error; }
 }
-async function createLocal(branch, { extraTables = [] } = {}) {
+async function createLocal(branch, { extraTables = [], stockReportSlot } = {}) {
   assert.equal(process.platform, 'win32', 'The opt-in fixture needs Windows LocalDB.');
   const sql = require('mssql/msnodesqlv8');
-  const suffix = randomUUID().replaceAll('-', ''), instance = 'CodexProtocol_' + suffix, database = 'ProtocolFixture_' + suffix;
-  assert(/^CodexProtocol_[a-f0-9]{32}$/.test(instance) && /^ProtocolFixture_[a-f0-9]{32}$/.test(database));
+  assert(stockReportSlot === undefined || ['A', 'B'].includes(stockReportSlot));
+  const suffix = randomUUID().replaceAll('-', ''), instance = 'CodexProtocol_' + suffix;
+  const database = stockReportSlot ? 'POS_Stock401_Beta_Till_' + stockReportSlot : 'ProtocolFixture_' + suffix;
+  assert(/^CodexProtocol_[a-f0-9]{32}$/.test(instance));
+  assert(/^(?:ProtocolFixture_[a-f0-9]{32}|POS_Stock401_Beta_Till_[AB])$/.test(database));
   const control = (...args) => {
     const bytes = execFileSync('C:/Program Files/Microsoft SQL Server/170/Tools/Binn/SqlLocalDB.exe', args,
       { windowsHide: true, timeout: 30000, stdio: 'pipe' });
@@ -108,8 +111,10 @@ async function createLocal(branch, { extraTables = [] } = {}) {
     server = control('info', instance).match(/np:\\\\\.\\pipe\\LOCALDB#[A-Fa-f0-9]+\\tsql\\query/)?.[0];
     assert(server, 'The new owned instance has no private pipe.');
     master = await connect('master');
-    await master.request().batch(`CREATE DATABASE [${database}]; ALTER DATABASE [${database}] SET CHANGE_TRACKING=ON(CHANGE_RETENTION=2 DAYS,AUTO_CLEANUP=ON);`);
-    created = true; pool = await connect(database);
+    await master.request().batch(`CREATE DATABASE [${database}];`);
+    created = true;
+    await master.request().batch(`ALTER DATABASE [${database}] SET CHANGE_TRACKING=ON(CHANGE_RETENTION=2 DAYS,AUTO_CLEANUP=ON);`);
+    pool = await connect(database);
     const fullRegistry = require(resolve(root, 'electron/db/schema-registry.cjs')).loadRegistry();
     const registry = { ...fullRegistry, tables: fullRegistry.tables.filter(table =>
       tableNames.includes(table.cloudTable) || extraTables.includes(table.cloudTable)) };

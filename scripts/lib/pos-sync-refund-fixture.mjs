@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { stableUuid } = require("../../electron/db/repositories/aggregates.cjs");
+const stockContract = require("../../electron/db/stock-history-contract.cjs");
+const { stockEventMessage } = require("../../electron/security/stock-event-author-protocol.cjs");
+const { financialOperationMessage } = require("../../electron/security/financial-author-protocol.cjs");
 
-export async function verifyNativeRefundGateway({ db, read, scalar, liveSale, branch, epoch, terminal, author, product }) {
+export async function verifyNativeRefundGateway({ db, read, fn, scalar, liveSale, branch, epoch, terminal, author, product }) {
   await db.exec(`ALTER TABLE public.terminal_tokens ALTER COLUMN id TYPE uuid USING id::uuid;
     ALTER TABLE public.terminal_tokens ADD COLUMN IF NOT EXISTS claimed_at timestamptz,
       ADD COLUMN IF NOT EXISTS claimed_platform text, ADD COLUMN IF NOT EXISTS claim_proof text,
@@ -13,15 +16,21 @@ export async function verifyNativeRefundGateway({ db, read, scalar, liveSale, br
   const bridge = await read("scripts/preparation/pos-sync-cash-bridge-v1.sql");
   await db.exec(bridge.slice(0, bridge.indexOf("CREATE FUNCTION pos_sync_cash_v1.apply_checkout(")));
   await db.exec(await read("scripts/preparation/pos-sync-refund-native-gateway-v1.sql"));
+  for (const name of ["20261105113916_stock_history_effective_ledger.sql", "20261105172030_stock_history_accepted_effect_capture.sql",
+    "20261105232647_stock_history_author_claim_admission.sql", "20261106035442_stock_history_original_source_receipts.sql",
+    "20261106042742_stock_history_verified_source_membership.sql"]) await db.exec(await read(`supabase/migrations/${name}`));
+  await db.exec(await read("scripts/preparation/pos-stock-history-grouped-refund-origin-v1.sql"));
+  await db.exec(await read("scripts/preparation/pos-stock-history-fin62-refund-origin-v1.sql"));
   const key = randomUUID(), generation = randomUUID(), databaseGuid = randomUUID();
   const binding = "a".repeat(64), project = "https://refund-fixture.supabase.co";
+  const pair = generateKeyPairSync("ed25519"), publicKey = pair.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
   const subject = await scalar("SELECT user_id FROM public.app_users WHERE id=$1", [author]);
   await db.query("UPDATE public.terminal_tokens SET claim_proof=$1 WHERE id=$2", [binding, terminal]);
   await db.query(`INSERT INTO pos_sync_cash_v1.installation_enrollments
     VALUES('default',$1,$2,$3,$4)`, [terminal, branch, generation, databaseGuid]);
   await db.query(`INSERT INTO pos_sync_private.shift_author_keys
     (key_id,author_id,terminal_id,project_origin,subject,public_key)
-    VALUES($1,$2,$3,$4,$5,$6)`, [key, author, terminal, project, subject, "a".repeat(59)]);
+    VALUES($1,$2,$3,$4,$5,$6)`, [key, author, terminal, project, subject, publicKey]);
   const sale = await liveSale(true);
   const item = await scalar("SELECT to_jsonb(i) FROM public.sale_items i WHERE sale_id=$1", [sale.id]);
   const refundKey = "refund:" + sale.id, operationId = stableUuid({ refundId: refundKey });
@@ -39,12 +48,15 @@ export async function verifyNativeRefundGateway({ db, read, scalar, liveSale, br
   const preflight = await send(args);
   assert.equal(preflight.status, "APPROVAL_CHECK_REQUIRED");
   assert.equal(await scalar("SELECT is_refunded FROM public.sales WHERE id=$1", [sale.id]), false);
+  const witnessCount = () => scalar("SELECT count(*)::integer FROM private.stock_history_grouped_refund_witnesses");
+  assert.equal(await witnessCount(), 0);
   const confirmed = [...args];
   confirmed[9] = JSON.stringify(preflight.basis);
   const wrongProduct = [...confirmed];
   wrongProduct[17] = JSON.stringify([{ item_id: item.id, product_id: randomUUID() }]);
   await assert.rejects(send(wrongProduct), /POS_REFUND_V1_STALE_COMMAND/);
   assert.equal(await scalar("SELECT is_refunded FROM public.sales WHERE id=$1", [sale.id]), false);
+  assert.equal(await witnessCount(), 0);
   const receipt = await send(confirmed);
   assert.equal(receipt.status, "APPLIED");
   assert.equal(receipt.fully_refunded, true);
@@ -53,8 +65,92 @@ export async function verifyNativeRefundGateway({ db, read, scalar, liveSale, br
   assert.equal(receipt.feed_seq, await scalar(
     "SELECT seq::text FROM pos_sync_feed_v1.extended_publications WHERE operation_id=$1", [operationId]));
   assert.deepEqual(await send(args), receipt);
+  assert.equal(await witnessCount(), 1);
+  const nativeMovement = stableUuid({ refundId: refundKey, itemId: item.id.toUpperCase() });
+  const effect = receipt.effects[0], acceptedBalance = receipt.stock[0].balance;
+  assert.notEqual(effect.movement_id, nativeMovement);
+  const oldProduct = { id: product, name: "Fixture", stock_by_store: { [branch]: acceptedBalance - effect.delta } };
+  const claim = ({ movement = nativeMovement, authorProof = {}, sourceRefs } = {}) => {
+    const row = stockContract.changes(stockContract.normalizeContext({ operationId, branchId: branch, terminalId: terminal,
+      actorId: author, kind: "refund" }, "2026-11-07T09:00:00.0000000Z"), [oldProduct],
+    [{ ...oldProduct, stock_by_store: { [branch]: acceptedBalance } }], sourceRefs ??
+      [{ table: "stock_delta_applied", id: movement, productId: product, branchId: branch, delta: effect.delta }])[0];
+    const fields = { version: 1, algorithm: "Ed25519", keyId: key, projectOrigin: project, terminalId: terminal, authorId: author,
+      subject, branchId: branch, operationId, movementId: row.id, action: "REFUND", payloadHash: row.payload_hash, ...authorProof };
+    const proof = { ...fields, signature: sign(null, Buffer.from(stockEventMessage(fields)), pair.privateKey).toString("base64url") };
+    return { id: row.id, payloadHash: row.payload_hash, payloadJson: row.payload_json, authorProofJson: JSON.stringify(proof), authorState: { allowed: true } };
+  };
+  const admit = (payload = claim(), origin = project) => scalar("SELECT public.pos_stock_history_accept_claims($1,$2,$3,$4::jsonb)",
+    [origin, branch, terminal, JSON.stringify([payload])]);
+  await assert.rejects(admit(claim({ movement: effect.movement_id })), /STOCK_HISTORY_SOURCE_ORIGIN_UNPROVEN/);
+  await assert.rejects(admit(claim({ movement: randomUUID() })), /STOCK_HISTORY_SOURCE_ORIGIN_UNPROVEN/);
+  await assert.rejects(admit(claim({ authorProof: { keyId: randomUUID() } })), /STOCK_HISTORY_AUTHOR_INVALID/);
+  const stockReceipt = await admit();
+  const acceptedEffect = await scalar("SELECT effect_id FROM private.stock_history_effect_sources WHERE movement_id=$1", [effect.movement_id]);
+  assert.deepEqual(stockReceipt.receipts[0].effectIds, [acceptedEffect]);
+  assert.deepEqual(await admit(), stockReceipt);
+  assert.equal(await scalar("SELECT clock_state FROM public.stock_history_movements WHERE operation_id=$1", [operationId]), "unverified");
+  assert.equal(await scalar("SELECT coverage_state FROM public.stock_history_heads WHERE store_id=$1", [branch]), "incomplete");
+  assert.equal(await scalar(`SELECT has_function_privilege('service_role',
+    'private.stock_history_grouped_refund_source_refs(text,uuid,uuid,uuid,text,text,uuid,jsonb)','EXECUTE')`), false);
+  await db.exec(fn("sync_apply_stock_delta_applied"));
+  await db.exec(fn("sync_delete_stock_delta_applied"));
+  await verifyFin62RefundStock({ db, scalar, liveSale, branch, terminal, author, product, key, project, subject, pair });
   await db.query("UPDATE pos_sync_private.shift_author_keys SET revoked_at=now() WHERE key_id=$1", [key]);
   await assert.rejects(send(args), /POS_REFUND_V1_AUTHOR_FORBIDDEN/);
+  assert.deepEqual(await admit({ ...claim(), authorState: { allowed: false } }), stockReceipt);
+}
+
+async function verifyFin62RefundStock({ db, scalar, liveSale, branch, terminal, author, product, key, project, subject, pair }) {
+  const sale = await liveSale(true), refundId = "refund:" + sale.id.toUpperCase();
+  const operationId = stableUuid({ refundId });
+  const item = await scalar("SELECT to_jsonb(i) FROM public.sale_items i WHERE sale_id=$1", [sale.id]);
+  const balance = Number(await scalar("SELECT stock_by_store->>$2 FROM public.products WHERE id=$1", [product, branch]));
+  const saleBefore = await scalar("SELECT to_jsonb(s) FROM public.sales s WHERE id=$1", [sale.id]);
+  const shift = saleBefore.shift_id;
+  const basis = await scalar("SELECT public.pos_sync_read_financial_basis('default',$1,$2,$3)", [branch, terminal, shift]);
+  const cloudOrigin = { serverBasisId: basis.basisId, serverBasisHash: basis.basisHash };
+  const before = JSON.parse(basis.basisJson).inputs.find(row => row.id === sale.id);
+  const raw = JSON.stringify({ version: 2, operationId, branchId: branch, terminalId: terminal, shiftId: shift, cloudOrigin,
+    sequence: "1", predecessorOperationId: basis.basisId, predecessorHash: basis.basisHash, action: "REFUND",
+    changes: [{ saleId: sale.id, before, after: { ...before, isRefunded: true, rowVersion: "2" } }] });
+  const identity = { version: 1, algorithm: "Ed25519", keyId: key, projectOrigin: project, terminalId: terminal,
+    authorId: author, subject, branchId: branch, operationId, action: "REFUND" };
+  const financial = { ...identity, payloadHash: createHash("sha256").update(raw).digest("hex") };
+  const proof = { ...financial, signature: sign(null, Buffer.from(financialOperationMessage(financial)), pair.privateKey).toString("base64url") };
+  const node = await scalar("SELECT pos_sync_register_financial_event('default',$1,$2,$3,$4::jsonb)", [branch, terminal, raw, JSON.stringify(proof)]);
+  assert.equal(node.status, "financial_metadata_recorded");
+
+  const movement = stableUuid({ refundId, itemId: item.id.toUpperCase() });
+  const at = "2026-11-07T09:00:00.0000000Z";
+  const stock = [{ id: product, name: "Fixture", stock_by_store: { [branch]: balance } }];
+  const makeClaim = (movementId = movement) => {
+    const row = stockContract.changes(stockContract.normalizeContext({ operationId, branchId: branch, terminalId: terminal,
+      actorId: author, kind: "refund" }, at), stock, [{ ...stock[0], stock_by_store: { [branch]: balance + item.quantity } }],
+    [{ table: "stock_delta_applied", id: movementId, productId: product, branchId: branch, delta: item.quantity }])[0];
+    const proofFields = { ...identity, movementId: row.id, payloadHash: row.payload_hash };
+    const authorProofJson = JSON.stringify({ ...proofFields,
+      signature: sign(null, Buffer.from(stockEventMessage(proofFields)), pair.privateKey).toString("base64url") });
+    return { id: row.id, payloadHash: row.payload_hash, payloadJson: row.payload_json, authorProofJson, authorState: { allowed: true } };
+  };
+  const admit = (claim = makeClaim()) => scalar("SELECT pos_stock_history_accept_claims($1,$2,$3,$4::jsonb)", [project, branch, terminal, JSON.stringify([claim])]);
+  await assert.rejects(admit(), /STOCK_HISTORY_SOURCE_ORIGIN_UNPROVEN/);
+  const batch = randomUUID();
+  const operations = [{ table: "sales", rows: [{ ...saleBefore, is_refunded: true, row_version: 2 }], changes: [] },
+    { table: "sale_items", rows: [{ ...item, branch_id: branch, refunded_qty: item.quantity, row_version: item.row_version + 1 }], changes: [] },
+    { table: "stock_delta_applied", rows: [{ movement_id: movement, product_id: product, store_id: branch, delta: item.quantity, applied_at: at }], changes: [] }];
+  const publish = () => scalar("SELECT pos_sync_push_financial_business_aggregate($1,'default',$2,$3,$4::jsonb)",
+    [batch, branch, terminal, JSON.stringify(operations)]);
+  const accepted = await publish();
+  assert.equal(accepted.batch_id, batch);
+  assert.deepEqual(await publish(), accepted);
+  assert.equal(await scalar("SELECT count(*)::integer FROM private.stock_history_grouped_refund_witnesses WHERE operation_id=$1", [operationId]), 0);
+  await assert.rejects(admit(makeClaim(randomUUID())), /STOCK_HISTORY_SOURCE_ORIGIN_UNPROVEN/);
+  const stockReceipt = await admit();
+  const acceptedEffect = await scalar("SELECT effect_id FROM private.stock_history_effect_sources WHERE movement_id=$1", [movement]);
+  assert.deepEqual(stockReceipt.receipts[0].effectIds, [acceptedEffect]);
+  assert.deepEqual(await admit(), stockReceipt);
+  assert.equal(await scalar("SELECT clock_state FROM public.stock_history_movements WHERE operation_id=$1", [operationId]), "unverified");
 }
 
 export async function verifyRefundSync({ db, author, admin, manager, terminal, product, sale, submit, scalar, test }) {

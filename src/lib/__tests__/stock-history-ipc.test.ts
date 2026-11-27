@@ -1,0 +1,106 @@
+import { createRequire } from "node:module";
+import { describe, expect, it, vi } from "vitest";
+const require = createRequire(import.meta.url), { createStockHistoryReader, registerStocktakeControl } = require("../../../electron/stock-history-ipc.cjs");
+const actorId = "00000000-0000-4000-8000-000000000001", databaseGuid = "00000000-0000-4000-8000-000000000002";
+const request = { branchId: "a", cutoff: "2026-11-06T00:00:00.0000000Z", timeZone: "Asia/Brunei" };
+function fixture() {
+  let epoch = 1, active = true, touched = 0, reads = 0;
+  const person: any = { id: actorId, user_id: "cashier", role: "staff", role_slug: "cashier", store_id: "a", is_active: true, permissions: { can_view_inventory: true } };
+  const terminal: any = { tokenId: "terminal-a", deviceUse: "operations", locationId: "a" }, events: string[] = [];
+  let afterRead: (() => void) | null = null;
+  const pool: any = {config:{},acquire:(_parent:unknown,callback:(error:null,connection:object)=>void)=>callback(null,{}),release(){},
+    request: () => ({ input() { return this; }, async query() { reads++; const value = structuredClone(person); afterRead?.(); return { recordset: [value] }; } }) };
+  class Request { input() { return this; } async query(sql: string) {
+    if(sql.includes('stock-history-read:session'))return{recordset:[{transaction_count:0,session_options:0}]};
+    if(sql.includes('BEGIN TRANSACTION'))events.push('begin');if(sql.includes('COMMIT TRANSACTION'))events.push('commit');if(sql.includes('ROLLBACK TRANSACTION'))events.push('rollback');
+    return { recordset: sql.includes("database_guid") ? [{ database_guid: databaseGuid, schema_generation: "24:absent" }] : [] }; } }
+  const manager = { pool, sql: () => ({ Request }) }, session = { hasPosAuthority: () => active, epoch: () => epoch,
+    identity: () => ({ authorId: actorId, subject: "cashier", canonicalSubject: "cashier", source: "pos" }), touch: () => { touched++; } };
+  const options = { manager, session, terminal: () => terminal, branch: () => "a", isPosSender: (event: any) => event === "pos", context: () => ["https://fixture.invalid"] };
+  const read = createStockHistoryReader(options), readMovements = createStockHistoryReader(options,true);
+  return { read, readMovements, person, terminal, manager, options, events, revoke: () => { active = false; epoch++; }, after: (fn: () => void) => { afterRead = fn; }, counts: () => ({ reads,touched }) };
+}
+describe("Main-owned stock history read admission", () => {
+  it("reports an absent optional schema truthfully without SQL or registration writes", async () => {
+    const f = fixture(); expect(await f.read("pos",request)).toMatchObject({ ok: true, page: { status: "unavailable", reasons: ["SCHEMA_NOT_INSTALLED"], rows: [] } });
+    expect(f.counts()).toEqual({ reads: 2,touched: 1 }); expect(f.events).toEqual(["begin","commit"]);
+  });
+  it.each([['admin',null],['admin',''],['staff','admin']])("preserves existing administrator role/slug authority for %s / %s without requiring staff permission JSON",async(role,slug)=>{
+    const f=fixture();f.person.role=role;f.person.role_slug=slug;f.person.permissions=null;
+    expect(await f.read('pos',{...request,export:true,closedShiftId:actorId})).toMatchObject({ok:false,code:'ESTOCK_HISTORY_SHIFT_UNAVAILABLE'});
+    expect(await f.read('pos',{...request,export:true})).toMatchObject({ok:true,page:{status:'unavailable'}});
+  });
+  it("rejects other renderers before account reads or idle extension", async () => {
+    const f = fixture(); expect(await f.read("customer",request)).toMatchObject({ ok: false,code: "PERMISSION_DENIED" }); expect(f.counts()).toEqual({ reads: 0,touched: 0 });
+  });
+  it('keeps movement details in the dedicated stock-read authority and exact request scope',async()=>{
+    const f=fixture(),details={...request,productId:databaseGuid,sourceRevision:'last-verified-page'};
+    expect(await f.readMovements('customer',details)).toMatchObject({ok:false,code:'PERMISSION_DENIED'});
+    expect(await f.readMovements('pos',{...details,export:true})).toMatchObject({ok:false,code:'ESTOCK_HISTORY_INVALID'});
+    expect(f.counts().reads).toBe(0);
+    expect(await f.readMovements('pos',{...details,branchId:'b'})).toMatchObject({ok:false,code:'SYNC_BRANCH_FORBIDDEN'});
+    expect(await f.readMovements('pos',details)).toMatchObject({ok:true,page:{...details,status:'unavailable',reasons:['SCHEMA_NOT_INSTALLED'],rows:[],next:null}});
+  });
+  it.each(["branch", "inactive", "permission", "page", "export", "identity", "management", "extra field", "shift"])("denies current %s", async change => {
+    const f = fixture(), input: any = { ...request };
+    if (change === "branch") { f.person.role = "admin"; f.person.role_slug = "admin"; input.branchId = "b"; }
+    if (change === "inactive") f.person.is_active = false;
+    if (change === "permission") f.person.permissions = {};
+    if (change === "page") f.person.permissions["page:inventory"] = false;
+    if (change === "export") input.export = true;
+    if (change === "identity") f.person.user_id = "another-cashier";
+    if (change === "management") f.terminal.deviceUse = "management";
+    if (change === "extra field") input.sql = "SELECT hidden";
+    if (change === "shift") input.closedShiftId = actorId;
+    expect(await f.read("pos",input)).toMatchObject({ ok: false }); expect(f.counts().touched).toBe(0);
+  });
+  it("rechecks handover after an awaited account read", async () => {
+    const f = fixture(); f.after(f.revoke); expect(await f.read("pos",request)).toMatchObject({ ok: false,code: "ESTOCK_HISTORY_CONTEXT_CHANGED" }); expect(f.counts().touched).toBe(0);
+  });
+  it("rechecks newly revoked SQL authority before returning even an unavailable result", async () => {
+    const f = fixture(); f.after(() => { f.person.is_active = false; });
+    expect(await f.read("pos",request)).toMatchObject({ ok: false,code: "PERMISSION_DENIED" }); expect(f.events).toEqual(["begin","commit"]);
+  });
+  it("uses explicit Main Management branch admission on both queries and denies a substituted scope", async () => {
+    const f = fixture();
+    f.terminal.deviceUse = "management";
+    const authorizeRead = vi.fn(async () => ({ contextKey: "bound", branchId: "b", canViewInventory: true }));
+    const admission = vi.fn(async () => ({ branchId: "b", assertCurrent: vi.fn(), authorizeRead }));
+    const read = createStockHistoryReader({ ...f.options, managementHistoryAdmission: admission });
+    const readMovements = createStockHistoryReader({ ...f.options, managementHistoryAdmission: admission }, true);
+    await expect(read("pos", { ...request, branchId: "a" })).resolves.toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+    await expect(read("pos", { ...request, branchId: "b" })).resolves.toMatchObject({
+      ok: true, page: { branchId: "b", status: "unavailable", reasons: ["SCHEMA_NOT_INSTALLED"] },
+    });
+    await expect(readMovements("pos", { ...request, branchId: "b", productId: databaseGuid,
+      sourceRevision: "test-revision" })).resolves.toMatchObject({
+      ok: true, page: { branchId: "b", status: "unavailable" },
+    });
+    expect(admission).toHaveBeenCalledWith("pos", { branchId: "b", exporting: false });
+    expect(authorizeRead).toHaveBeenCalledTimes(4);
+    expect(f.counts()).toEqual({ reads: 0, touched: 2 });
+  });
+});
+
+it("admits stocktake control only from the verified admin POS frame under the live sync lease", async () => {
+  let handler: (event: string, input: unknown) => Promise<unknown> = async () => { throw new Error("Handler missing"); };
+  let admin = false, lease = true;
+  const run = vi.fn(async (_action: string, options: { assertLease: () => boolean }) => ({ ready: options.assertLease() }));
+  registerStocktakeControl({
+    ipcMain: { handle(_channel: string, execute: typeof handler) { handler = execute; } },
+    session: { hasPosAuthority: () => true, hasLevel: () => admin, epoch: () => 1 },
+    isPosSender: (event: string) => event === "pos",
+    coordinator: { ownsExclusive: () => lease, paused: false, withExclusive: async (work: () => unknown) => work() },
+    run,
+  });
+  const input = { action: "arm", stocktakeId: actorId };
+  expect(await handler("pos", input)).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+  admin = true;
+  expect(await handler("customer", input)).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+  expect(await handler("pos", { ...input, branchId: "B" })).toMatchObject({ ok: false, code: "ESTOCK_STOCKTAKE_INVALID" });
+  lease = false;
+  expect(await handler("pos", input)).toMatchObject({ ok: false, code: "ESTOCK_HISTORY_CONTEXT_CHANGED" });
+  expect(run).not.toHaveBeenCalled();
+  lease = true;
+  expect(await handler("pos", input)).toEqual({ ok: true, result: { ready: true } });
+});

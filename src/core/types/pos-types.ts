@@ -41,11 +41,15 @@ export type LocationType = "store" | "main_building" | "sub_warehouse" | "centra
 
 export type Product = {
   id: string;
+  /** Exact catalogue revision and nullable stored SKU used by branch atomic merge. */
+  mergeRevision?: { sku: string | null; rowVersion: string };
   /** first time this catalogue item was recorded; fallback arrival date */
   createdAt?: string;
   name: string;
   sku: string;
   barcode: string;
+  /** Catalogue brand when the existing product schema supplies it. */
+  brand?: string;
   category: string;
   /** middle classification level: Category > Group > Sub-category */
   group?: string;
