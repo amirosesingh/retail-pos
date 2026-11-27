@@ -40,4 +40,9 @@ test('the web-first release hold defers stable publication until an explicit dis
   assert.match(platforms, /web_and_sql_verified:\s+description:[^\r\n]+\s+type: boolean\s+default: false/);
   assert.match(platforms, /publish:\s+if: >-\s+vars\.RETAIL_PRODUCTION_WEB_FIRST != 'true' \|\|\s+\(github\.event_name == 'workflow_dispatch' && inputs\.web_and_sql_verified == true\)\s+needs: \[windows, android, ios\]/);
   assert.match(platforms, /Validate matching platform artifacts[\s\S]+Publish verified Windows package and shared update pointers/);
+  for (const workflow of ['desktop-release.yml', 'android-apk.yml']) {
+    const directRelease = fs.readFileSync(require.resolve(`../.github/workflows/${workflow}`), 'utf8');
+    assert.match(directRelease, /name: Deploy to Cloudflare R2\s+if:[^\r\n]+vars\.RETAIL_PRODUCTION_WEB_FIRST != 'true'/);
+    assert.match(directRelease, /name: Attach (installer|APK) to the GitHub release\s+if:[^\r\n]+vars\.RETAIL_PRODUCTION_WEB_FIRST != 'true'/);
+  }
 });

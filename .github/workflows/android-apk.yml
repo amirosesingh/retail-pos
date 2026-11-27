@@ -245,7 +245,7 @@ jobs:
       # A hosted-shell build points the APK at someone else's running site, so
       # it is a test build only and must never reach the release channel.
       - name: Deploy to Cloudflare R2
-        if: ${{ !inputs.build_only && !inputs.app_url && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ !inputs.build_only && !inputs.app_url && startsWith(github.ref, 'refs/tags/v') && vars.RETAIL_PRODUCTION_WEB_FIRST != 'true' }}
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -274,7 +274,7 @@ jobs:
       # release directories here: they contain Windows recovery artifacts too.
 
       - name: Attach APK to the GitHub release
-        if: ${{ !inputs.build_only && !inputs.app_url && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ !inputs.build_only && !inputs.app_url && startsWith(github.ref, 'refs/tags/v') && vars.RETAIL_PRODUCTION_WEB_FIRST != 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}

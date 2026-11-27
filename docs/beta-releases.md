@@ -92,7 +92,8 @@ that marker even when versioned files were already prepared in the PR.
 For an approved web-first Production release, set the GitHub repository
 variable `RETAIL_PRODUCTION_WEB_FIRST` to `true` before the release workflow
 runs. The release marker and stable tag still identify the web release.
-The workflow holds automatic stable installer publication during this rollout.
+The workflows hold automatic stable installer publication and direct Windows
+and Android publication during this rollout.
 
 After the approved Supabase upgrade passes verification, activate the
 reviewed Production Worker version. Verify the live site and SQL Server
