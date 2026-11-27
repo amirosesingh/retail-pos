@@ -37,12 +37,25 @@ test("existing upgrade covers every reviewed storage input in the beta fresh ins
   const header=fs.readFileSync(path.join(root,"database/beta/retail-pos-local-beta-fresh.sql"),"utf8").split("*/")[0];
   const inputs=[...header.matchAll(/([a-f0-9]{64})\s+((?:database|scripts)\/[^\r\n]+\.sql)/g)];
   assert(inputs.length>=10,"Fresh installer source inventory missing");
-  const covered=new Set(["database/sqlserver/retail-pos-local-database.sql",...sourceModules().map(m=>m.file)]);
+  const coreFile="database/sqlserver/retail-pos-local-database.sql";
+  const covered=new Set([coreFile,...sourceModules().map(m=>m.file)]);
+  const currentVersion=require("../package.json").version;
+  const reviewedVersion=header.match(/^  Retail POS (\S+) isolated beta fresh local SQL Server schema\r?$/m)?.[1];
+  assert(reviewedVersion,"Fresh installer reviewed version missing");
   for(const [,hash,file] of inputs){
     assert(covered.has(file),"Current storage input omitted: "+file);
+    let source=fs.readFileSync(path.join(root,file),"utf8").replace(/\r\n/g,"\n");
+    if(file===coreFile){
+      // The release bump updates these exact three display fields. Keep the
+      // historical package and its hash pinned to the original storage SQL.
+      source=source
+        .replace(`\n  Application version: ${currentVersion}\n`,`\n  Application version: ${reviewedVersion}\n`)
+        .replace(`\n  N'${currentVersion}' AS application_version,\n`,`\n  N'${reviewedVersion}' AS application_version,\n`)
+        .replace(`\nPRINT N'Retail POS ${currentVersion}: POS_Local installation and validation completed successfully.';\n`,
+          `\nPRINT N'Retail POS ${reviewedVersion}: POS_Local installation and validation completed successfully.';\n`);
+    }
     // The historical fresh package captured the sale outbox with Windows CRLF.
-    // Only line endings may differ; all SQL text must still match its hash.
-    const source=fs.readFileSync(path.join(root,file),"utf8").replace(/\r\n/g,"\n");
+    // The normalized SQL must still match its full reviewed hash.
     assert([digest(source),digest(source.replace(/\n/g,"\r\n"))].map(value=>value.toLowerCase()).includes(hash),"Reviewed fresh input changed: "+file);
   }
 });

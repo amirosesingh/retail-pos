@@ -2,6 +2,11 @@ name: Windows, Android and iPhone release
 
 on:
   workflow_dispatch:
+    inputs:
+      web_and_sql_verified:
+        description: 'Confirm the matching Production web release and SQL Server readiness'
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
 
@@ -34,6 +39,9 @@ jobs:
       release_channel: stable
 
   publish:
+    if: >-
+      vars.RETAIL_PRODUCTION_WEB_FIRST != 'true' ||
+      (github.event_name == 'workflow_dispatch' && inputs.web_and_sql_verified == true)
     needs: [windows, android, ios]
     runs-on: ubuntu-latest
     concurrency:

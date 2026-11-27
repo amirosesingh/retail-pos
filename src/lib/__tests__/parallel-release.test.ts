@@ -33,14 +33,28 @@ it("requires all three independent stable builds before the serialized publishin
   expect(workflow.jobs.ios.needs).toBeUndefined();
   expect(workflow.jobs.ios.with.release_channel).toBe("stable");
   expect(workflow.jobs.publish.needs).toEqual(["windows", "android", "ios"]);
-  expect(workflow.jobs.publish.if).toBeUndefined();
+  expect(workflow.on.workflow_dispatch.inputs.web_and_sql_verified).toMatchObject({ type: "boolean", default: false });
+  const releaseHold = "vars.RETAIL_PRODUCTION_WEB_FIRST != 'true'";
+  expect(workflow.jobs.publish.if).toBe(
+    `${releaseHold} || (github.event_name == 'workflow_dispatch' && inputs.web_and_sql_verified == true)`,
+  );
   expect(workflow.jobs.publish.concurrency.group).toBe("pos-release-publish");
+  const versionWorkflow = yaml.load(readFileSync(".github/workflows/version-release.yml", "utf8"));
+  const versionSteps = versionWorkflow.jobs.bump.steps as { name?: string; if?: string }[];
+  expect(versionSteps.find(s => s.name === "Commit and tag release version")?.if).toBe("steps.ready.outputs.release == 'true'");
+  expect(versionSteps.find(s => s.name === "Start platform release builds")?.if).toBe(
+    `steps.ready.outputs.release == 'true' && ${releaseHold}`,
+  );
   for (const platform of ["desktop-release", "android-apk"]) {
     const build = yaml.load(readFileSync(`.github/workflows/${platform}.yml`, "utf8"));
     expect(build.on.workflow_call.inputs.build_only.default).toBe(true);
     expect(build.on.push).toBeUndefined();
     const steps = Object.values(build.jobs)[0] as { steps: { name?: string; if?: string }[] };
-    expect(steps.steps.find(s => s.name === "Deploy to Cloudflare R2")?.if).toContain("!inputs.build_only");
+    const publishStep = steps.steps.find(s => s.name === "Deploy to Cloudflare R2");
+    const attachStep = steps.steps.find(s => s.name === (platform === "desktop-release" ? "Attach installer to the GitHub release" : "Attach APK to the GitHub release"));
+    expect(publishStep?.if).toContain("!inputs.build_only");
+    expect(publishStep?.if).toContain(releaseHold);
+    expect(attachStep?.if).toContain(releaseHold);
   }
 });
 it("accepts verified matching packages and rejects mismatched commits or manifests", () => {
