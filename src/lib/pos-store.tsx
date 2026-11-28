@@ -86,6 +86,7 @@ import {
   stableChildId,
 } from "@/core/api/pos-db";
 import { recordActivity } from "./activity-events";
+import { reasonCode, recordDiagnostic } from "./diagnostics";
 import { notifyError } from "./notify";
 import type { CloudSlice, CommitTarget } from "@/core/api/pos-db";
 import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
@@ -1992,6 +1993,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
       const here = readTerminalConfig()?.tokenId ?? localTerminalId();
       const sameTerminal = !activeShift.terminalId || sameRecordId(activeShift.terminalId, here);
       if (!sameTerminal && !isAdmin && !can("can_manage_other_shifts") && !(stateRef.current.settings.integrations.allowAnyStaffCloseShift === true && can("can_close_shift"))) return null;
+      const browserSummary = platformName() === "web";
+      const summaryEpoch = sessionEpoch();
+      const summaryGeneration = bootstrapGeneration.current;
+      const summaryBranch = stateRef.current.currentStoreId;
+      const summaryActor = actorStaffIdRef.current;
+      const summaryScopeIsCurrent = () => sessionEpoch() === summaryEpoch &&
+        bootstrapGeneration.current === summaryGeneration &&
+        stateRef.current.currentStoreId === summaryBranch && actorStaffIdRef.current === summaryActor;
       const closed: Shift = {
         ...activeShift,
         ...extras,
@@ -2062,8 +2071,24 @@ export function PosProvider({ children }: { children: ReactNode }) {
         const { getPosCallerAuth } = await import("./pos-caller-auth");
         // Electron already stores a complete SQL aggregate in the cash-count
         // transaction. After the final sync, central SQL can confirm all bills.
-        await publishCompleteShiftSummary({ data: { ...await getPosCallerAuth(), shiftId: closed.id } }).catch(() => null);
-      })();
+        const proof = await getPosCallerAuth();
+        if (browserSummary && !summaryScopeIsCurrent()) return;
+        const publishing = publishCompleteShiftSummary({ data: { ...proof, shiftId: closed.id } });
+        const result = await (browserSummary ? publishing : publishing.catch(() => null));
+        if (browserSummary && result?.ok !== true) throw new Error("The shift summary service returned no confirmation.");
+      })().catch(error => {
+        if (!browserSummary) throw error;
+        if (!summaryScopeIsCurrent()) return;
+        recordDiagnostic({
+          kind: "soft_write_failed",
+          entity: "shift summary",
+          code: reasonCode(error),
+          recordId: closed.id,
+        });
+        toast.warning("Shift saved · summary publication unconfirmed", {
+          description: "The closure is available in Shifts. Ask an administrator to check the summary and notification delivery.",
+        });
+      });
       const recorded = await Promise.allSettled([transitionWritten, activityWritten, summaryWritten]);
       for (const result of recorded) if (result.status === "rejected")
         notifyError(result.reason, "Saving shift closure activity");
