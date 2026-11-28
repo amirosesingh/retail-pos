@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 const migration = await readFile(new URL('../supabase/migrations/20261030075132_typed_terminal_pin_verification.sql', import.meta.url), 'utf8');
 const serviceGrantMigration = await readFile(new URL('../supabase/migrations/20261128142527_restrict_internal_pin_service_rpcs.sql', import.meta.url), 'utf8');
 const schema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
+const serviceGrantStatement = serviceGrantMigration.slice(serviceGrantMigration.indexOf('REVOKE EXECUTE ON FUNCTION'));
 const pinServiceRoutines = [
   'public.legacy_cashiers_for_migration()',
   'public.pin_throttle_fail(text, integer, integer, integer)',
@@ -50,6 +51,9 @@ try {
   const verify = async (name, pin) => (await db.query('SELECT public.verify_terminal_pin_result($1,$2) result', [name,pin])).rows[0].result;
   const attempts = async name => (await db.query('SELECT * FROM pin_attempts WHERE key=$1', [`terminal-pin:${name}`])).rows[0];
   const check = async (name, run) => { await run(); passed++; console.log(`PASS ${name}`); };
+  await check('fresh schema includes the same service-only grant correction', async () => {
+    assert(schema.includes(serviceGrantStatement));
+  });
   await check('PIN service grants match Production after applying the correction twice', async () => {
     const canExecute = async (role, signature) => (await db.query(
       'SELECT has_function_privilege($1::name, $2::text, $3) AS allowed',

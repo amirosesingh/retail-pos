@@ -11,7 +11,8 @@ uses that ledger version and the same SHA-256
 `505a7307ceeb87c512fb68728181401f64c62c703a1d0e1c6e49cfb745824f07` as the
 approved proposal `20261128133550`. Read-back confirmed the exact statement
 hash, service execution, and unchanged routine definitions. The repository and
-hosted entry represent one application.
+hosted entry represent one application. The canonical fresh Supabase schema
+contains the same revocation to cover inherited default grants on new installs.
 
 This is a central permission change for all clients connected to Retail POS
 Beta. The local SQL Server schema and installer SQL are separate. Keep each
