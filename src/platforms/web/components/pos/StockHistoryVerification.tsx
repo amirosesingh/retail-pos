@@ -54,9 +54,10 @@ function CoverageReadout({ report }: { report: StockHistoryPage }) {
   </div>;
 }
 
-function VerificationForm({ branchId, branchName, timeZone, mayRecordOpening }: {
-  branchId: string; branchName: string; timeZone: string; mayRecordOpening: boolean;
+function VerificationForm({ branchId, branchName, timeZone, mayCheckReadiness }: {
+  branchId: string; branchName: string; timeZone: string; mayCheckReadiness: boolean;
 }) {
+  const mayRecordOpening = mayCheckReadiness && RELEASE_CHANNEL === "beta";
   const inputId = useId();
   const today = stockDateTimeInput(new Date(), timeZone).slice(0, 10);
   const [date, setDate] = useState(today);
@@ -94,7 +95,7 @@ function VerificationForm({ branchId, branchName, timeZone, mayRecordOpening }: 
     setInspection({ request, running: true });
     setRolloutReadiness(null);
     setRolloutReadinessError("");
-    if (mayRecordOpening) void readStockRolloutReadiness(branchId).then(result => {
+    if (mayCheckReadiness) void readStockRolloutReadiness(branchId).then(result => {
       if (stillCurrent()) setRolloutReadiness(result);
     }, failure => {
       if (stillCurrent()) setRolloutReadinessError(failure instanceof Error ? failure.message : "The rollout writer evidence could not be checked.");
@@ -140,8 +141,15 @@ function VerificationForm({ branchId, branchName, timeZone, mayRecordOpening }: 
     {inspection?.running && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Checking coverage…</p>}
     {inspection?.error && <p role="alert" className="text-sm text-destructive">{inspection.error}</p>}
     {inspection?.report && <CoverageReadout report={inspection.report} />}
-    {mayRecordOpening && rolloutReadinessError && <p role="status" className="text-sm text-muted-foreground">{rolloutReadinessError}</p>}
-    {mayRecordOpening && rolloutReadiness && <div className="space-y-1 text-sm text-muted-foreground" role="status">
+    {mayCheckReadiness && rolloutReadinessError && <p role="status" className="text-sm text-muted-foreground">{rolloutReadinessError}</p>}
+    {mayCheckReadiness && rolloutReadiness && <div className="space-y-1 text-sm text-muted-foreground" role="status">
+      {rolloutReadiness.registrationInventory && <>
+        <p>Previously claimed location registrations · Desktop {rolloutReadiness.registrationInventory.desktop.toLocaleString()}
+          {" · Mobile "}{rolloutReadiness.registrationInventory.mobile.toLocaleString()}
+          {" · Unknown platform "}{rolloutReadiness.registrationInventory.unknown.toLocaleString()}</p>
+        {rolloutReadiness.registrationInventory.hasUnassignedLocalCandidate &&
+          <p>Check previously claimed devices with no recorded location for retained local work.</p>}
+      </>}
       {rolloutReadiness.writers > 0 && <p>{rolloutReadiness.confirmed} of {rolloutReadiness.writers} enrolled tills have a current accepted upload check.</p>}
       {rolloutReadiness.reasons.length ? rolloutReadiness.reasons.map(reason => <p key={reason}>{stockHistoryExplanation(reason)}</p>)
         : <p>The current writer checks passed. Activation still needs an exact opening cutoff.</p>}
@@ -172,7 +180,7 @@ export function StockHistoryVerification() {
   const bound = canonicalBranchId(terminalStoreId || user?.storeId);
   if (!can("can_manage_sync_backup") || !can("can_view_inventory")) return null;
   const scopeReady = Boolean(branchId && (!bound || sameBranchId(bound, branchId)));
-  const mayRecordOpening = RELEASE_CHANNEL === "beta" && currentPlatform() === "web" && isAdmin && Boolean(authUserId);
+  const mayCheckReadiness = currentPlatform() === "web" && isAdmin && Boolean(authUserId);
   const scopeKey = JSON.stringify([branchId, timeZone, mode, sessionEpoch(), authUserId, appUser?.id, terminalUser?.cashierId, user?.staffId]);
   return <section className="mt-4 space-y-4 rounded-2xl border border-border/70 bg-card p-4 sm:p-5" aria-labelledby={heading}>
     <header className="flex flex-wrap items-start justify-between gap-3">
@@ -182,6 +190,6 @@ export function StockHistoryVerification() {
     </header>
     {!scopeReady ? <p role="status" className="text-sm text-muted-foreground">Choose an authorized location to check its stock history.</p>
       : !desktopHistoryAvailable() ? <p role="status" className="text-sm text-muted-foreground">Verification on Electron requires the authorized local SQL Server stock-history reader.</p>
-        : <VerificationForm key={scopeKey} branchId={branchId} branchName={currentStore.name} timeZone={timeZone} mayRecordOpening={mayRecordOpening} />}
+        : <VerificationForm key={scopeKey} branchId={branchId} branchName={currentStore.name} timeZone={timeZone} mayCheckReadiness={mayCheckReadiness} />}
   </section>;
 }

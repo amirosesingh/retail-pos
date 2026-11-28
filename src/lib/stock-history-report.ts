@@ -45,7 +45,10 @@ export type StockRolloutOpening =
  | {status:'already_verified';branchId:string;cutoff:string}
  | {status:'recorded';branchId:string;cutoff:string;productCount:number}
  | {status:'waiting';branchId:string;reasons:string[]};
-export type StockRolloutReadiness={branchId:string;writers:number;confirmed:number;reasons:string[]};
+export type StockRolloutReadiness={
+ branchId:string;writers:number;confirmed:number;reasons:string[];
+ registrationInventory?:{desktop:number;mobile:number;unknown:number;hasUnassignedLocalCandidate:boolean};
+};
 
 export function stockHistoryExplanation(reason:string):string{
  switch(reason){

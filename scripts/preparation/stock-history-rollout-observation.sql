@@ -59,8 +59,24 @@ DECLARE
  confirmed_count integer:=0;
  reasons text[]:=ARRAY[]::text[];
  evidence jsonb;
+ writer_inventory jsonb;
 BEGIN
  PERFORM private.stock_history_opening_authorize(p_actor,p_terminal,p_branch);
+ -- Registration inventory is a diagnostic only. A previously claimed desktop
+ -- can retain offline work after retirement or a change of device mode.
+ SELECT jsonb_build_object(
+  'desktop',count(*) FILTER (WHERE located AND platform='pc'),
+  'mobile',count(*) FILTER (WHERE located AND platform='mobile'),
+  'unknown',count(*) FILTER (WHERE located AND platform IS DISTINCT FROM 'pc' AND platform IS DISTINCT FROM 'mobile'),
+  'hasUnassignedLocalCandidate',coalesce(bool_or(unassigned AND platform IS DISTINCT FROM 'mobile'),false))
+ INTO writer_inventory
+ FROM (
+  SELECT platform,private.stock_history_cutover_branch_matches(location_id,p_branch) AS located,
+    nullif(btrim(location_id),'') IS NULL AS unassigned
+  FROM public.terminal_tokens
+  WHERE (is_claimed OR claimed_at IS NOT NULL OR status='used')
+    AND (private.stock_history_cutover_branch_matches(location_id,p_branch) OR nullif(btrim(location_id),'') IS NULL)
+ ) registrations;
  IF NOT EXISTS(SELECT 1 FROM private.stock_history_cutover_scope WHERE store_id=p_branch AND project_origin=p_project) THEN
   reasons:=array_append(reasons,'ROLLOUT_SCOPE_UNCONFIRMED');
  ELSE
@@ -96,7 +112,8 @@ BEGIN
  evidence:=private.stock_history_capture_state(p_branch,(SELECT baseline_id FROM public.stock_history_heads WHERE store_id=p_branch));
  IF (evidence->>'unvalidatedEffects')::bigint>0 THEN reasons:=array_append(reasons,'UNVALIDATED_STOCK_EFFECTS'); END IF;
  IF (evidence->>'captureGaps')::bigint>0 THEN reasons:=array_append(reasons,'CAPTURE_GAPS'); END IF;
- RETURN jsonb_build_object('branchId',p_branch,'writers',writer_count,'confirmed',confirmed_count,'reasons',to_jsonb(reasons));
+ RETURN jsonb_build_object('branchId',p_branch,'writers',writer_count,'confirmed',confirmed_count,
+  'reasons',to_jsonb(reasons),'registrationInventory',writer_inventory);
 END $fn$;
 REVOKE ALL ON FUNCTION public.pos_stock_history_rollout_readiness(text,text,text,text) FROM PUBLIC,anon,authenticated,service_role;
 GRANT EXECUTE ON FUNCTION public.pos_stock_history_rollout_readiness(text,text,text,text) TO service_role;

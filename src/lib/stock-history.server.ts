@@ -39,7 +39,6 @@ const rolloutOpening=z.discriminatedUnion('status',[
 ]);
 
 async function authorizeStockRollout(proof:CallerProof,branch:string){
- if(RELEASE_CHANNEL!=='beta')throw new Error('Stock Report rollout is available on Beta.');
  const {scope,branchId}=await authorizeStockHistoryRead(proof,{branchId:branch});
  if(scope.role!=='admin'&&scope.roleSlug!=='admin')throw new Error('Stock history rollout requires an Administrator.');
  return {scope,branchId};
@@ -50,7 +49,7 @@ export async function readStockRolloutReadiness(proof:CallerProof,branch:string)
  const [{serviceRest},{supabaseConfig}]=await Promise.all([
   import('@/core/api/pos-relay.server'),import('./external-supabase-config'),
  ]);
- const response=await serviceRest('rpc/pos_stock_history_rollout_readiness',{method:'POST',body:JSON.stringify({
+ const response=await serviceRest('rpc/pos_stock_history_rollout_readiness',{method:'POST',redirect:'error',body:JSON.stringify({
   p_actor:scope.staffUserId,p_terminal:scope.terminalId??null,p_branch:branchId,p_project:new URL(supabaseConfig().url).origin,
  })});
  const payload=await response.json().catch(()=>null);
@@ -58,13 +57,17 @@ export async function readStockRolloutReadiness(proof:CallerProof,branch:string)
   if(response.status===404&&payload?.code==='PGRST202')throw new Error('This database needs the reviewed Stock Report rollout upgrade.');
   throw new Error('The rollout writer evidence could not be checked.');
  }
+ const count=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
  const result=z.object({branchId:rolloutBranch,writers:z.number().int().min(0).max(16),
-  confirmed:z.number().int().min(0).max(16),reasons:z.array(z.string().max(64)).max(10)}).parse(payload);
+  confirmed:z.number().int().min(0).max(16),reasons:z.array(z.string().max(64)).max(10),
+  registrationInventory:z.object({desktop:count,mobile:count,unknown:count,hasUnassignedLocalCandidate:z.boolean()}).optional(),
+ }).parse(payload);
  if(!sameBranchId(result.branchId,branchId)||result.confirmed>result.writers)throw new Error('The rollout source returned invalid writer evidence.');
  return result;
 }
 
 export async function recordStockRolloutOpening(proof:CallerProof,branch:string):Promise<StockRolloutOpening>{
+ if(RELEASE_CHANNEL!=='beta')throw new Error('Stock Report rollout is available on Beta.');
  const {scope,branchId}=await authorizeStockRollout(proof,branch);
  const {serviceRest}=await import('@/core/api/pos-relay.server');
  const response=await serviceRest('rpc/pos_stock_history_initialize_rollout_opening',{method:'POST',body:JSON.stringify({

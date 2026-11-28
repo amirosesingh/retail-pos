@@ -59,11 +59,35 @@ const initializeRollout = (actor = fixture.admin, branch = "A") => scalar(
   "SELECT public.pos_stock_history_initialize_rollout_opening($1,$2,$3)", [actor, fixture.terminal, branch]);
 
 describe("isolated recorded stock openings", () => {
+  it("reports location registrations for review without treating a desktop or an unknown device as confirmed", async () => {
+    const { project } = fixture.stockSourceFixture;
+    await fixture.db.query(`INSERT INTO public.terminal_tokens
+      (id,location_id,status,revoked_at,platform,is_claimed,claimed_at,management_sync_enabled) VALUES
+      ($1,'A','revoked',now(),'pc',false,now(),true),
+      ($2,'A','active',NULL,'mobile',true,now(),false),
+      ($3,'A','used',NULL,NULL,false,NULL,false),
+      ($4,'B','active',NULL,'pc',true,now(),false),
+      ($5,NULL,'active',NULL,'pc',true,now(),true),
+      ($6,'A','active',NULL,'pc',false,NULL,false)`, Array.from({ length: 6 }, () => randomUUID()));
+    const result = await scalar("SELECT public.pos_stock_history_rollout_readiness($1,$2,$3,'A')",
+      [fixture.admin, fixture.terminal, project]);
+    expect(result).toEqual({
+      branchId: "A", writers: 0, confirmed: 0, reasons: ["ROLLOUT_SCOPE_UNCONFIRMED"],
+      registrationInventory: { desktop: 2, mobile: 1, unknown: 1, hasUnassignedLocalCandidate: true },
+    });
+    expect(await scalar("SELECT has_function_privilege('authenticated','public.pos_stock_history_rollout_readiness(text,text,text,text)','EXECUTE')")).toBe(false);
+    await denied(() => scalar("SELECT public.pos_stock_history_rollout_readiness($1,$2,$3,'B')",
+      [fixture.admin, fixture.terminal, project]), "STOCK_HISTORY_BRANCH_DENIED");
+    expect(await counts()).toEqual([0, 0, 0]);
+    expect(await fixture.stock()).toBe("10");
+  });
+
   it("checks rollout readiness without opening a writer fence or changing stock", async () => {
     const { project, database, key, pair } = fixture.stockSourceFixture;
     const readiness = (actor = fixture.admin, origin = project, branch = "A") => scalar(
       "SELECT public.pos_stock_history_rollout_readiness($1,$2,$3,$4)", [actor, fixture.terminal, origin, branch]);
-    expect(await readiness()).toEqual({ branchId: "A", writers: 0, confirmed: 0, reasons: ["ROLLOUT_SCOPE_UNCONFIRMED"] });
+    const registrationInventory = { desktop: 1, mobile: 0, unknown: 0, hasUnassignedLocalCandidate: false };
+    expect(await readiness()).toEqual({ branchId: "A", writers: 0, confirmed: 0, reasons: ["ROLLOUT_SCOPE_UNCONFIRMED"], registrationInventory });
     await denied(() => readiness(fixture.author), /STOCK_(?:OPENING_ADMIN_REQUIRED|HISTORY_ACTOR_DENIED|HISTORY_PERMISSION_DENIED)/);
     await denied(() => readiness(fixture.admin, project, "B"), "STOCK_HISTORY_BRANCH_DENIED");
     const marker = "CODEX-STOCK401-READINESS";
@@ -72,7 +96,7 @@ describe("isolated recorded stock openings", () => {
     await fixture.db.query("UPDATE public.stores SET code=$1 WHERE id='A'", [marker]);
     await scalar("SELECT private.stock_history_install_cutover_guard($1,'A',$2,ARRAY[$3::uuid],ARRAY[$4::uuid])",
       [project, marker, fixture.terminal, database]);
-    expect(await readiness()).toEqual({ branchId: "A", writers: 1, confirmed: 0, reasons: ["ROLLOUT_WRITERS_PENDING"] });
+    expect(await readiness()).toEqual({ branchId: "A", writers: 1, confirmed: 0, reasons: ["ROLLOUT_WRITERS_PENDING"], registrationInventory });
     expect(await readiness(fixture.admin, "https://different.example")).toMatchObject({
       writers: 0, confirmed: 0, reasons: ["ROLLOUT_SCOPE_UNCONFIRMED"],
     });
@@ -97,9 +121,9 @@ describe("isolated recorded stock openings", () => {
         [project, fixture.terminal, frontier, proof]);
     }
     expect(await observeWriter("0")).toMatchObject({ state: "accepted" });
-    expect(await readiness()).toEqual({ branchId: "A", writers: 1, confirmed: 1, reasons: [] });
+    expect(await readiness()).toEqual({ branchId: "A", writers: 1, confirmed: 1, reasons: [], registrationInventory });
     expect(await observeWriter("3")).toMatchObject({ state: "unconfirmed", reasons: ["PENDING_BUSINESS"] });
-    expect(await readiness()).toEqual({ branchId: "A", writers: 1, confirmed: 0, reasons: ["ROLLOUT_WRITERS_PENDING"] });
+    expect(await readiness()).toEqual({ branchId: "A", writers: 1, confirmed: 0, reasons: ["ROLLOUT_WRITERS_PENDING"], registrationInventory });
     expect(await counts()).toEqual([0, 0, 0]);
     expect(await scalar("SELECT count(*) FROM private.stock_history_cutover_leases")).toBe(0);
     expect(await fixture.stock()).toBe("10");

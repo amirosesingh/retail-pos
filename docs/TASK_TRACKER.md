@@ -1,3 +1,26 @@
+## 28 November — Production Stock Report readiness
+
+The owner selected verified history for the Production promotion. Start the
+application work from `af5deaf4` on Beta. The Administrator readiness read now
+reports previously claimed location registrations, including revoked or
+retired desktops and unknown platforms, and flags unassigned registrations
+that could still hold local work. Counts are diagnostic. Active and historical
+desktop registrations still need verified database binding, outbox drain and
+the existing fresh fence evidence. Web and mobile writes reach the cloud;
+Management's read-only SQL replica and its authorized central edits need
+central writer coverage. Reassigned devices need their original branch and
+physical database checked as well as current registration.
+
+Production activation requires an exact location writer cohort and a cloud
+transaction guard for shared catalogue, sibling transfers and privacy-policy
+changes, alongside existing local fences. The first fenced opening certifies
+one instant. Verified continuation must advance only through proven accepted
+movement coverage and preserve unconfirmed original timestamps. Rehearse a
+retained offline sale and a later accepted sale, and race relevant central
+writers against the same cutoff. Await exact schema review and separate
+approval for any live stocktake pause. PR #498 remains a draft. No live
+opening, writer enrollment, schema application or traffic switch was made.
+
 ## 26 November — Advanced Inventory Reports and local Beta preview
 
 The owner requested one existing Stock Report route with Current Stock, Stock

@@ -1,8 +1,10 @@
 import {beforeEach,describe,it,expect,vi} from 'vitest';
 const {rest,verify}=vi.hoisted(()=>({rest:vi.fn(),verify:vi.fn()}));
 vi.mock('@/core/api/pos-relay.server',()=>({serviceRest:rest,verifyRelayCaller:verify}));
+vi.mock('../release-channel',()=>({RELEASE_CHANNEL:'stable'}));
+vi.mock('../external-supabase-config',()=>({supabaseConfig:()=>({url:'https://production.fixture'})}));
 vi.mock('@tanstack/react-start',()=>({createServerFn:()=>({validator:(parse:(value:unknown)=>unknown)=>({handler:(fn:(input:{data:unknown})=>unknown)=>async(input:{data:unknown})=>fn({data:parse(input.data)})})})}));
-import {loadStockHistoryMovementsDirect,loadStockHistoryPageDirect} from '../stock-history.functions';
+import {loadStockHistoryMovementsDirect,loadStockHistoryPageDirect,readStockRolloutReadinessDirect,recordStockRolloutOpeningDirect} from '../stock-history.functions';
 import {checkedStockHistoryPage} from '../stock-history-validation';
 const terminal='10000000-0000-4000-8000-000000000001',product='20000000-0000-4000-8000-000000000001';
 const request={cutoff:'2026-11-05T01:00:00.0000001Z',timeZone:'Asia/Brunei',branchId:'a'};
@@ -18,6 +20,23 @@ const call=(extra={})=>loadStockHistoryPageDirect({data:{terminalToken:terminal,
 const movementsRequest={...request,productId:product,sourceRevision:'source-1'};
 const callMovements=(extra={})=>loadStockHistoryMovementsDirect({data:{terminalToken:terminal,deviceBindingProof:'a'.repeat(64),cashierToken:'signed',request:{...movementsRequest,...extra}}});
 describe('actual stock-history function with existing current-account scope resolver',()=>{
+ it('opens scoped readiness on stable only for an Administrator while preserving the rollout mutation gate',async()=>{
+  const data={terminalToken:terminal,deviceBindingProof:'a'.repeat(64),cashierToken:'signed',branchId:'a'};
+  await expect(readStockRolloutReadinessDirect({data})).rejects.toThrow(/Administrator/);
+  expect(rest.mock.calls.some(([path])=>path.startsWith('rpc/'))).toBe(false);
+  row={...row,role:'admin',role_slug:'admin'};
+  await expect(readStockRolloutReadinessDirect({data:{...data,branchId:'b'}})).rejects.toThrow(/authorized branch/);
+  const registrationInventory={desktop:2,mobile:1,unknown:0,hasUnassignedLocalCandidate:true};
+  const result={branchId:'a',writers:0,confirmed:0,reasons:['ROLLOUT_SCOPE_UNCONFIRMED'],registrationInventory};
+  rest.mockImplementation(async(path:string)=>Response.json(path.startsWith('app_users?')?[row]:result));
+  expect(await readStockRolloutReadinessDirect({data})).toEqual(result);
+  const [path,options]=rest.mock.calls.find(([route])=>route.startsWith('rpc/'))!;
+  expect(path).toBe('rpc/pos_stock_history_rollout_readiness');
+  expect(options.redirect).toBe('error');
+  expect(JSON.parse(options.body)).toEqual({p_actor:'cashier',p_terminal:terminal,p_project:'https://production.fixture',p_branch:'a'});
+  await expect(recordStockRolloutOpeningDirect({data})).rejects.toThrow(/available on Beta/);
+  expect(rest.mock.calls.filter(([route])=>route.startsWith('rpc/'))).toHaveLength(1);
+ });
  it('reads a recorded-only timeline after strict history reports an unproved cutoff',async()=>{
   const recordedRevision='stock-history-recorded.v1:exact-source';
   const unavailable={...complete(),status:'incomplete',reasons:['INCOMPLETE_MOVEMENTS','CLOCK_UNVERIFIED'],rows:[]};
