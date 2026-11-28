@@ -5,6 +5,12 @@ import { sameRecordId } from "./sale-identity";
 export function shiftIsOpenForBranch(shift: Shift | null | undefined, branchId: string): shift is Shift {
   return !!shift && sameBranchId(shift.storeId, branchId) && !shift.closedAt && shift.status !== "CLOSED";
 }
+
+/** The selected open row stays available while its closing workflow runs. */
+export function shiftIsClosing(shift: Shift | null | undefined): boolean {
+  return !!shift?.state && shift.state !== "ACTIVE";
+}
+
 export function latestOpenShiftForBranch(shifts: readonly Shift[], branchId: string): Shift | null {
   return shifts.filter(shift => shiftIsOpenForBranch(shift, branchId))
     .sort((a, b) => (Date.parse(b.openedAt) || 0) - (Date.parse(a.openedAt) || 0))[0] ?? null;

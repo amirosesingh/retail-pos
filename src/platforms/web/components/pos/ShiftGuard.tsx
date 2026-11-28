@@ -12,6 +12,7 @@ import { permissionMessage } from "@/platforms/web/components/pos/PermissionGate
 import { notifyError } from "@/lib/notify";
 import { commitLabel } from "@/core/api/pos-db";
 import { ShiftCloseDialog } from "@/platforms/web/components/pos/ShiftCloseDialog";
+import { shiftIsClosing } from "@/lib/branch-shift-state";
 
 /**
  * Hard terminal lock.
@@ -53,25 +54,18 @@ export function ShiftGuard({ children, scopePending = false }: { children: React
   </div>;
 
   if (activeShift) {
-    const closing = (activeShift.state ?? "ACTIVE") !== "ACTIVE";
-    if (closing) {
-      return (
-        <div className="relative flex min-h-0 flex-1">
-          <div
-            {...({ inert: "" } as Record<string, string>)}
-            aria-hidden="true"
-            className="pointer-events-none flex min-h-0 flex-1 select-none opacity-30 blur-[1px]"
-          >
-            {children}
-          </div>
-          <ShiftCloseDialog open onOpenChange={() => undefined} />
-        </div>
-      );
-    }
+    const closing = shiftIsClosing(activeShift);
     return (
-      <div className="flex min-h-0 flex-1 flex-col">
-        <BranchShiftBanner />
-        <div className="flex min-h-0 flex-1">{children}</div>
+      <div className={closing ? "relative flex min-h-0 flex-1" : "flex min-h-0 flex-1 flex-col"}>
+        {closing ? null : <BranchShiftBanner />}
+        <div
+          inert={closing}
+          aria-hidden={closing || undefined}
+          className={closing ? "pointer-events-none flex min-h-0 flex-1 select-none opacity-30 blur-[1px]" : "flex min-h-0 flex-1"}
+        >
+          {children}
+        </div>
+        {closing && <ShiftCloseDialog open onOpenChange={() => undefined} />}
       </div>
     );
   }

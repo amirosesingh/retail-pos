@@ -32,6 +32,7 @@ import { applyRounding, roundingOf, roundingPaymentMethod, showsRoundingLine } f
 import { usePromotions } from "@/lib/register/use-promotions";
 import { useExchange } from "@/lib/register/use-exchange";
 import { removeApprovedDiscount, useRegisterHeldOrders } from "@/lib/register/use-held-orders";
+import { shiftIsClosing } from "@/lib/branch-shift-state";
 import { TICKET_ACTIONS, logTicketEvent } from "@/lib/ticket-audit";
 import {
   BadgeCheck,
@@ -484,7 +485,7 @@ function Register() {
       })) !== null
     );
   };
-  const [closeShiftOpen, setCloseShiftOpen] = useState(false);
+  const [closeShiftDialogId, setCloseShiftDialogId] = useState<string | null>(null);
   const canDiscount = can("can_give_discount");
   const [discountOverride, setDiscountOverride] = useState(false);
   const discountAllowed = canDiscount || discountOverride;
@@ -591,10 +592,9 @@ function Register() {
   /** Who is actually signed in right now — sales are stamped with this, not
    *  the name captured when the shift was opened (users may switch mid-shift). */
   const activeCashier = user?.name || activeShift?.cashier || cashier;
-  /** No open shift = the whole till is frozen, for every role including
-   *  supervisors: no coupons, exchanges, drawer opens, prints or payments. */
-  const tillLocked = !activeShift;
-  const lockedReason = "Open a shift first";
+  const shiftClosing = shiftIsClosing(activeShift);
+  const tillLocked = !activeShift || shiftClosing;
+  const lockedReason = shiftClosing ? "Finish closing the shift" : "Open a shift first";
   const {
     payOpen,
     setPayOpen,
@@ -1023,6 +1023,7 @@ function Register() {
 
   const { held, holdOrder, resumeHeld, getDraftId } = useRegisterHeldOrders({
     shiftId: activeShift?.id ?? null,
+    shiftClosing,
     ensureBillNumber: ensureDraftBillNumber,
     lines,
     total: totals.total,
@@ -1803,6 +1804,7 @@ function Register() {
   const terminalKey = readTerminalConfig()?.tokenId ?? currentStore.id ?? "default";
 
   const closeShiftFromRegister = async () => {
+    if (!activeShift || shiftClosing) return;
     if (!(await requirePermission("can_close_shift"))) return;
     const grant = await authorize({
       action: "shift_close",
@@ -1813,7 +1815,7 @@ function Register() {
       requestedBy: user?.staffId ?? user?.name ?? null,
     });
     if (!grant.ok) return;
-    setCloseShiftOpen(true);
+    setCloseShiftDialogId(activeShift.id);
   };
 
   const atom_actExchange = visible("register.exchange") ? (
@@ -1862,12 +1864,14 @@ function Register() {
         </div>
         <span
           className={`shrink-0 rounded-full border px-2 py-1 text-[11px] font-medium ${
-            activeShift
+            shiftClosing
+              ? "border-warning/40 bg-warning/10 text-warning"
+              : activeShift
               ? "border-success/40 bg-success/10 text-success"
               : "border-destructive/40 bg-destructive/10 text-destructive"
           }`}
         >
-          {activeShift ? "Shift open" : "No shift open"}
+          {shiftClosing ? "Closing" : activeShift ? "Shift open" : "No shift open"}
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -2719,8 +2723,8 @@ function Register() {
     "book.hub": () => {
       if (can("can_manage_bookings")) setBookingHubOpen(true);
     },
-    "shift.open": () => setOpenShiftOpen(true),
-    "shift.close": () => setCloseShiftOpen(true),
+    "shift.open": () => { if (!shiftClosing) setOpenShiftOpen(true); },
+    "shift.close": () => { if (activeShift && !shiftClosing) setCloseShiftDialogId(activeShift.id); },
     "drawer.open": () => {
       void requirePermission("can_open_drawer").then((approved) => {
         if (!approved) return;
@@ -4140,7 +4144,7 @@ function Register() {
       </Dialog>
 
       {/* Open shift */}
-      <Dialog open={openShiftOpen} onOpenChange={setOpenShiftOpen}>
+      <Dialog open={openShiftOpen && !shiftClosing} onOpenChange={setOpenShiftOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Open shift</DialogTitle>
@@ -4180,6 +4184,7 @@ function Register() {
                 (rules.require_opening_float_count && parsePositiveAmount(float) === null)
               }
               onClick={async () => {
+                if (shiftClosing) return;
                 if (!can("can_open_shift")) {
                   toast.error("You are not allowed to open a shift");
                   return;
@@ -4285,7 +4290,10 @@ function Register() {
       </Dialog>
 
       {/* Close shift — the one server-driven closing workflow */}
-      <ShiftCloseDialog open={closeShiftOpen} onOpenChange={setCloseShiftOpen} />
+      <ShiftCloseDialog
+        open={Boolean(activeShift && !shiftClosing && closeShiftDialogId === activeShift.id)}
+        onOpenChange={open => setCloseShiftDialogId(open ? activeShift?.id ?? null : null)}
+      />
       <Dialog open={priceTarget !== null} onOpenChange={(open) => !open && setPriceTarget(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
