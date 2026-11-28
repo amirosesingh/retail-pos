@@ -1,3 +1,18 @@
+## 28 November — Supabase errors and protected shift-opening uploads
+
+The owner requested a read-only review of Supabase Postgres and Authentication
+errors, with verified application fixes starting from Beta `af5deaf4`. Beta
+logged repeated `FIN62_OPEN_ORIGIN_NOT_NEW` refusals for a pending protected
+opening that reached the cloud through ordinary change tracking first. Keep
+new protected openings under their exact pending journal until acknowledged
+through the signed opening route. Test a change committed after tracking was
+sampled, another till on the same SQL database, a legacy reader, ordinary
+shifts, and lost replies on the protected route. Use the
+existing scoped retry hold and a distinct shift-opening notice when the cloud
+already has an opening without exact acceptance. Preserve both sides of these
+conflicts for authorized review. Treat hosted schema
+changes, installed acceptance, and production promotion as separate steps.
+
 ## 26 November — Advanced Inventory Reports and local Beta preview
 
 The owner requested one existing Stock Report route with Current Stock, Stock

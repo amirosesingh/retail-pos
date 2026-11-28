@@ -70,16 +70,23 @@ const financialReview = {
   FIN62_OPEN_BIRTH_NOT_EMPTY: {
     title: "Saved shift opening needs review",
     message: "The central database found a sale linked to the shift when verifying its opening.",
+    kind: "shift",
+  },
+  FIN62_OPEN_ORIGIN_NOT_NEW: {
+    title: "Existing shift opening needs review",
+    message: "The central database already has this shift or its opening record. Verify the saved opening before retrying.",
+    kind: "shift",
   },
   FIN62_SALE_BIRTH_ALREADY_EXISTS: {
     title: "Saved sale needs review",
     message: "The central database already has a sale with this ID.",
+    kind: "sale",
   },
-};
+} as const;
 
 function financialReviewReason(message?: string | null): keyof typeof financialReview | null {
-  const match = /^(FIN62_OPEN_BIRTH_NOT_EMPTY|FIN62_SALE_BIRTH_ALREADY_EXISTS)(?: \(table: (?:transaction batch|shifts|sales)\))?$/.exec(message?.trim() ?? "");
-  return (match?.[1] as keyof typeof financialReview | undefined) ?? null;
+  const code = message?.trim().replace(/ \(table: (?:transaction batch|shifts|sales)\)$/, "");
+  return code && Object.hasOwn(financialReview, code) ? code as keyof typeof financialReview : null;
 }
 
 const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
@@ -103,8 +110,8 @@ function verificationCase(row: BusinessBatchRow): VerificationCase | null {
   if (!row.aggregate_id || !uuid.test(row.aggregate_id)) return null;
   const batchId = row.aggregate_id.toLowerCase();
   const financial = financialReviewReason(row.error);
-  if (financial === "FIN62_OPEN_BIRTH_NOT_EMPTY" && row.entity_type === "shifts") return { batchId, kind: "shift" };
-  if (financial === "FIN62_SALE_BIRTH_ALREADY_EXISTS") return { batchId, kind: "sale" };
+  if (financial && financialReview[financial].kind === "shift" && row.entity_type === "shifts") return { batchId, kind: "shift" };
+  if (financial && financialReview[financial].kind === "sale") return { batchId, kind: "sale" };
   if (row.entity_type === "stock_history_movements" &&
       /^(?:Stock history needs source\/author review \()?E?STOCK_HISTORY_AUTHOR_REQUIRED(?:\)\. Existing business data and pending evidence are retained\.)?$/.test(row.error?.trim() ?? ""))
     return { batchId, kind: "stock" };
@@ -269,7 +276,7 @@ export function LocalDatabaseOperations({ branchId, reviewOperator }: { branchId
   const canReviewEvidence = Boolean(branchId && reviewOperator && shell().sync?.getRecoveryEvidence);
   const cases = canReviewEvidence ? (failures.businessBatches ?? []).flatMap(row => {
     const entry = verificationCase(row);
-    return entry ? [{ ...entry, savedAt: row.created_at }] : [];
+    return entry ? [{ ...entry, reviewReason: financialReviewReason(row.error), savedAt: row.created_at }] : [];
   }) : [];
   const databaseErrors = failures.databaseErrors ?? [];
   const conflictCount = Number(failures.conflicts ?? failures.conflictRows?.length ?? sync.conflicts ?? 0);
@@ -307,7 +314,7 @@ export function LocalDatabaseOperations({ branchId, reviewOperator }: { branchId
             {cases.map(entry => <div key={entry.batchId} className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="font-medium">{evidenceLabels[entry.kind].label}</p>
-                <p className="text-xs text-muted-foreground">{evidenceLabels[entry.kind].reason} {entry.savedAt ? `Saved ${when(entry.savedAt)}.` : ""}</p>
+                <p className="text-xs text-muted-foreground">{entry.reviewReason ? financialReview[entry.reviewReason].message : evidenceLabels[entry.kind].reason} {entry.savedAt ? `Saved ${when(entry.savedAt)}.` : ""}</p>
               </div>
               <Button type="button" size="sm" variant="outline" disabled={!state.connected || currentCheck?.state === "checking"}
                 onClick={() => verifySavedRecord({ batchId: entry.batchId, kind: entry.kind })}>Verify saved record</Button>
@@ -333,7 +340,7 @@ export function LocalDatabaseOperations({ branchId, reviewOperator }: { branchId
               </div>
             </div> : null}
           </section> : null}
-          {sync.lastError && !(review && cases.some(entry => entry.kind === (review === "FIN62_OPEN_BIRTH_NOT_EMPTY" ? "shift" : "sale"))) ? <p role="alert" className="text-xs text-destructive">{review
+          {sync.lastError && !(review && cases.some(entry => entry.reviewReason === review)) ? <p role="alert" className="text-xs text-destructive">{review
             ? `${financialReview[review].title}. ${financialReview[review].message}` : sync.lastError}</p> : null}
           {syncReadFailed ? <p role="alert" className="text-xs text-destructive">Synchronization status could not be read. Refresh to check again; no data was changed.</p> : null}
           {databaseReadFailed ? <p role="alert" className="text-xs text-destructive">Local database status could not be read. Refresh to check again; no data was changed.</p> : null}

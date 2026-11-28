@@ -161,19 +161,34 @@ class ChangeReader {
         return wire;});
       source.assertSource();return rows;
     });
-    const request = this.connectionManager.pool.request();
-    const clauses = changes.map((change, index) => {
-      const key = change.key ?? change;
-      return `(${primary.map((column, part) => { request.input(`k${index}_${part}`, key[column]); return `[${column}]=@k${index}_${part}`; }).join(" AND ")})`;
-    });
-    const scope = branchId && table.scope === "branch"
-      // Recover unowned legacy purchase headers (and their children) before
-      // PushWorker stamps the verified branch. Other branches stay excluded.
-      ? table.cloudTable === "products" ? branchPredicate(this.registry, table, "source") : rendererReadBranchPredicate(this.registry, table, "source")
-      : null;
-    if (scope) request.input("branch", String(branchId));
-    const result = await request.query(`SELECT * FROM dbo.[${table.sqlServerTable}] source WHERE (${clauses.join(" OR ")})${scope ? ` AND (${scope})` : ""};`);
-    return (result.recordset ?? []).map((row) => toCloudRow(table, row));
+    const read = async (tx, source) => {
+      const request = tx ? new (this.connectionManager.sql().Request)(tx) : this.connectionManager.pool.request();
+      const clauses = changes.map((change, index) => {
+        const key = change.key ?? change;
+        return `(${primary.map((column, part) => { request.input(`k${index}_${part}`, key[column]); return `[${column}]=@k${index}_${part}`; }).join(" AND ")})`;
+      });
+      const scope = branchId && table.scope === "branch"
+        // Recover unowned legacy purchase headers (and their children) before
+        // PushWorker stamps the verified branch. Other branches stay excluded.
+        ? table.cloudTable === "products" ? branchPredicate(this.registry, table, "source") : rendererReadBranchPredicate(this.registry, table, "source")
+        : null;
+      if (scope) request.input("branch", String(branchId));
+      const result = await request.query(`SELECT * FROM dbo.[${table.sqlServerTable}] source${tx ? " WITH(HOLDLOCK)" : ""} WHERE (${clauses.join(" OR ")})${scope ? ` AND (${scope})` : ""};`);
+      if (tx) {
+        // The signed opening can commit after Change Tracking was sampled.
+        if (await this.financialBusinessPending(table, changes, branchId, source?.identity.terminalId, tx))
+          throw financialBusinessPendingError(table.sqlServerTable);
+        source?.assertSource();
+      }
+      return (result.recordset ?? []).map((row) => toCloudRow(table, row));
+    };
+    if (table.sqlServerTable === "shifts" && branchId && !exactFinancial) {
+      if (this.financialOperations?.enabled !== true)
+        return this.serializableTransaction(tx => read(tx));
+      return this.financialTransaction(tx => read(tx,
+        this.financialCoverageBinding(branchId, this.financialCoverageSource?.identity.terminalId)));
+    }
+    return read();
   }
   /** Capture current closing facts together; journal entries contain keys, not
    * frozen rows. An offline recount may have superseded an older queued close. */
@@ -344,9 +359,12 @@ class ChangeReader {
     const financial=await this.financialBases.get(recordId(aggregateId),branchId);
     return financial?{...intent,...financial}:intent;
   }
-  async financialTransaction(work){
+  async serializableTransaction(work){
     const sql=this.connectionManager.sql(),tx=new sql.Transaction(this.connectionManager.pool);await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
-    try{await this.financialOperations.schema(tx);const result=await work(tx);await tx.commit();return result;}catch(error){await tx.rollback().catch(()=>{});throw error;}
+    try{const result=await work(tx);await tx.commit();return result;}catch(error){await tx.rollback().catch(()=>{});throw error;}
+  }
+  async financialTransaction(work){
+    return this.serializableTransaction(async tx=>{await this.financialOperations.schema(tx);return work(tx);});
   }
   financialQuery(tx,statement,inputs={}){const request=new(this.connectionManager.sql().Request)(tx);for(const[k,v]of Object.entries(inputs))request.input(k,v);return request.query(statement);}
   async financialOpening(aggregateId,branchId,terminalId){
@@ -413,6 +431,37 @@ class ChangeReader {
       OR EXISTS(SELECT 1 FROM dbo.sync_change_journal j JOIN dbo.pos_sync_shift_financial_sale_lineage l ON l.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END,'$.id')) WHERE j.aggregate_id=@aggregate AND j.entity_type=N'sales' AND l.branch_id=@branch) OR EXISTS(SELECT 1 FROM dbo.sync_change_journal j JOIN dbo.pos_sync_shift_financial_observations o ON o.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END,'$.id')) WHERE j.aggregate_id=@aggregate AND j.entity_type=N'sales' AND o.branch_id=@branch AND o.terminal_id=@terminal) THEN 1 ELSE 0 END required;`,{aggregate:aggregateId,branch:branchId,terminal:terminalId})).recordset?.[0]?.required));
   }
   async financialBusinessPending(value,changes,branchId,terminalId,transaction=null){
+    if (this.financialOperations?.enabled !== true && this.table(value).table.sqlServerTable === "shifts") {
+      const ids = [...new Set(changes.map(change => recordId((change.key ?? change).id)).filter(id => UUID.test(id)))];
+      if (!branchId || !ids.length) return false;
+      const read = async tx => {
+        const result = await this.financialQuery(tx, `DECLARE @pending bit=0;
+        IF OBJECT_ID(N'dbo.pos_sync_shift_financial_origins',N'U') IS NOT NULL
+          EXEC sys.sp_executesql N'SELECT @found=CASE WHEN EXISTS(
+            SELECT 1 FROM dbo.pos_sync_shift_financial_origins o WITH(HOLDLOCK)
+            JOIN OPENJSON(@keys) wanted ON o.shift_id=TRY_CONVERT(uniqueidentifier,wanted.[value])
+            JOIN dbo.sync_change_journal j WITH(HOLDLOCK) ON j.aggregate_id=o.local_aggregate_id
+              AND j.branch_id=o.branch_id AND j.entity_type=N''shifts'' AND j.acknowledged_at IS NULL
+              AND o.shift_id=TRY_CONVERT(uniqueidentifier,CASE WHEN ISJSON(j.entity_id)=1
+                THEN JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id END,N''$.id'') ELSE j.entity_id END)
+            WHERE o.origin_kind=N''OPEN'' AND o.branch_id=@scope) THEN 1 ELSE 0 END;',
+            N'@scope nvarchar(128),@keys nvarchar(max),@found bit OUTPUT',@scope=@branch,@keys=@ids,@found=@pending OUTPUT;
+        ELSE IF ISNULL(HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'VIEW DEFINITION'),0)<>1 AND EXISTS(
+          SELECT 1 FROM dbo.sync_change_journal j WITH(HOLDLOCK)
+          JOIN OPENJSON(@ids) wanted ON TRY_CONVERT(uniqueidentifier,wanted.[value])=
+            TRY_CONVERT(uniqueidentifier,CASE WHEN ISJSON(j.entity_id)=1
+              THEN JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id END,N'$.id') ELSE j.entity_id END)
+          WHERE j.branch_id=@branch AND j.entity_type=N'shifts' AND j.acknowledged_at IS NULL)
+          SET @pending=NULL;
+        SELECT @pending AS pending;`, { branch: branchId, ids: JSON.stringify(ids) });
+        const pending = result.recordset?.[0]?.pending;
+        if (pending == null) throw Object.assign(new Error("This connection cannot verify ownership of the pending shift opening."), {
+          code: "EFINANCIAL_HISTORY_UNCONFIRMED", table: "shifts",
+        });
+        return Boolean(pending);
+      };
+      return transaction ? read(transaction) : this.serializableTransaction(read);
+    }
     return this.financialBusinessOwnership(value,changes,branchId,terminalId,transaction,true);
   }
   async financialBusinessOwnership(value,changes,branchId,terminalId,transaction,pendingOnly){
@@ -435,6 +484,10 @@ class ChangeReader {
         CASE WHEN ISJSON(j.entity_id)=1 THEN JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id END,'$.${primary.sqlServerColumn}') ELSE j.entity_id END)
       WHERE j.branch_id=@branch AND j.entity_type=@table ${pendingOnly?"AND j.acknowledged_at IS NULL":""} AND (
         EXISTS(SELECT 1 FROM dbo.pos_sync_shift_financial_events e WHERE e.operation_id=j.aggregate_id AND e.branch_id=@branch AND e.terminal_id=@terminal)
+        -- The ordinary route must also hold another terminal's opening on shared SQL.
+        OR EXISTS(SELECT 1 FROM dbo.pos_sync_shift_financial_origins o WITH(HOLDLOCK)
+          WHERE @table=N'shifts' AND o.origin_kind=N'OPEN' AND o.branch_id=@branch
+            AND o.shift_id=TRY_CONVERT(uniqueidentifier,wanted.[value]) AND o.local_aggregate_id=j.aggregate_id)
         OR EXISTS(SELECT 1 FROM dbo.sync_change_journal owner JOIN dbo.pos_sync_shift_financial_sale_lineage l
           ON l.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(owner.entity_id)=1 THEN owner.entity_id ELSE N'{}' END,'$.id'))
           WHERE owner.aggregate_id=j.aggregate_id AND owner.branch_id=@branch AND owner.entity_type=N'sales' AND l.branch_id=@branch)

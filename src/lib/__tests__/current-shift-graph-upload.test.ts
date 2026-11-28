@@ -49,6 +49,11 @@ function fixture() {
     constructor(readonly transaction: Transaction) {}
     input(name: string, value: unknown) { this.inputs[name] = value; return this; }
     async query(text: string) {
+      if (text.includes("SELECT @pending AS pending")) {
+        expect(this.inputs).toEqual({ branch, ids: JSON.stringify([shiftId]) });
+        // This legacy fixture has no installed protected-opening origin table.
+        return { recordset: [{ pending: false }] };
+      }
       const table = /FROM dbo\.\[([a-z_]+)\]/.exec(text)?.[1];
       if (!table) throw new Error("Unexpected read statement");
       expect(text).toContain("WITH (UPDLOCK,HOLDLOCK)");

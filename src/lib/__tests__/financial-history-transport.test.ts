@@ -59,6 +59,7 @@ describe('two-phase exact financial history transport',()=>{
   expect(original).toMatchObject({shiftFinancialOpening:f.opening,
    operations:[{table:'shifts',rows:[f.openingRow],changes:[{...f.openingChange,operation:'insert'}]}]});
   expect(f.openingChange.operation).toBe('update');
+  expect(f.reader.rows).toHaveBeenCalledWith(expect.objectContaining({cloudTable:'shifts'}),expect.any(Array),{branchId:branch,exactFinancial:true});
   await f.run();
   expect(f.cloud.pushAggregate.mock.calls[1][0]).toEqual(original);
   expect(f.reader.acknowledgeFinancialOpening).toHaveBeenCalledOnce();
@@ -87,8 +88,8 @@ describe('two-phase exact financial history transport',()=>{
   const f=fixture();f.cloud.pushFinancialEvent.mockRejectedValueOnce(Object.assign(new Error('503'),{status:503}));await expect(f.run()).rejects.toMatchObject({status:503});expect(f.reader.acknowledgeFinancialHistory).not.toHaveBeenCalled();expect(f.cloud.pushAggregate).toHaveBeenCalledOnce();
   expect(await f.run()).toBe(2);expect(await f.run()).toBe(1);expect(f.cloud.pushFinancialEvent.mock.calls[0][0]).toEqual(f.cloud.pushFinancialEvent.mock.calls[1][0]);
  });
- it('keeps an exact protected opening conflict queued until an explicit retry without re-sending it on each timer',async()=>{
-  const f=fixture(),reason='FIN62_OPEN_BIRTH_NOT_EMPTY';
+ it.each(['FIN62_OPEN_BIRTH_NOT_EMPTY','FIN62_OPEN_ORIGIN_NOT_NEW'])('keeps %s queued without re-sending it on each timer',async(reason)=>{
+  const f=fixture();
   let fingerprint='project-profile-a';
   Object.assign(f.cloud,{requestContext:()=>({fingerprint})});
   f.worker.retry=PushWorker.prototype.retry.bind(f.worker);
