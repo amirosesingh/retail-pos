@@ -127,5 +127,5 @@ it("uses the closing state in the register status and new shift dialog", () => {
   expect(source).toContain("const shiftClosing = shiftIsClosing(activeShift)");
   expect(source).toContain('shiftClosing ? "Closing" : activeShift ? "Shift open"');
   expect(source).toContain("open={openShiftOpen && !shiftClosing}");
-  expect(source).toContain("open={closeShiftOpen && !shiftClosing}");
+  expect(source).toContain("open={Boolean(activeShift && !shiftClosing && closeShiftDialogId === activeShift.id)}");
 });

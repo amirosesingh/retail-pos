@@ -485,7 +485,7 @@ function Register() {
       })) !== null
     );
   };
-  const [closeShiftOpen, setCloseShiftOpen] = useState(false);
+  const [closeShiftDialogId, setCloseShiftDialogId] = useState<string | null>(null);
   const canDiscount = can("can_give_discount");
   const [discountOverride, setDiscountOverride] = useState(false);
   const discountAllowed = canDiscount || discountOverride;
@@ -1804,7 +1804,7 @@ function Register() {
   const terminalKey = readTerminalConfig()?.tokenId ?? currentStore.id ?? "default";
 
   const closeShiftFromRegister = async () => {
-    if (shiftClosing) return;
+    if (!activeShift || shiftClosing) return;
     if (!(await requirePermission("can_close_shift"))) return;
     const grant = await authorize({
       action: "shift_close",
@@ -1815,7 +1815,7 @@ function Register() {
       requestedBy: user?.staffId ?? user?.name ?? null,
     });
     if (!grant.ok) return;
-    setCloseShiftOpen(true);
+    setCloseShiftDialogId(activeShift.id);
   };
 
   const atom_actExchange = visible("register.exchange") ? (
@@ -2724,7 +2724,7 @@ function Register() {
       if (can("can_manage_bookings")) setBookingHubOpen(true);
     },
     "shift.open": () => { if (!shiftClosing) setOpenShiftOpen(true); },
-    "shift.close": () => { if (!shiftClosing) setCloseShiftOpen(true); },
+    "shift.close": () => { if (activeShift && !shiftClosing) setCloseShiftDialogId(activeShift.id); },
     "drawer.open": () => {
       void requirePermission("can_open_drawer").then((approved) => {
         if (!approved) return;
@@ -4290,7 +4290,10 @@ function Register() {
       </Dialog>
 
       {/* Close shift — the one server-driven closing workflow */}
-      <ShiftCloseDialog open={closeShiftOpen && !shiftClosing} onOpenChange={setCloseShiftOpen} />
+      <ShiftCloseDialog
+        open={Boolean(activeShift && !shiftClosing && closeShiftDialogId === activeShift.id)}
+        onOpenChange={open => setCloseShiftDialogId(open ? activeShift?.id ?? null : null)}
+      />
       <Dialog open={priceTarget !== null} onOpenChange={(open) => !open && setPriceTarget(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
