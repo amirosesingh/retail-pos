@@ -81,8 +81,24 @@ function read(options = {}) {
 
 // Non-secret previous binding survives revocation solely to protect queued origin.
 const previousFile = () => path.join(app.getPath("userData"), "terminal-last-binding.bin");
-function lastBinding(){
-  try{return JSON.parse(safeStorage.decryptString(fs.readFileSync(previousFile())));}catch{return null;}
+function lastBinding(options = {}) {
+  const strict = options?.strict === true;
+  const unreadable = () => {
+    if (strict) throw Object.assign(new Error("The saved previous terminal binding could not be read. Your saved registration has not been changed."), { code: "EACTIVATION_STORE" });
+    return null;
+  };
+  let bytes;
+  try { bytes = fs.readFileSync(previousFile()); }
+  catch (error) { return error?.code === "ENOENT" ? null : unreadable(); }
+  try {
+    if (strict && !canSeal()) throw new Error("Binding vault unavailable");
+    const previous = JSON.parse(safeStorage.decryptString(bytes));
+    if (strict && (!previous || typeof previous !== "object" || Array.isArray(previous) ||
+        typeof previous.tokenId !== "string" || !previous.tokenId.trim() ||
+        ["deviceUse", "deviceType", "locationId", "storeId", "branchId"].some(key =>
+          previous[key] != null && typeof previous[key] !== "string"))) throw new Error("Invalid binding marker");
+    return previous;
+  } catch { return unreadable(); }
 }
 function rememberBinding(config){
   if(!config?.tokenId||!canSeal())return;

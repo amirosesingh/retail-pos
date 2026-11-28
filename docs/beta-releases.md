@@ -4,6 +4,15 @@ Merge development changes into `beta` to accumulate fixes. Pushes continue to
 run regression checks and update the live Cloudflare beta websites. They do not
 build or publish Android/Windows beta installers.
 
+The Windows update controls separate download from installation. Anyone using
+the app may download and verify an update without waiting for POS synchronization.
+Installation first saves current work locally and verifies the local database.
+An unavailable cloud connection or a committed upload backlog can defer sync
+while installation proceeds. Pending records and shift closes keep their
+original evidence and are retried through the normal coordinator after restart.
+Unfinished transactions, failed local saves, unreadable local SQL storage and
+active database preparation require attention before installation.
+
 Only when the owner explicitly says **“Publish beta now”**, publish one combined
 Android/Windows beta from the selected, checked beta commit. The beta workflow
 builds both in parallel, validates that both belong to that same commit, and
@@ -80,9 +89,26 @@ Production builds/deploys wait for the final
 the final version commit builds and deploys once. The release workflow creates
 that marker even when versioned files were already prepared in the PR.
 
-For now beta uses the existing production database and access rules. Beta sales
-and other writes are real business data. This setup does not create a test
-database or apply migrations.
+For an approved web-first Production release, set the GitHub repository
+variable `RETAIL_PRODUCTION_WEB_FIRST` to `true` before the release workflow
+runs. The release marker and stable tag still identify the web release.
+The workflows hold automatic stable installer publication and direct Windows
+and Android publication during this rollout.
+
+After the approved Supabase upgrade passes verification, activate the
+reviewed Production Worker version. Verify the live site and SQL Server
+readiness. Dispatch `platform-release.yml` on the exact stable tag with
+`web_and_sql_verified=true`. Keep the variable set until the installer
+feeds pass read-back, then clear it to resume the ordinary stable workflow.
+
+Retail POS Beta uses the isolated Supabase project `irjkmhgrjgcaoixcixut`.
+Beta testing and release verification must target that project, preserving the
+existing beta Worker's connection bindings during deployment. Native devices
+retain their operator-managed Settings → Database & Cloud Connection values;
+publishing an update does not replace saved device configuration or local data.
+Database migrations require their reviewed target and upgrade procedure. Beta
+publication does not create/reset databases, apply production migrations or
+authorize production promotion.
 
 Every fix/feature starts on a branch based on `beta`, with a `[BETA]` PR targeting
 `beta` and the `beta` label. Internal PRs are automatically labeled and prefixed

@@ -9,7 +9,8 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { supabaseConfig } from "./external-supabase-config";
-import { DEFAULT_POS_RULES, normalizeRules, type PosRules } from "./pos-rules";
+import { DEFAULT_POS_RULES, normalizeRules, type PosRules } from "./pos-rules.ts";
+import { sameBranchId } from "./branch-id";
 import {
   classifyRulesFailure,
   type RulesFailure,
@@ -31,6 +32,8 @@ export type OverrideGrant = {
   approvedByName?: string;
   role: string;
   modeUsed?: "pin" | "self_pin" | "request" | "admin_auto" | "offline_pin" | "offline_self_pin";
+  /** Included by new PIN/TOTP grants; never guessed when verifying old grants. */
+  credentialMethod?: "pin" | "totp";
   storeId: string;
   binding: string;
   requestId?: string;
@@ -224,7 +227,11 @@ export async function saveRules(
   // Do not issue a second read: a brief outage after a committed save used to
   // make the editor claim that the saved rules could not be refreshed.
   const json = (await res.json()) as RulesSnapshotRow;
-  const rules = normalizeRules(json?.rules);
+  if (typeof json?.store_id !== "string" || !sameBranchId(json.store_id, storeId) ||
+      json.row_version !== expectedVersion + 1 || !json.rules ||
+      typeof json.rules !== "object" || Array.isArray(json.rules))
+    throw new Error("The database did not confirm the saved rules for the selected store. Refresh before retrying.");
+  const rules = normalizeRules(json.rules);
   return {
     shiftSharingAvailable: json?.branch_shift_sharing_available === true,
     rules,
@@ -232,8 +239,8 @@ export async function saveRules(
     failure: "none",
     revision: rulesRevision(rules),
     fetchedAt: Date.now(),
-    storeId: String(json?.store_id ?? storeId ?? ""),
-    rowVersion: Math.max(0, Number(json?.row_version) || 0),
+    storeId: json.store_id,
+    rowVersion: json.row_version,
     updatedAt: typeof json?.updated_at === "string" ? json.updated_at : null,
     updatedBy: typeof json?.updated_by === "string" ? json.updated_by : null,
   };

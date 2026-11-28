@@ -2,7 +2,8 @@
 // Isolated SQL JWT claim context is exercised; this is not JWT cryptography or live validation.
 import assert from 'node:assert/strict';import{readFile}from'node:fs/promises';import{createRequire}from'node:module';import{randomUUID,createHash}from'node:crypto';import Module from'node:module';import{dirname}from'node:path';
 const require=createRequire(import.meta.url),helperPath=require.resolve('./lib/shift-protocol-integration-fixture.cjs');let{createCloud}=require(helperPath),nativeDb;
-const native=process.argv.slice(2).join(' ')==='--native';assert(process.argv.length===2||native,'Only --native accepted; no connection arguments');
+const flags=process.argv.slice(2).join(' '),managedFeed=flags==='--native --managed-feed';
+const native=managedFeed||flags==='--native';assert(!flags||native,'Only fixture flags accepted; no connection arguments');
 const read=p=>readFile(new URL('../'+p,import.meta.url),'utf8');const schema=(await read('supabase/schema.sql')).replaceAll('\r\n','\n');
 function fn(name){const start=schema.lastIndexOf('CREATE OR REPLACE FUNCTION public.'+name+'(');assert(start>=0,name);const tail=schema.slice(start),tag=tail.match(/\bAS\s+(\$[\w]*\$)/i)?.[1],first=tail.indexOf(tag),end=tail.indexOf(tag+';',first+tag.length);assert(end>first);return tail.slice(0,end+tag.length+1);}
 function table(name){const start=schema.indexOf('CREATE TABLE IF NOT EXISTS public.'+name+' (');assert(start>=0);return schema.slice(start,schema.indexOf('\n);',start)+3);}
@@ -31,7 +32,13 @@ const addShift=async({state='CASH_COUNT_REQUIRED',opening='1.005',sales=[{total:
 const stateRole=()=>state('postgres',null);
 const original=(shift,cash='21.01',key=shift+':original')=>db.query('SELECT public.shift_cash_count_submit($1,$2,NULL,NULL,$3,$4) state',[shift,cash,key,terminal]);
 try{
- await setup();const legacyFractional=await addShift();await state('authenticated',cashier);await original(legacyFractional,'21.005');await stateRole();
+ await setup();
+ if (managedFeed) {
+  await db.exec(await read('scripts/preparation/shift-financial-web-actions.sql'));
+  const { verifyManagedShiftAndDrawerFeed } = await import('./lib/pos-sync-managed-shift-fixture.mjs');
+  await verifyManagedShiftAndDrawerFeed({ db, read, table, branch, terminal, cashier, state, stateRole, addShift, original, test });
+ } else {
+ const legacyFractional=await addShift();await state('authenticated',cashier);await original(legacyFractional,'21.005');await stateRole();
  await test('changed actual source metadata aborts before creating preparation objects',async()=>{const definition=(await db.query("SELECT pg_get_functiondef('public.shift_cash_count_submit(uuid,numeric,numeric,numeric,text,text)'::regprocedure) definition")).rows[0].definition;await db.exec('BEGIN;'+definition.replace(/\bBEGIN\b/,'BEGIN /* fixture source drift */'));if(native)await db.exec(await read('scripts/preparation/shift-financial-web-actions.sql'));else await assert.rejects(db.exec(await read('scripts/preparation/shift-financial-web-actions.sql')),/FIN62_WEB_SOURCE_UNEXPECTED/);await db.exec('ROLLBACK;');assert.equal((await db.query("SELECT to_regnamespace('fin62_web_preparation')::text value")).rows[0].value,null);});
  const expectedBefore=(await db.query("SELECT pg_get_functiondef('public.shift_expected_totals(uuid)'::regprocedure) definition")).rows[0].definition;
  const aclBefore=(await db.query("SELECT proname,proowner,proacl::text,prosecdef,proconfig,proargdefaults::text FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname IN('shift_cash_count_submit','shift_recount_submit','shift_reconcile_now','pos_admin_correct_closed_shift') ORDER BY proname")).rows;
@@ -53,4 +60,5 @@ try{
  await test('all five guarded outer web actions acquire shared advisory before parent row lock',async()=>{for(const name of['shift_close_start','shift_variance_approve','shift_cash_count_submit','shift_recount_submit','pos_admin_correct_closed_shift']){const row=(await db.query('SELECT pg_get_functiondef(oid) definition FROM pg_proc WHERE pronamespace=\'public\'::regnamespace AND proname=$1',[name])).rows[0];const advisory=row.definition.indexOf("pg_advisory_xact_lock(hashtextextended('pos-sync-shift:'");assert(advisory>=0&&advisory<row.definition.indexOf('SELECT * INTO v FROM public.shifts'),name);}});
  if(native)await test('actual independent native publisher advisory blocks web count before any row lock or financial write',async()=>{await stateRole();const shift=await addShift();await db.advisoryFirst(`BEGIN;SELECT set_config('request.jwt.claim.sub','${cashier}',true),set_config('request.jwt.claims','${JSON.stringify({sub:cashier,email:`${cashier}@fixture.test`})}',true);SELECT public.shift_cash_count_submit('${shift}',21.01,NULL,NULL,'race-${shift}','${terminal}');COMMIT;`,shift);assert.equal((await db.query('SELECT state FROM shifts WHERE id=$1',[shift])).rows[0].state,'CLOSED');});
  console.log(`${passed} isolated actual web v2 action groups passed`);
+ }
 }catch(error){console.error(error.message,error.code??'',error.where??'');process.exitCode=1;}finally{await db.close();}

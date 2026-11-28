@@ -11,6 +11,7 @@ import { z } from "zod";
 import { loadRequesterDirectLimit } from "./approval-baseline.server";
 import { ticketDiscounts, ticketDiscountApprovalPercent } from "./authorization";
 import { approvalBranchAllowed, approvalAllBranchesAllowed, approvalScopeConfigured, approvalSelectedBranch, approvalPersonBranchAllowed } from "./approval-branch-scope";
+import { namedApprovalWakeProject, wakeNamedApprovers } from "./named-approval-wake.server";
 
 const caller = z.object({
   sessionToken: z.string().min(10).optional(),
@@ -153,6 +154,8 @@ const mutationInput = caller.extend({
   snapshotHash: z.string().max(40).default(""),
   requestedAmount: z.number().finite().nonnegative().nullish(),
   grantToken: z.string().max(4096).nullish(),
+  refundApprovalBasis: z.unknown().optional(),
+  refundApprovalWitness: z.unknown().optional(),
 });
 
 type Caller = {
@@ -218,59 +221,17 @@ export const verifyBusinessAuthorization = createServerFn({ method: "POST" })
     try {
       const who = await assertCaller(data);
       const storeId = callerStore(who, data.storeId);
-      const { loadRuleRows } = await import("./authorization.server");
-      const { resolveRules, authorizationBinding, canBypassAuthorization, requiresAuthorizationAmount } =
-        await import("./authorization");
-      const { verifyOverrideGrant } = await import("./pos-rules.server");
-      const rule = resolveRules(await loadRuleRows(storeId), storeId)[data.actionKey];
-      if (!rule?.isEnabled || rule.mode === "none") return { ok: true as const, required: false };
-      if (requiresAuthorizationAmount(data.actionKey) && data.requestedAmount == null)
-        return { ok: false as const, error: "The value being authorized is required" };
-      if (
-        canBypassAuthorization(
-          rule,
-          { userId: who.id, role: who.role },
-          data.requestedAmount,
-        )
-      ) {
-        return { ok: true as const, required: false, bypassedBy: who.id };
-      }
-      const binding = authorizationBinding(data.payload, data.snapshotHash);
-      const grant = verifyOverrideGrant(data.grantToken ?? undefined, data.actionKey, {
-        storeId,
-        binding,
-      });
-      if (!grant) {
-        return { ok: false as const, error: "A valid authorization grant is required" };
-      }
-      if (data.requestedAmount != null && (grant.approvedAmount == null ||
-          !Number.isFinite(grant.approvedAmount) || grant.approvedAmount < 0))
-        return { ok: false as const, error: "An approval covering the requested value is required" };
-      if (
-        grant.approvedAmount !== undefined &&
-        grant.approvedAmount !== null &&
-        (data.requestedAmount === undefined ||
-          data.requestedAmount === null ||
-          data.requestedAmount > grant.approvedAmount)
-      ) {
-        return { ok: false as const, error: "The requested value exceeds the approved amount" };
-      }
-      // A queued approval can be invalidated after it was claimed (for
-      // example when its line or bill is voided). Signed tokens are therefore
-      // checked against the durable request status, not trusted in isolation.
-      if (grant.requestId) {
-        const { getRequest } = await import("./authorization.server");
-        const request = await getRequest(grant.requestId);
-        if (
-          !request ||
-          request.status !== "approved" ||
-          !request.consumedAt ||
-          request.requestedBy.toLowerCase() !== who.id.toLowerCase()
-        ) {
-          return { ok: false as const, error: "That approval is no longer valid" };
-        }
-      }
-      return { ok: true as const, required: true, grant };
+      const { checkBusinessAuthorization } = await import("./business-authorization.server");
+      const optIn = data.refundApprovalBasis !== undefined || data.refundApprovalWitness !== undefined;
+      if (optIn && (data.actionKey !== "refund" || data.refundApprovalBasis === undefined || data.refundApprovalWitness === undefined))
+        throw new Error("An exact refund operation and current witness are required.");
+      const authorization = await checkBusinessAuthorization(who, { ...data, storeId });
+      if (!authorization.ok || !optIn) return authorization;
+      const { issueRefundApprovalReceipt, verifyRefundApprovalIssueBasis } = await import("./refund-approval-receipt.server");
+      const basis = await verifyRefundApprovalIssueBasis(data.refundApprovalBasis, { ...data, storeId });
+      const refundApprovalReceipt = await issueRefundApprovalReceipt({ basis, witness: data.refundApprovalWitness,
+        proof: data, authorization });
+      return { ...authorization, refundApprovalReceipt };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message.slice(0, 300) };
     }
@@ -593,6 +554,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         storeId,
         binding: data.binding,
         approvedAmount: data.requestedAmount ?? null,
+        credentialMethod,
       }),
     };
   });
@@ -772,6 +734,7 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
       if (created.created) {
         await notifyApprovers(request, who).catch(() => undefined);
         await markRequestNotified(request.id);
+        await wakeNamedApprovers(request);
       }
       return { ok: true as const, request };
     } catch (e) {
@@ -920,6 +883,7 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
             },
           });
           await notifyRequesterExpired(request).catch(() => undefined);
+          await wakeNamedApprovers(request);
           const { releaseDecidedHold } = await import("./record-edits.server");
           await releaseDecidedHold(request.id).catch(() => undefined);
         }),
@@ -976,6 +940,7 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
         ok: true as const,
         requests: visible,
         pageInfo: result.pageInfo,
+        namedWakeProject: namedApprovalWakeProject(),
         me: { id: who.id, role: who.role, canAccessAllBranches: allApprovalBranches, branchId: requestedStoreId },
         rules: Array.from(rulesByStore.entries())
           .filter(([branch]) => visibleBranches.has(branch))
@@ -1177,6 +1142,7 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
         };
       }
       await notifyRequester(existing, data.approve, who, approvedAmount).catch(() => undefined);
+      await wakeNamedApprovers(updated);
       // A rejected request must not leave a posted record locked.
       if (!data.approve) {
         const { releaseDecidedHold } = await import("./record-edits.server");
@@ -1311,6 +1277,7 @@ export const cancelAuthorizationRequest = createServerFn({ method: "POST" })
           approved_payload: request.approvedPayload,
         },
       });
+      if (logged.ok) await wakeNamedApprovers(request);
       return logged.ok
         ? { ok: true as const, changed: true, status: "cancelled" as const }
         : { ok: false as const, error: "Request cancelled, but its audit entry failed" };

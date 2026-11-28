@@ -78,3 +78,27 @@ describe('verified native atomic transfer dispatch relay',()=>{
   expect(JSON.stringify(result)).not.toContain('PRIVATE');expect(fetchMock).toHaveBeenCalledTimes(1);
  });
 });
+
+describe('verified native transfer arrival and verification relay', () => {
+ const receiver = {...scope, storeId:'B', permissions:{can_receive_transfer:true}};
+ const operation = (fn: 'stock_transfer_receive' | 'stock_transfer_verify') => ({
+  ...op, fn, args:{...op.args,p_received_by:'Forged',p_verified_by:'Forged',p_deduct_source:true,p_reason:'counted shortage'},
+ });
+ it.each([
+  ['stock_transfer_receive', 'receive', null],
+  ['stock_transfer_verify', 'verify', 'counted shortage'],
+ ] as const)('uses only the verified destination and actor for %s', async (fn, stage, reason) => {
+  fetchMock.mockResolvedValueOnce(json([{to_store_id:'B'}])).mockResolvedValueOnce(new Response(null,{status:204}));
+  expect(await runRelayRpc(operation(fn),receiver)).toEqual({ok:true});
+  const [url,init]=fetchMock.mock.calls[1];
+  expect(url).toContain('rpc/stock_transfer_receive_for_staff');
+  expect(JSON.parse(init.body)).toEqual({p_transfer_id:'t',p_staff_user_id:'verified',p_bound_store_id:'B',
+   p_lines:op.args.p_lines,p_stage:stage,p_reason:reason});
+ });
+ it('holds a foreign location and an unverified terminal before the receipt RPC', async () => {
+  fetchMock.mockResolvedValueOnce(json([{to_store_id:'A'}])).mockResolvedValueOnce(json([{to_store_id:'B'}]));
+  expect((await runRelayRpc(operation('stock_transfer_receive'),receiver)).code).toBe('STORE_FORBIDDEN');
+  expect((await runRelayRpc(operation('stock_transfer_verify'),{...receiver,kind:'terminal'})).code).toBe('PERMISSION_DENIED');
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+ });
+});

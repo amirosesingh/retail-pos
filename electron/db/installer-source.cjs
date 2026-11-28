@@ -1,6 +1,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const INSTALLER_PATH = path.join(__dirname, "..", "..", "database", "sqlserver", "retail-pos-local-database.sql");
+const bookingUploadSql = () => fs.readFileSync(
+  path.join(path.dirname(INSTALLER_PATH), "prepared", "booking-upload-v1.sql"), "utf8").trim();
 const splitBatches = sql => String(sql).split(/^\s*GO\s*$/gim).map(value=>value.trim()).filter(Boolean);
 const SESSION_OPTIONS = "SET ANSI_NULLS ON; SET QUOTED_IDENTIFIER ON; SET ANSI_PADDING ON; SET ANSI_WARNINGS ON; SET ARITHABORT ON; SET CONCAT_NULL_YIELDS_NULL ON; SET NUMERIC_ROUNDABORT OFF; SET XACT_ABORT ON;";
 const TARGET_GUARD = `IF DB_NAME() IN (N'master',N'model',N'msdb',N'tempdb')
@@ -38,6 +40,6 @@ function migrationBundleSql(appVersion="current") {
     "-- Back up the existing database before upgrading. No business rows are deleted.",
     SESSION_OPTIONS, "BEGIN TRY",TARGET_GUARD,execute(schema),
     ...migrations.map(file=>`-- ${file.name}\nEXEC sys.sp_executesql ${literal(`IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=${file.version})\nBEGIN\n${execute(file.sql)}\nEND;`)};`),
-    execute(validation),"END TRY", "BEGIN CATCH", "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;", "THROW;", "END CATCH;", ""].join('\n');
+    execute(bookingUploadSql()), execute(validation),"END TRY", "BEGIN CATCH", "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;", "THROW;", "END CATCH;", ""].join('\n');
 }
-module.exports={installerSections,migrationBundleSql,splitBatches,TARGET_GUARD,INSTALLER_PATH,SESSION_OPTIONS};
+module.exports={installerSections,bookingUploadSql,migrationBundleSql,splitBatches,TARGET_GUARD,INSTALLER_PATH,SESSION_OPTIONS};

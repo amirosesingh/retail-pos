@@ -93,7 +93,7 @@ it('installed adoption handler cannot replace Operations A with B even with vali
  const to=source.indexOf('  ipcMain.handle("admin:unlock",',from);
  const write=vi.fn();const fetch=vi.fn();
  const epochGuard=source.slice(source.indexOf('function captureSessionAdoption()'),source.indexOf('\nfunction enrollCurrentShiftAuthor'));
- new Function('ipcMain','guard','adminSession','terminalStore','activationBoundary','fetch','databaseManager','cloudCredentials','authorizationServerUrl',`let sessionAdoptionRevision=0;${epochGuard}${source.slice(from,to)}`)(ipc,guard,session,{read:()=>a,write},policy,fetch,{pool:{}},{read:()=>({url:'https://fixture.supabase.co'})},()=> 'https://fixture.invalid');
+ new Function('ipcMain','guard','adminSession','terminalStore','activationBoundary','fetch','databaseManager','cloudCredentials','authorizationServerUrl',`let sessionAdoptionRevision=0,offlineStaffLoginWitness=null;${epochGuard}${source.slice(from,to)}`)(ipc,guard,session,{read:()=>a,write},policy,fetch,{pool:{}},{read:()=>({url:'https://fixture.supabase.co'})},()=> 'https://fixture.invalid');
  try{
   session.grant('staff','cashier',{can_process_sale:true},'pos','A');
   await expect(handlers.get('admin:adopt-session')!({}, {cashierToken:'valid-session'}, {...a,locationId:'B'})).resolves.toMatchObject({ok:false,code:'EACTIVATION_BINDING',status:403});
@@ -114,7 +114,7 @@ it('ordinary adoption preserves cashier sale grants and repairs a verified legac
  const existing={...a,backendUrl:'https://saved.test',supabaseUrl:'https://saved-cloud.test'};
  const write=vi.fn(()=>({ok:true}));const fetch=vi.fn(async(_url:string,_options:RequestInit)=>Response.json({ok:true,terminal:descriptor,level:'staff',subject:'cashier',branchId:'A',permissions:{can_process_sale:true}}));
  const epochGuard=source.slice(source.indexOf('function captureSessionAdoption()'),source.indexOf('\nfunction enrollCurrentShiftAuthor'));
- new Function('ipcMain','guard','adminSession','terminalStore','activationBoundary','fetch','authorizationServerUrl','syncCloud','rememberVerifiedBranch','assertSafeRegistrationChange','recordRegistrationChange','databaseManager','cloudCredentials','enrollCurrentShiftAuthor',`let sessionAdoptionRevision=0;${epochGuard}${source.slice(from,to)}`)(ipc,guard,session,{read:()=>existing,write,lastBinding:()=>a},policy,fetch,()=>existing.backendUrl,{setAuthorizationProof:vi.fn()},vi.fn(),vi.fn(),vi.fn(),{pool:{}},{read:()=>({url:'https://fixture.supabase.co'})},vi.fn());
+ new Function('ipcMain','guard','adminSession','terminalStore','activationBoundary','fetch','authorizationServerUrl','syncCloud','rememberVerifiedBranch','assertSafeRegistrationChange','recordRegistrationChange','databaseManager','cloudCredentials','enrollCurrentShiftAuthor',`let sessionAdoptionRevision=0,offlineStaffLoginWitness=null;${epochGuard}${source.slice(from,to)}`)(ipc,guard,session,{read:()=>existing,write,lastBinding:()=>a},policy,fetch,()=>existing.backendUrl,{setAuthorizationProof:vi.fn()},vi.fn(),vi.fn(),vi.fn(),{pool:{}},{read:()=>({url:'https://fixture.supabase.co'})},vi.fn());
  try{
   session.grant('staff','cashier',{can_process_sale:true},'pos','A');
   expect(await handlers.get('admin:adopt-session')!({}, {cashierToken:'valid-session',deviceBindingProof:'a'.repeat(64)}, {...a,backendUrl:'https://untrusted.test'})).toMatchObject({ok:true});
@@ -140,6 +140,30 @@ it('re-pairing Management requires admin, connected SQL and no pending work acro
  pending=0;await expect(check(next)).resolves.toBeUndefined();
  expect(query).toHaveBeenCalledWith(expect.stringContaining('WHERE acknowledged_at IS NULL'));
  conflicts.mockResolvedValueOnce([{}]);await expect(check(next)).rejects.toThrow('pending transactions');
+});
+
+it('holds a changed Operations registration while its scoped settings upload is pending with no pilot flag',async()=>{
+ const source=readFileSync(new URL('../../../electron/main.cjs',import.meta.url),'utf8');
+ const from=source.indexOf('async function assertSafeRegistrationChange(');
+ const to=source.indexOf('function recordRegistrationChange(',from);
+ const original={...a,tokenId:'10000000-0000-4000-8000-000000000001'};
+ const next={...original,tokenId:'10000000-0000-4000-8000-000000000002',locationId:'B'};
+ const pool={};
+ const checkPending=vi.fn<(_pool:object,_scope:object)=>Promise<void>>();
+ const lease=vi.fn(async(work:()=>Promise<void>)=>work());
+ const check=new Function('terminalStore','activationBoundary','adminSession','databaseManager','legacyRecoveryRuntime','conflictRepository','syncCoordinator','require',`${source.slice(from,to)};return assertSafeRegistrationChange;`)({lastBinding:()=>original},policy,
+  {hasLevel:()=>true},{isConnected:()=>true,pool},{reader:{pendingSummary:async()=>({pending:0,failed:0})}}, {unresolved:async()=>[]},
+  {withExclusive:lease},(name:string)=>{
+    expect(name).toBe('./db/store-settings-edit-outbox.cjs');
+    return {assertStoreSettingsEditReassignmentClear:checkPending};
+  });
+ await expect(check(original)).resolves.toBeUndefined();
+ expect(checkPending).not.toHaveBeenCalled();
+ checkPending.mockRejectedValueOnce(Object.assign(Error('private SQL details'),{code:'ESETTINGS_EDIT_PENDING'}));
+ await expect(check(next)).rejects.toMatchObject({code:'ESETTINGS_EDIT_PENDING',message:expect.stringContaining('pending store settings edit')});
+ expect(lease).toHaveBeenCalledOnce();
+ expect(checkPending).toHaveBeenCalledWith(pool,{branchId:'A',terminalId:original.tokenId});
+ await expect(check(next)).resolves.toBeUndefined();
 });
 
 it('offline unchanged legacy mirroring remains available and proof repair validates online',async()=>{

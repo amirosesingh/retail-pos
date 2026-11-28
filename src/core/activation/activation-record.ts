@@ -12,6 +12,7 @@
  */
 import { clearDeviceSecret, deviceHmac, getDeviceSecret, setDeviceSecret } from "@/lib/device-secrets";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
+import { terminalRuntimePlatform } from "@/core/activation/terminal-platform";
 
 const RECORD = "activation.record.v1";
 export type ActivationRecord = {
@@ -35,6 +36,8 @@ export async function writeActivationRecord(input: {
   tokenId: string;
   stamp?: string | null;
   verifiedAt?: Date;
+  /** Do not publish a response from a retired registration or connection. */
+  isCurrent?: () => boolean;
 }): Promise<ActivationRecord> {
   const at = input.verifiedAt ?? new Date();
   const fields: Omit<ActivationRecord, "mac"> = {
@@ -44,6 +47,7 @@ export async function writeActivationRecord(input: {
     stamp: input.stamp ?? null,
   };
   const record: ActivationRecord = { ...fields, mac: await deviceHmac(body(fields)) };
+  if (input.isCurrent && !input.isCurrent()) throw new Error("The terminal registration changed before verification was saved.");
   await setDeviceSecret(RECORD, record);
   return record;
 }
@@ -92,6 +96,8 @@ export function clearActivationRecord(): void {
  * successful heartbeat.
  */
 export async function isRegistered(): Promise<RegistrationState> {
+  // A legacy renderer receipt alone cannot establish a Windows registration.
+  if (terminalRuntimePlatform() === "electron") return readTerminalConfig() ? "registered" : "not-registered";
   const record = await readActivationRecord();
   if (record?.activated) return "registered";
   return readTerminalConfig() ? "registered" : "not-registered";

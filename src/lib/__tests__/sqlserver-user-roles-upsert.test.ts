@@ -2,14 +2,23 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("SQL Server user role synchronization", () => {
-  it("materializes staff without copying their real email to a till", async () => {
+  it.each([
+    ["private@example.com", "terminal.invalid"],
+    ["different-login@POS-INTERNAL.LOCAL", "pos-internal.local"],
+    ["different-login@pos.local", "pos-internal.local"],
+    ["redacted-alias@terminal.invalid", "terminal.invalid"],
+    ["named@pos-internal.local.example", "terminal.invalid"],
+    ["named@unexpected@pos-internal.local", "terminal.invalid"],
+    [undefined, "terminal.invalid"],
+  ])("preserves only the sign-in credential type for %s", async (email, domain) => {
     const inputs = new Map<string, unknown>();
+    let merge = "";
     class Request {
       input(name: string, value: unknown) {
         inputs.set(name, value);
         return this;
       }
-      async query() { return { rowsAffected: [1] }; }
+      async query(sql: string) { merge = sql; return { rowsAffected: [1] }; }
     }
     const { CloudClient } = await import("../../../electron/sync/cloud-client.cjs");
     const client = new CloudClient({
@@ -19,13 +28,17 @@ describe("SQL Server user role synchronization", () => {
     await client.applyLocalBatch({}, {
       cloudTable: "app_users", sqlServerTable: "app_users", conflictRule: "highest_version",
       columns: [
-        { cloudColumn: "id", sqlServerColumn: "id", primaryKey: true },
-        { cloudColumn: "user_id", sqlServerColumn: "user_id" },
-        { cloudColumn: "email", sqlServerColumn: "email" },
+        { cloudColumn: "id", sqlServerColumn: "id", sqlServerType: "uniqueidentifier", primaryKey: true },
+        { cloudColumn: "user_id", sqlServerColumn: "user_id", sqlServerType: "nvarchar(128)" },
+        { cloudColumn: "email", sqlServerColumn: "email", sqlServerType: "nvarchar(450)" },
+        { cloudColumn: "row_version", sqlServerColumn: "row_version", sqlServerType: "int" },
       ],
-    }, { rows: [{ row_data: { id: "staff-id", user_id: "Cashier One", email: "private@example.com" } }], tombstones: [] });
-    expect([...inputs.values()]).toContain("Cashier_One@terminal.invalid");
-    expect([...inputs.values()]).not.toContain("private@example.com");
+    }, { rows: [{ row_data: { id: "4cbe2fb4-2247-4d69-aa80-33d8eb087364", user_id: "Cashier One", email, row_version: 3 } }], tombstones: [] });
+    expect([...inputs.values()]).toContain(`Cashier_One@${domain}`);
+    expect([...inputs.values()]).not.toContain(email);
+    expect(merge).toContain("target.[email]=source.[email]");
+    expect(merge).toContain("source.[row_version]>=target.[row_version]");
+    expect(merge).toContain("CONVERT(varbinary(max),target.[email])");
   });
 
   it("merges a replay by the composite unique assignment instead of generated id", () => {

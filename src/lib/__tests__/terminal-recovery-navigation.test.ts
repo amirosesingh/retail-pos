@@ -5,7 +5,7 @@ import type { TerminalConfig } from "@/core/activation/terminal-tokens";
 
 const f = vi.hoisted(() => ({
   search: {} as { section?: "activation" | "connection" },
-  profile: { loading: false, error: false, cloud: true as boolean | null, config: null as TerminalConfig | null, retry: vi.fn() },
+  profile: { loading: false, error: false, connectionReady: true, registrationReady: true, cloud: true as boolean | null, config: null as TerminalConfig | null, retry: vi.fn() },
   activation: vi.fn(), cloud: vi.fn(),
   shallow: false, cursor: 0, state: [] as unknown[], effectDeps: undefined as readonly unknown[] | undefined,
   pending: [] as (() => void)[],
@@ -20,12 +20,21 @@ vi.mock("react", async original => {
       if (!(index in f.state)) f.state[index] = typeof initial === "function" ? initial() : initial;
       return [f.state[index], (next: unknown) => { f.state[index] = typeof next === "function" ? next(f.state[index]) : next; }];
     },
+    useRef(initial: unknown) {
+      if (!f.shallow) return actual.useRef(initial);
+      const index = f.cursor++;
+      if (!(index in f.state)) f.state[index] = { current: initial };
+      return f.state[index];
+    },
     useEffect(effect: () => void, deps?: readonly unknown[]) {
       if (!f.shallow) return actual.useEffect(effect, deps);
       if (!f.effectDeps || !deps || deps.some((value, index) => !Object.is(value, f.effectDeps?.[index]))) {
         f.effectDeps = deps;
         f.pending.push(effect);
       }
+    },
+    useCallback<T extends (...args: never[]) => unknown>(callback: T, deps: readonly unknown[]) {
+      return f.shallow ? callback : actual.useCallback(callback, deps);
     },
   };
 });
@@ -65,7 +74,7 @@ function platform(name: "android" | "ios" | "electron" | "web") {
 }
 beforeEach(() => {
   platform("android"); f.search = {};
-  f.profile = { loading: false, error: false, cloud: true, config: saved, retry: vi.fn() };
+  f.profile = { loading: false, error: false, connectionReady: true, registrationReady: true, cloud: true, config: saved, retry: vi.fn() };
   f.activation.mockClear(); f.cloud.mockClear();
   f.shallow = false; f.cursor = 0; f.state = []; f.effectDeps = undefined; f.pending = [];
 });
@@ -91,7 +100,7 @@ describe("terminal setup uses protected recovery with presentation-only sections
   });
   it.each(["activation", "connection"] as const)("keeps a pending or failed %s profile out of configuration editors", section => {
     for (const state of [{ loading: true, error: false }, { loading: false, error: true }]) {
-      Object.assign(f.profile, state, { config: null, cloud: null });
+      Object.assign(f.profile, state, { connectionReady: false, registrationReady: false, config: null, cloud: null });
       const html = renderHub(section);
       expect(html).not.toContain("Not activated"); expect(html).not.toContain(">Missing<");
       expect(html).not.toContain("Activation editor"); expect(html).not.toContain("Connection editor");
@@ -126,14 +135,30 @@ function renderCard(card: ReactElement<CardProps>) {
   return (card.type as (props: CardProps) => ReactElement<{ children: ReactElement<{ "aria-expanded": boolean; onClick: () => void }>[] }>)(card.props);
 }
 it("opens an asynchronously missing activation card once and lets the operator collapse it", () => {
-  Object.assign(f.profile, { loading: true, config: null, cloud: null });
+  Object.assign(f.profile, { loading: true, connectionReady: false, registrationReady: false, config: null, cloud: null });
   const pending = renderCard(activationCard()); f.pending.splice(0).forEach(effect => effect());
   expect(pending.props.children[0].props["aria-expanded"]).toBe(false);
-  Object.assign(f.profile, { loading: false, cloud: true });
+  Object.assign(f.profile, { loading: false, connectionReady: true, registrationReady: true, cloud: true });
   renderCard(activationCard()); f.pending.splice(0).forEach(effect => effect());
   const open = renderCard(activationCard());
   expect(open.props.children[0].props["aria-expanded"]).toBe(true);
   open.props.children[0].props.onClick();
   const collapsed = renderCard(activationCard()); f.pending.splice(0).forEach(effect => effect());
   expect(collapsed.props.children[0].props["aria-expanded"]).toBe(false);
+});
+
+it("keeps the recovery activation form open when its first registration is saved", () => {
+  Object.assign(f.profile, { config: null, cloud: true });
+  const draw = () => {
+    const settings = activationCard().props.children as ReactElement<{ config: TerminalConfig | null }>;
+    f.shallow = true;
+    f.cursor = 0;
+    return (settings.type as (props: typeof settings.props) => ReactElement<{ children: ReactNode[] }>)(settings.props);
+  };
+  const editor = (tree: ReturnType<typeof draw>) => tree.props.children.find(
+    child => isValidElement<{ onActivationStarted: () => void }>(child) && child.props.onActivationStarted,
+  ) as ReactElement<{ onActivationStarted: () => void }>;
+  editor(draw()).props.onActivationStarted();
+  f.profile.config = saved;
+  expect(editor(draw())).toBeDefined();
 });

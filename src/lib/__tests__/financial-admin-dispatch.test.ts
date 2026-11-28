@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ scope: vi.fn(), rest: vi.fn(), ready: vi.fn() }));
+const mocks = vi.hoisted(() => ({ scope: vi.fn(), rest: vi.fn(), ready: vi.fn(), env: vi.fn() }));
 vi.mock('@tanstack/react-start', () => ({ createServerFn: () => ({ validator: (parse: (data: unknown) => unknown) => ({ handler: (handle: (value: { data: unknown }) => unknown) => (value: { data: unknown }) => handle({ data: parse(value.data) }) }) }) }));
 vi.mock('@/core/api/pos-relay.server', () => ({ serviceRest: mocks.rest, verifyRelayCaller: async () => ({}) }));
 vi.mock('@/core/api/relay-policy.server', () => ({ resolveRelayScope: mocks.scope }));
 vi.mock('../privileged-caller.server', () => ({ requireCallerScope: mocks.scope }));
 vi.mock('../financial-live-readiness.server', () => ({ financialLiveAdapterReady: mocks.ready }));
+vi.mock('../external-supabase-config', () => ({ runtimeEnvValue: mocks.env }));
 import { correctSaleTender } from '../tender-correction.functions';
 import { correctPostedSale } from '../sale-corrections.functions';
 import { addMissedBill } from '../missed-bill.functions';
@@ -23,6 +24,7 @@ const missed = {
 };
 beforeEach(() => {
   vi.clearAllMocks(); mocks.scope.mockResolvedValue(administrator); mocks.ready.mockResolvedValue(true);
+  mocks.env.mockReturnValue(undefined);
   mocks.rest.mockImplementation(async () => Response.json({ saleId: id, receiptNo: 'MB-1', sale: {}, items: [] }));
 });
 
@@ -37,6 +39,30 @@ describe('administrator financial adapter compatibility', () => {
     expect((await correctSaleTender({ data: { ...tender, p_author: 'forged' } })).ok).toBe(true);
     expect(mocks.rest.mock.calls[0][0]).toBe('rpc/pos_live_financial_admin_correct_tender');
     expect(JSON.parse(mocks.rest.mock.calls[0][1].body)).toEqual({ p_author: id, p_sale: id, p_store: 'A', p_method: 'card', p_terminal: 'till-a' });
+  });
+  it('routes the existing tender action through the grouped writer with the viewed sale revision', async () => {
+    mocks.env.mockReturnValue('true');
+    mocks.rest.mockResolvedValueOnce(Response.json({
+      status: 'ALREADY_APPLIED', result: { sale_id: id, scope_id: 'A', method: 'card', sale_version: 3 },
+    }));
+    expect(await correctSaleTender({ data: { ...tender, saleVersion: 2 } })).toEqual({ ok: true, groupedSaleVersion: 3 });
+    const [path, init] = mocks.rest.mock.calls[0];
+    expect(path).toBe('rpc/pos_sync_request_tender_v1');
+    expect(JSON.parse(init.body)).toEqual({
+      p_author: id, p_sale: id, p_branch: 'A', p_method: 'card', p_terminal: 'till-a', p_sale_version: 2,
+    });
+  });
+  it('uses the previous tender route only after an explicit unarmed-scope result', async () => {
+    mocks.env.mockReturnValue('true');
+    mocks.rest.mockResolvedValueOnce(Response.json({ status: 'REVIEW_REQUIRED' }));
+    expect((await correctSaleTender({ data: tender })).ok).toBe(false);
+    expect(mocks.rest).toHaveBeenCalledTimes(1);
+    mocks.rest.mockClear();
+    mocks.rest.mockResolvedValueOnce(Response.json({ status: 'SCOPE_UNAVAILABLE' }));
+    expect((await correctSaleTender({ data: tender })).ok).toBe(true);
+    expect(mocks.rest.mock.calls.map(([path]) => path)).toEqual([
+      'rpc/pos_sync_request_tender_v1', 'rpc/pos_live_financial_admin_correct_tender',
+    ]);
   });
   it('preserves missed-bill historical attribution and removes authentication material', async () => {
     expect((await addMissedBill({ data: { ...missed, sessionToken: 'private-session', deviceBindingProof: 'a'.repeat(64) } })).ok).toBe(true);

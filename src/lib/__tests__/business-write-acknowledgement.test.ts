@@ -8,10 +8,16 @@ describe("business UI persistence acknowledgements", () => {
     const store = source("src/lib/pos-store.tsx");
     const receipts = source("src/routes/receipts.tsx");
     const shifts = source("src/routes/shifts.tsx");
-    expect(store).toContain("await db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId)");
-    expect(store.indexOf("await db.refundSale")).toBeLessThan(
-      store.indexOf("sales: s.sales.map((x) => (x.id === saleId"),
-    );
+    expect(store).toContain("return refundSaveAttempts.current.run({");
+    expect(store).toContain("observeRefundDatabaseContext(database, () => { refundDatabaseEpoch.current++; })");
+    expect(store).toContain("refundDatabaseEpoch.current, actorStaffIdRef.current");
+    expect(store).toContain("save: refundGrant => db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId, refundGrant)");
+    const refund = store.slice(store.indexOf("const refundSale = useCallback"));
+    const reflected = refund.indexOf("sales: existingSale");
+    expect(reflected).toBeGreaterThan(0);
+    expect(refund.indexOf("save: refundGrant => db.refundSale")).toBeLessThan(reflected);
+    expect(refund.indexOf("return verifyRefundAuthorization")).toBeGreaterThan(0);
+    expect(refund.indexOf("return verifyRefundAuthorization")).toBeLessThan(refund.indexOf("save: refundGrant => db.refundSale"));
     expect(receipts).toContain("await refundSale(selected.id, grant.grantToken, selected)");
     const correction = receipts.slice(receipts.indexOf('if (cancelMode === "correct") {'), receipts.indexOf('if (pendingCorrectionHold && retryingCorrectionHold)'));
     expect(correction).toContain("await correctSale(selected,corrected,reason,correctionKey.current)");

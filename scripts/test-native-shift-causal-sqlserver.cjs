@@ -86,13 +86,16 @@ async function main() {
       "booking_payments",
       "payment_transactions",
       "held_orders",
+      "pos_store_settings",
     ].filter((name) => registry.tables.some((table) => table.cloudTable === name));
     for (const name of fixtureTables) {
       const table = registry.tables.find((table) => table.cloudTable === name);
+      const primary = table.columns.filter(column => column.primaryKey).map(column => `[${column.sqlServerColumn}]`);
+      assert(primary.length);
       await pool
         .request()
         .batch(
-          `CREATE TABLE dbo.[${name}](${table.columns.map((column) => `[${column.sqlServerColumn}] ${column.sqlServerType} ${column.sqlServerColumn === "id" ? "NOT NULL" : "NULL"}`).join(",")},PRIMARY KEY(id)); ALTER TABLE dbo.[${name}] ENABLE CHANGE_TRACKING;`,
+          `CREATE TABLE dbo.[${name}](${table.columns.map((column) => `[${column.sqlServerColumn}] ${column.sqlServerType} ${column.primaryKey ? "NOT NULL" : "NULL"}`).join(",")},PRIMARY KEY(${primary.join(",")})); ALTER TABLE dbo.[${name}] ENABLE CHANGE_TRACKING;`,
         );
     }
     await pool.request()

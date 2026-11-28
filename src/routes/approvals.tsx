@@ -147,6 +147,7 @@ function ApprovalsPage() {
   const storeId = pos?.currentStore?.id ?? "";
   const [rows, setRows] = useState<AuthorizationRequest[]>([]);
   const [me, setMe] = useState<{ id: string; role: string; canAccessAllBranches?: boolean; branchId?: string } | null>(null);
+  const [namedWakeProject, setNamedWakeProject] = useState<string>();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [allBranches, setAllBranches] = useState(false);
   const scopeDefaultedFor = useRef<string | null>(null);
@@ -192,6 +193,7 @@ function ApprovalsPage() {
       } else setRows([]);
       const nextMe = res.ok ? (res.me ?? null) : null;
       setMe(nextMe);
+      setNamedWakeProject(res.ok ? res.namedWakeProject : undefined);
       if (res.ok && res.pageInfo) { setHasMore(res.pageInfo.hasMore); setPage(res.pageInfo.page); }
       else setHasMore(false);
       // Apply the default once for each verified person/role. Refreshes must
@@ -223,8 +225,8 @@ function ApprovalsPage() {
   // The queue is decided from another screen, so it refreshes on its own and
   // whenever this window is looked at again.
   useEffect(() => {
-    return subscribeApprovals(load, { allBranches, branchId: me?.branchId || storeId });
-  }, [load, allBranches, storeId, me?.branchId]);
+    return subscribeApprovals(load, { allBranches, branchId: me?.branchId || storeId, namedWakeProject });
+  }, [load, allBranches, storeId, me?.branchId, namedWakeProject]);
 
   const decide = async (row: AuthorizationRequest, approve: boolean) => {
     setBusy(row.id);

@@ -8,11 +8,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 
-const platform = vi.hoisted(() => ({ offlineFirst: false }));
+const platform = vi.hoisted(() => ({ offlineFirst: false, localWriter: true, localAggregate: true }));
 const live = vi.fn();
 const localWrite = vi.fn();
 const localAggregate = vi.fn();
 const localQuery = vi.fn();
+const localState = vi.fn();
 const attemptRows = vi.fn(() => ({ data: [] as unknown[] | null, error: null as unknown }));
 
 vi.mock("@/lib/sync-engine", () => ({
@@ -26,9 +27,9 @@ vi.mock("@/core/local-db/local-db", () => ({
   localDb: () => ({
     query: (...a: unknown[]) => localQuery(...a),
     write: (...a: unknown[]) => localWrite(...a),
-    writeBatch: (...a: unknown[]) => localWrite(...a),
-    commitAggregate: (...a: unknown[]) => localAggregate(...a),
-    database: { getState: async () => ({ enabled: true, connected: true, state: "ready" }) },
+    writeBatch: platform.localWriter ? (...a: unknown[]) => localWrite(...a) : undefined,
+    commitAggregate: platform.localAggregate ? (...a: unknown[]) => localAggregate(...a) : undefined,
+    database: { getState: () => localState() },
   }),
   electronDb: () => null,
   readBranch: () => ({ branchId: null, branchName: null }),
@@ -50,6 +51,7 @@ import {
 } from "@/core/api/pos-db";
 import { setPreferredDatabaseMode, setStartupOnlineMode } from "@/core/local-db/db-mode";
 import type { Member, Product, Sale } from "@/core/types/pos-types";
+import { cancelBookingAuthoritative, collectBookingPayment, commitBookingHandover } from "../booking-collection";
 
 const sale = (over: Partial<Sale> = {}): Sale =>
   ({
@@ -99,10 +101,13 @@ describe("checkout commit", () => {
   });
   beforeEach(() => {
     platform.offlineFirst = false;
+    platform.localWriter = true;
+    platform.localAggregate = true;
     live.mockReset();
     localWrite.mockReset();
     localAggregate.mockReset();
     localQuery.mockReset();
+    localState.mockReset().mockResolvedValue({ enabled: true, connected: true, state: "ready" });
     attemptRows.mockClear();
     attemptRows.mockReturnValue({ data: [], error: null });
     live.mockResolvedValue(undefined);
@@ -111,6 +116,152 @@ describe("checkout commit", () => {
     setPreferredDatabaseMode("online");
   });
   afterEach(() => setPreferredDatabaseMode("local"));
+
+  it.each([null, {}, { enabled: true, connected: false }, { enabled: true, connected: true, tradingReady: false }])(
+    "does not cloud-save when the configured native state is unavailable: %j", async state => {
+      localState.mockResolvedValueOnce(state);
+      await expect(commitOps("Saving product", [{ kind: "upsert", table: "products", rows: [{ id: "p1" }] }])).rejects.toMatchObject({
+        code: state && "enabled" in state ? "ELOCAL_NOT_READY" : "ELOCAL_STATE_UNVERIFIED",
+      });
+      expect(localWrite).not.toHaveBeenCalled();
+      expect(localAggregate).not.toHaveBeenCalled();
+      expect(live).not.toHaveBeenCalled();
+    },
+  );
+  it("does not retry a rejected native status or local commit through the cloud", async () => {
+    const ops = [{ kind: "upsert" as const, table: "products", rows: [{ id: "p1" }] }];
+    localState.mockRejectedValueOnce(new Error("Status unavailable"));
+    await expect(commitOps("Saving product", ops)).rejects.toMatchObject({ code: "ELOCAL_STATE_UNVERIFIED" });
+    expect(localAggregate).not.toHaveBeenCalled();
+    localAggregate.mockResolvedValueOnce({ ok: false, error: "Local commit refused", code: "ELOCAL_COMMIT" });
+    await expect(commitOps("Saving product", ops)).rejects.toMatchObject({ code: "ELOCAL_COMMIT" });
+    expect(live).not.toHaveBeenCalled();
+  });
+  it("refuses a missing native writer rather than bypassing a ready local database", async () => {
+    platform.localWriter = false;
+    await expect(commitOps("Saving product", [{ kind: "upsert", table: "products", rows: [{ id: "p1" }] }]))
+      .rejects.toMatchObject({ code: "ELOCAL_WRITER_UNAVAILABLE" });
+    expect(live).not.toHaveBeenCalled();
+    expect(localAggregate).not.toHaveBeenCalled();
+  });
+  it("requires the native aggregate writer for a booking payment", async () => {
+    platform.localAggregate = false;
+    await expect(commitOps("Saving booking payment", [{ kind: "insert", table: "booking_payments", rows: [{ id: "payment" }] }],
+      undefined, { requireLocalAggregate: true })).rejects.toMatchObject({ code: "ELOCAL_WRITER_UNAVAILABLE" });
+    expect(live).not.toHaveBeenCalled();
+    expect(localWrite).not.toHaveBeenCalled();
+  });
+  it("retains the explicit SQL-disabled cloud route", async () => {
+    localState.mockResolvedValueOnce({ enabled: false, connected: false, state: "disabled" });
+    await expect(commitOps("Saving product", [{ kind: "upsert", table: "products", rows: [{ id: "p1" }] }])).resolves.toBe("cloud");
+    expect(localAggregate).not.toHaveBeenCalled();
+    expect(live).toHaveBeenCalledOnce();
+  });
+
+  it.each(["saved", "changed", "disconnected"] as const)(
+    "uses one version-checked local booking payment aggregate when %s",
+    async outcome => {
+      platform.offlineFirst = true;
+      setPreferredDatabaseMode("local");
+      localQuery.mockResolvedValueOnce({
+        ok: true,
+        rows: [{ id: "booking-1", store_id: "store-1", total: 20, row_version: 4, status: "active" }],
+      }).mockResolvedValueOnce({ ok: true, rows: [{ amount: 5 }] })
+        .mockResolvedValueOnce({ ok: true, rows: [] });
+      if (outcome === "changed") localAggregate.mockResolvedValueOnce({ ok: false, error: "BOOKING_CHANGED" });
+      if (outcome === "disconnected") localState.mockResolvedValueOnce({ enabled: true, connected: false });
+
+      const result = await collectBookingPayment({
+        bookingId: "booking-1", amount: 10, method: "cash", clientPaymentId: "booking-payment-1", complete: false,
+      });
+      if (outcome === "disconnected") {
+        expect(result).toMatchObject({ ok: false, error: expect.stringContaining("local SQL Server transaction") });
+        expect(localAggregate).not.toHaveBeenCalled();
+      } else {
+        expect(localAggregate).toHaveBeenCalledExactlyOnceWith({
+          kind: "payment", branchId: "store-1",
+          operations: [
+            expect.objectContaining({ kind: "insert", table: "booking_payments", rows: [
+              expect.objectContaining({ booking_id: "booking-1", client_payment_id: "booking-payment-1", amount: 10 }),
+            ] }),
+            expect.objectContaining({
+              kind: "update", table: "bookings", match: { id: "booking-1", row_version: 4 },
+              requireMatch: true, values: expect.objectContaining({ paid: 15 }),
+            }),
+          ],
+        });
+        if (outcome === "saved") expect(result).toMatchObject({ ok: true, state: { settledPaid: 15 } });
+        else expect(result).toMatchObject({ ok: false, error: expect.stringContaining("booking changed") });
+      }
+      expect(localWrite).not.toHaveBeenCalled();
+      expect(live).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a stale native booking cancellation that would retain an old balance", async () => {
+    platform.offlineFirst = true;
+    setPreferredDatabaseMode("local");
+    localQuery.mockResolvedValueOnce({
+      ok: true,
+      rows: [{ id: "booking-1", store_id: "store-1", total: 20, row_version: 4, status: "active" }],
+    }).mockResolvedValueOnce({ ok: true, rows: [{ amount: 5 }] });
+    localAggregate.mockResolvedValueOnce({ ok: false, error: "BOOKING_CHANGED" });
+
+    const result = await cancelBookingAuthoritative({
+      bookingId: "booking-1", reason: "Customer request", moneyAction: "retained",
+    });
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("booking changed") });
+    expect(localAggregate).toHaveBeenCalledExactlyOnceWith({
+      kind: "booking", branchId: "store-1",
+      operations: [expect.objectContaining({
+        kind: "update", table: "bookings", match: { id: "booking-1", row_version: 4 }, requireMatch: true,
+        values: expect.objectContaining({ paid: 5, status: "cancelled", cancel_money_action: "retained" }),
+      })],
+    });
+    expect(localWrite).not.toHaveBeenCalled();
+    expect(live).not.toHaveBeenCalled();
+  });
+
+  it("commits the booking tender, receipt and collected link in one native sale", async () => {
+    platform.offlineFirst = true;
+    setPreferredDatabaseMode("local");
+    localQuery.mockResolvedValueOnce({
+      ok: true,
+      rows: [{ id: "booking-1", store_id: "store-1", total: 100, row_version: 4, status: "active" }],
+    }).mockResolvedValueOnce({ ok: true, rows: [{ amount: 25 }] })
+      .mockResolvedValueOnce({ ok: true, rows: [] });
+    const prepared = sale();
+
+    const receipt = await commitBookingHandover("booking-1", 80, prepared, [], null);
+
+    expect(receipt).toMatchObject({ paid: 100, payment: { amount: 75, changeGiven: 5 }, sale: { change: 5 } });
+    expect(localAggregate).toHaveBeenCalledExactlyOnceWith({
+      kind: "sale", branchId: "store-1", operations: expect.arrayContaining([
+        expect.objectContaining({ kind: "upsert", table: "sales", rows: [
+          expect.objectContaining({ bill_number: prepared.receiptNo, change_amount: 5 }),
+        ] }),
+        expect.objectContaining({ kind: "insert", table: "booking_payments", rows: [
+          expect.objectContaining({ booking_id: "booking-1", client_payment_id: prepared.clientTxnId, amount: 75 }),
+        ] }),
+        expect.objectContaining({
+          kind: "update", table: "bookings", match: { id: "booking-1", row_version: 4, status: "active" },
+          requireMatch: true, values: expect.objectContaining({ paid: 100, status: "collected", sale_receipt_no: prepared.receiptNo }),
+        }),
+      ]),
+    });
+    expect(localWrite).not.toHaveBeenCalled();
+    expect(live).not.toHaveBeenCalled();
+  });
+
+  it("passes optional original arrival only with the receiving aggregate and leaves default business rows unchanged", async () => {
+    const op={kind:"upsert" as const,table:"purchase_orders",rows:[{id:"11111111-1111-4111-8111-111111111111",store_id:"store-1",status:"posted"}]};
+    const stockArrival={effectiveAt:"2026-11-06T00:00:00.1234567Z",reason:"Goods arrived before invoice entry"};
+    await expect(commitOps("Saving receiving invoice", [op], undefined, { stockArrival })).resolves.toBe("local");
+    expect(localAggregate).toHaveBeenLastCalledWith({kind:"receiving",branchId:"store-1",operations:[op],stockArrival});
+    await expect(commitOps("Saving receiving invoice",[op])).resolves.toBe("local");
+    expect(localAggregate).toHaveBeenLastCalledWith({kind:"receiving",branchId:"store-1",operations:[op]});expect(live).not.toHaveBeenCalled();
+  });
 
   it("commits restored stock, its audit movement and posted draft in one Electron transaction", async () => {
     platform.offlineFirst = true;

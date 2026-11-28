@@ -73,6 +73,15 @@ describe("native journal status presentation", () => {
     expect(summary.detail).toContain("does not verify historical data completeness");
     expect(JSON.stringify({ snapshot, database })).toBe(before);
   });
+
+  it("reports a held grouped download even with an empty journal and only for its branch", () => {
+    const snapshot = native({ groupedSettingsPilot: { status: "REVIEW_REQUIRED", branchId: "branch-a" } });
+    const database = { enabled: true, connected: true, detail: { branchId: "branch-a" } };
+    expect(nativeSyncSummary(snapshot, database)).toMatchObject({ state: "degraded", label: "Sync needs review", pending: 0 });
+    expect(nativeSyncSummary(snapshot, { ...database, detail: { branchId: "branch-b" } })).toMatchObject({
+      state: "ok", label: "Journal queue clear",
+    });
+  });
 });
 
 describe("durable browser queue status presentation", () => {
@@ -265,7 +274,9 @@ describe("existing health-check transport integration", () => {
 
 /** Execute the actual TSX component's hooks and async handlers. The JSX tree is
  * an inspectable value; a separate Chrome fixture verifies real React rendering. */
-function panelHarness(databaseRead: unknown, syncResult: unknown = { ok: true }) {
+function panelHarness(databaseRead: unknown, syncResult: unknown = { ok: true }, options: {
+  branchId?: string; sync?: unknown; failures?: unknown; reviewOperator?: string; evidence?: (entry: unknown) => Promise<unknown>;
+} = {}) {
   const ts = createRequire(import.meta.url)("typescript") as typeof import("typescript");
   const source = readFileSync("src/platforms/windows/components/LocalDatabaseOperations.tsx", "utf8");
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
@@ -283,26 +294,30 @@ function panelHarness(databaseRead: unknown, syncResult: unknown = { ok: true })
     useEffect(effect: () => void) { const index = cursor++; if (!(index in values)) { values[index] = true; effects.push(effect); } },
   };
   let databaseCallback: ((next: unknown) => void) | undefined;
+  let syncCallback: ((next: unknown) => void) | undefined;
   let releaseHealth!: (value: unknown) => void;
   const health = new Promise(resolve => { releaseHealth = resolve; });
   const api = {
     database: { getState: async () => databaseRead, health: () => health, schemaStatus: async () => ({ ok: true }),
       subscribe: (callback: (next: unknown) => void) => { databaseCallback = callback; return () => undefined; } },
     jobs: { getActive: async () => null, subscribe: () => () => undefined },
-    sync: { getStatus: async () => native(), getFailures: async () => ({}), runNow: async () => syncResult, subscribe: () => () => undefined },
+    sync: { getStatus: async () => options.sync ?? native(), getFailures: async () => options.failures ?? {},
+      getRecoveryEvidence: options.evidence, runNow: vi.fn(async () => syncResult),
+      subscribe: (callback: (next: unknown) => void) => { syncCallback = callback; return () => undefined; } },
   };
-  const exports: { LocalDatabaseOperations?: () => Element | null } = {};
+  const exports: { LocalDatabaseOperations?: (props: { branchId?: string; reviewOperator?: string }) => Element | null } = {};
   runInNewContext(compiled, {
     exports, window: { pos: api }, require: (name: string) => {
       if (name === "react") return react;
       if (name === "react/jsx-runtime") return { jsx: (type: unknown, props: Element["props"]) => ({ type, props }), jsxs: (type: unknown, props: Element["props"]) => ({ type, props }) };
       if (name === "@/lib/sync-status-summary") return { nativeSyncSummary, isNativeDatabaseSnapshot };
+      if (name === "@/lib/branch-id") return { sameBranchId: (left: unknown, right: unknown) => left === right };
       if (name === "@/lib/time-zone") return { formatDateTime: String };
       if (name === "@/core/activation/terminal-tokens") return { mirrorTerminalConfigToDesktop: async () => undefined };
       return new Proxy({}, { get: (_target, key) => String(key) });
     },
   });
-  const render = () => { cursor = 0; return exports.LocalDatabaseOperations!(); };
+  const render = () => { cursor = 0; return exports.LocalDatabaseOperations!({ branchId: options.branchId, reviewOperator: options.reviewOperator }); };
   const first = render();
   effects.splice(0).forEach(effect => effect());
   const settle = async () => { releaseHealth({ ok: true }); for (let index = 0; index < 10; index++) await Promise.resolve(); };
@@ -318,11 +333,52 @@ function panelHarness(databaseRead: unknown, syncResult: unknown = { ok: true })
     const node = tree as Element;
     return node.props?.children === value ? node : findText(node.props?.children, value);
   };
-  return { first, render, settle, status, findText, emitDatabase: (next: unknown) => databaseCallback!(next) };
+  return { first, render, settle, status, findText, runNow: api.sync.runNow,
+    emitDatabase: (next: unknown) => databaseCallback!(next), emitSync: (next: unknown) => syncCallback!(next) };
 }
 
 describe("actual local panel database freshness", () => {
   const ready = { enabled: true, connected: true, tradingReady: true, state: "enabled_ready" };
+
+  it("distinguishes count equality from verified contents", async () => {
+    const panel = panelHarness(ready, undefined, { sync: { ...native(), tables: [
+      { table: "products", local: "3", cloud: "3", status: "SYNCED", verified: false },
+      { table: "sales", local: "2", cloud: "2", status: "VERIFIED", verified: true },
+      { table: "sale_items", local: "1", cloud: "2", status: "DIFFERENT", verified: false },
+    ] } });
+    await panel.settle();
+    const tree = panel.render();
+    expect(panel.findText(tree, "Counts match · data not verified")?.props.className).toBe("text-muted-foreground");
+    expect(panel.findText(tree, "Data verified")?.props.className).toContain("text-emerald");
+    expect(panel.findText(tree, "Differences found")?.props.className).toBe("text-destructive");
+    expect(panel.findText(tree, "SYNCED")).toBeUndefined();
+  });
+
+  it("keeps preserved local work visible while online recovery disables the SQL path", async () => {
+    const panel = panelHarness({ state: "disabled", enabled: false, connected: false, tradingReady: false, localRecoveryPending: true });
+    await panel.settle();
+    const tree = panel.render();
+    expect(tree).not.toBeNull();
+    expect(panel.findText(tree, "Previous local work needs recovery")).toBeDefined();
+    expect(panel.status(tree)).toContain("records have not been marked synchronized");
+    expect(panel.status(tree)).toContain("using the saved online database");
+    expect(panel.findText(tree, "Sync now")).toBeUndefined();
+    expect(panel.findText(tree, "Journal queue clear")).toBeUndefined();
+  });
+
+  it("shows a grouped settings pilot only for the current branch", async () => {
+    const sync = { ...native(), groupedSettingsPilot: { status: "REVIEW_REQUIRED", branchId: "branch-a", position: { seq: "7" } },
+      storeSettingsEditUpload: { status: "REVIEW_REQUIRED", branchId: "branch-a" } };
+    const sameBranch = panelHarness(ready, undefined, { branchId: "branch-a", sync });
+    const otherBranch = panelHarness(ready, undefined, { branchId: "branch-b", sync });
+    await Promise.all([sameBranch.settle(), otherBranch.settle()]);
+    expect(sameBranch.findText(sameBranch.render(), "Store settings download")).toBeDefined();
+    expect(sameBranch.findText(sameBranch.render(), "Store settings upload")).toBeDefined();
+    expect(sameBranch.status(sameBranch.render())).toBe("Sync needs review");
+    expect(otherBranch.findText(otherBranch.render(), "Store settings download")).toBeUndefined();
+    expect(otherBranch.findText(otherBranch.render(), "Store settings upload")).toBeUndefined();
+    expect(otherBranch.status(otherBranch.render())).toBe("Journal queue clear");
+  });
 
   it("reports pending protected history after manual sync without a green completion", async () => {
     const panel = panelHarness(ready, { ok: true, historyPending: true });
@@ -332,6 +388,74 @@ describe("actual local panel database freshness", () => {
     const message = panel.findText(tree, "Protected history is still pending.");
     expect(message?.props.className).toContain("text-muted-foreground");
     expect(panel.findText(tree, "Synchronization completed.")).toBeUndefined();
+  });
+
+  it("keeps unconfirmed stock history visible after an otherwise successful manual sync", async () => {
+    const panel = panelHarness(ready, { ok: true, heldStockHistoryAggregates: 1 });
+    await panel.settle();
+    await panel.findText(panel.render(), "Sync now")!.props.onClick!();
+    const tree = panel.render();
+    expect(panel.findText(tree, "Stock history still needs verification.")?.props.className).toContain("text-muted-foreground");
+    expect(panel.findText(tree, "Synchronization completed.")).toBeUndefined();
+  });
+
+  it("groups repeated opening diagnostics and preserves the distinct source review on a ready database", async () => {
+    const code = "FIN62_OPEN_BIRTH_NOT_EMPTY";
+    const raw = `${code} (table: transaction batch)`;
+    const source = "Stock history needs source/author review (ESTOCK_HISTORY_AUTHOR_REQUIRED).";
+    const panel = panelHarness(ready, { ok: false, error: raw }, {
+      sync: native({ lastError: raw, pending: 2 }),
+      failures: {
+        databaseErrors: ["manual", "runtime", "bootstrap", "database.state"].map(stage => ({
+          id: stage, stage, code: "P0001", message: stage === "manual" ? raw : code,
+        })),
+        businessBatches: [{ aggregate_id: "opening", entity_type: "shifts", attempts: 671, error: code },
+          { aggregate_id: "movement", entity_type: "stock_history_movements", attempts: 39, error: source }],
+      },
+    });
+    await panel.settle();
+    expect(panel.findText(panel.render(), "Saved shift opening needs review")?.type).toBe("summary");
+    expect(panel.findText(panel.render(), source)).toBeDefined();
+    expect(panel.findText(panel.render(), "Open Database Settings")).toBeUndefined();
+    await panel.findText(panel.render(), "Sync now")!.props.onClick!();
+    expect(panel.findText(panel.render(), "Saved shift opening needs review. The central database found a sale linked to the shift when verifying its opening.")).toBeDefined();
+    expect(panel.findText(panel.render(), "Synchronization completed.")).toBeUndefined();
+  });
+
+  it("opens a read-only verification for the exact stock batch and never treats a missing receipt as verified", async () => {
+    const batchId = "11111111-1111-4111-8111-111111111111";
+    const reference = "22222222-2222-4222-8222-222222222222";
+    const reply = { ok: true, batchId, kind: "stock", branchId: "branch-a", reference, savedAt: "2026-11-26T04:00:00Z",
+      savedRows: 1, queuedRows: 1, originalProof: "missing", receipt: null };
+    const evidence = vi.fn(async (): Promise<unknown> => reply);
+    const options = { branchId: "branch-a", reviewOperator: "operator", evidence,
+      failures: { businessBatches: [{ aggregate_id: batchId, entity_type: "stock_history_movements",
+        error: "Stock history needs source/author review (ESTOCK_HISTORY_AUTHOR_REQUIRED). Existing business data and pending evidence are retained." }] } };
+    const panel = panelHarness(ready, undefined, options);
+    await panel.settle();
+    expect(panel.findText(panel.render(), "Needs verification")).toBeDefined();
+    await panel.findText(panel.render(), "Verify saved record")!.props.onClick!();
+    expect(evidence).toHaveBeenCalledExactlyOnceWith({ batchId, kind: "stock" });
+    expect(panel.findText(panel.render(), reference)).toBeDefined();
+    expect(panel.findText(panel.render(), "No matching acceptance receipt saved on this till")).toBeDefined();
+    expect(panel.findText(panel.render(), "Stock movement acceptance saved")).toBeUndefined();
+    expect(panel.runNow).not.toHaveBeenCalled();
+
+    evidence.mockResolvedValueOnce({ ...reply, receipt: "stock" });
+    await panel.findText(panel.render(), "Check again")!.props.onClick!();
+    expect(panel.findText(panel.render(), "Evidence could not be confirmed for this saved batch.")).toBeDefined();
+    expect(panel.findText(panel.render(), "Stock movement acceptance saved")).toBeUndefined();
+
+    options.failures.businessBatches = [];
+    panel.emitSync({ running: true });
+    panel.emitSync({ running: false });
+    await panel.settle();
+    expect(panel.findText(panel.render(), "Verify saved record")).toBeUndefined();
+    evidence.mockResolvedValueOnce({ ...reply, queuedRows: 0, receipt: "stock" });
+    await panel.findText(panel.render(), "Check again")!.props.onClick!();
+    expect(panel.findText(panel.render(), "Stock movement acceptance saved")).toBeDefined();
+    panel.emitDatabase({ ...ready, connected: false });
+    expect(panel.findText(panel.render(), "Stock movement acceptance saved")).toBeUndefined();
   });
 
   it("does not restore a stale connected snapshot after a newer disconnect event", async () => {

@@ -1,3 +1,214 @@
+## 26 November — Advanced Inventory Reports architecture
+
+Extend the existing report route and admit all reads through the current
+account and terminal permissions. Use stable product and location IDs for stock
+identity. Barcode aliases share the parent stock unless a stored variant
+identity has its own stock. A database reconciliation or a nonphysical system
+snapshot is reporting evidence with its own provenance. A physical stocktake
+retains its existing approval and writer-coverage requirements.
+
+For historical valuation require cost and retail-price evidence applicable to
+the selected cutoff. Keep unavailable prices explicit. Current catalogue prices
+and current-only products cannot complete a historical balance or valuation.
+Prepared schema and live activation stay separate, with automatic backfills
+and test transactions owned by authorized app workflows.
+
+## 23 November — approved two-till protected financial rollout
+
+The owner approved an application-managed protected financial enrollment only
+for the two registered Retail POS Beta test tills in the Stock Report cohort.
+Reuse the authorized, named, device-bound stocktake workflow and require fresh
+not-pending proof from each distinct till before enabling both together. Keep
+the approved schema review boundary. The app must own enrollment writes and
+the synthetic sale. Production, other branches and saved operator data stay
+outside this task.
+
+## 23 November — Stock Report application-owned enrollment and history
+
+The owner requires authorized application workflows for all record changes,
+including private test enrollment, stocktake and synthetic sales. Schema
+upgrades must preserve existing records. Use only the two isolated Retail POS
+Beta tills for live acceptance, including before/after sale reports and an
+offline restart. Keep PR #401 and the paired installer release conditional on
+those results and required checks. The prepared direct guard scope/enrollment
+SQL is superseded. See the task tracker for the current acceptance gates.
+
+## 20 November — scoped feed performance authorization
+
+Use a separate Beta branch at 439a4c5a for the feed performance change.
+Benchmark and prepare the additive path using disposable fixtures. The live
+Beta read-only baseline had 293 fresh feed requests and two at warm reopen.
+Retain the protected shared download authority, pending SQL work, visible
+fields, byte bounds, and existing v2 compatibility. The owner approved the
+additive migration for Retail POS Beta. The private v3 function is installed
+there with service-only access, and the protected v2 fingerprint is unchanged.
+
+## 19 November — dependency advisory refresh and beta release continuation
+
+The owner renews the request to use agents, finish PR #477's checks and merge
+and publish beta only after they pass, preserving production and saved local
+data. The official GHSA-fc5q-39xc-vjpf record was withdrawn at
+2026-11-18T15:38:56Z. A fresh unchanged-lockfile `npm audit --audit-level=high`
+returns exit 0: zero high/critical and 18 moderate findings. No dependency,
+audit threshold, allowlist or waiver changed. Refresh exact-head CI rather than
+treating yesterday's withdrawn record as an unresolved package patch.
+
+The earlier acceptance below remains the runtime evidence; this continuation
+corrects the audit/release status and the stale release guide that incorrectly
+described beta as sharing production's database. The beta release uses the
+isolated Retail POS Beta target and preserves operator-managed configuration.
+Required exact-head checks, merge and publication are still separate gates.
+
+At the owner's further request, all five open Dependabot PRs (#462–466) were
+refreshed, independently reviewed, passed their new checks and merged into beta
+`b5c5d9eb`. Its combined CI passes. The pinned Node 22.22.2/npm 11.4.2 isolated
+dependency UI checks pass 46 unit tests and 46 cold-browser scenarios with zero
+external requests or console/page errors. A one-line harness scan-entry fix
+corrected initial cold-optimizer React errors; all assertions remain intact.
+
+The unresolved #477 review proved a real renderer issue after lost refund IPC
+responses. The actual receipt UI and PosProvider now preserve and reverify the
+same Main handle for an uncertain attempt, including when a background snapshot
+already sees the refund. Context/connection changes invalidate it; a saved
+refund flag alone never authorizes confirmation. Ninety focused tests pass,
+including execution of the actual UI/provider callbacks with the real Main
+authorization and receipt repository against a controlled SQL fixture. Main,
+native SQL and hosted writers are unchanged. The existing renderer/Main restart
+and handle-retention limits remain explicit. Final combined-head CI is required.
+
+## 18 November — current beta acceptance and conditional release authorization
+
+Latest source checkpoint: `9e458546` passes 7,730 application tests and every
+required database, lint, TypeScript, build and platform stage except dependency
+audit. The actual FIN62 SPLIT/offline PIN, grouped CASH/offline PIN and grouped
+CARD/hosted-certificate two-till slices all pass on the isolated Beta target.
+The grouped slices include real approval expiry, a discarded accepted response,
+fresh-process original-operation replay, expired-cursor archive recovery and
+both verified native handbacks; each finishes with stock 20 and one refund
+movement. The central catalogue/stock/transfer and booking RPC smoke also passes:
+global SKU allocation, branch permissions, dispatch replay, verified receipt,
+permanent zero-stock catalogue membership, booking partials/overpayment denial
+and exact handover/change/replay. Independent final Beta queries confirm all
+20 original sale/item hashes unchanged, with no missing or changed row. These
+central calls do not certify the native transfer upload barrier, installed UI
+or offline booking; grouped native booking retains its explicit safe hold.
+The official picomatch release remains 4.0.7 with
+no published patched version for GHSA-fc5q-39xc-vjpf; merge and publication stay
+blocked without weakening the audit gate. The chronology below records earlier
+intermediate findings, not additional current failures of these passed slices.
+
+The owner now authorizes agents to resolve PR #477's dependency-audit blocker,
+apply the reviewed migration and run two-till acceptance on Retail POS Beta
+only, then merge into beta and publish after all gates pass. Production and
+saved operator local data remain excluded. The explicit current publication
+request is conditional on passing checks; implementation or merge alone is
+not acceptance.
+
+PR #477 adds two hosted migrations but no local schema DDL. Future production
+rollout must compare that target's migration ledger and each older local SQL
+schema, then apply only reviewed missing upgrades with backups and pending-work
+preservation. Never reuse Beta identity guards or run fresh-setup scripts over
+existing production records.
+
+Reviewed source head `9a7e36d0` completes durable grouped/FIN62 refund approval
+and original-operation recovery, including offline first-sale/refund ordering.
+431 focused tests and eight disposable LocalDB groups pass. Exact-head CI
+passes 7,677 application tests, SQL checks, lint, TypeScript and builds; its
+dependency audit is the remaining source merge gate. Do not infer hosted or
+installed acceptance from that result.
+
+The lucky connector currently verifies project `irjkmhgrjgcaoixcixut` named
+Retail POS Beta, organization `fdcvzkttecaczesclvgd`, as ACTIVE_HEALTHY. Pin
+that exact target before any approved hosted write. Use disposable owned
+two-till SQL databases and marked synthetic Beta records; preserve installed
+profiles, pending work, production, settings secrets and signing credentials.
+
+The approved hosted receipt-probe migration is now applied on that exact Beta
+target: ledger `20261118053019`, source file `20261117233612`, function MD5
+`939a54a94ceb0498f57493574ac903bf`, postgres/definer/pinned search path and
+service-only execution verified independently. Existing counts stayed nine
+sales/eleven items/zero financial nodes. Do not replay based on the differing
+ledger/file timestamps. Current-source hosted smoke and publication remain
+pending. The owner has since started the reviewed current-source loopback relay
+on port 18446 with a masked Beta-only server key. The key is not persisted or
+exposed to clients.
+
+Hosted acceptance exposed two additional defects: the en_US database locale
+sorted strict financial-fact keys differently, and a held financial aggregate
+could let its refund stock movement escape through Change Tracking. The locale
+guard is corrected in source and on Beta only (source `20261118060529`, ledger
+`20261118061241`, fact MD5 `49814368b1669fc9d9943aca23eb5ce1`); valid split
+facts and malformed-field rejection were verified without business writes.
+The native ownership correction passes 76 focused tests and 12 isolated ODBC
+LocalDB groups, including concurrent capture and accepted movement replay.
+The fresh FIN62 hosted slice now passes after normalizing only the SQL UUID
+argument at the refund-route wrapper (52 adjacent tests pass). The exact original
+saved refund survived a separate Node run and owned SQL process restart, then
+replayed its remaining journal without resaving money. Independent cloud
+read-back confirms both tills' sale/refund state, split tenders and stock 20,
+one sale movement and one refund return (net zero), and zero manager signing
+enrollments. Retain the failed earlier marked fixture's OPEN/stock evidence;
+do not reset records to manufacture a pass.
+
+Grouped recovery also exposed strict RFC validation of historical SHA-derived
+publication UUIDs. Correct only that read-only publication field to canonical
+PostgreSQL UUID syntax; command, author, sale, terminal and graph/scope checks
+stay strict (34 focused tests pass). Rebuild the isolated relay before resuming
+the same retained grouped databases. Grouped cursor/hosted certificate acceptance,
+the remaining functional smoke and exact-head CI are still pending.
+
+The Worker rebuild fixed actual shift-page recovery. A subsequent native
+cash-birth comparison against an already bootstrapped canonical refund is now
+handled only with an exact later full graph from the same verified pin. Complete
+child sets, immutable amounts, pending journal/CT and atomic stock/cursor guards
+remain enforced; independent review and 78 focused/eight actual ODBC groups
+pass. Same-GUID hosted continuation remains the next gate. Mixed correction
+chains retain review rather than being guessed. The automatic `afc37261`
+typecheck found only test-fixture inference errors; their minimal typing fixes
+pass 21 tests and await the next clean CI result.
+
+The grouped offline PIN/lost-ACK/expired-cursor/native handback test now passes,
+with both tills at sequence five and stock 20. Exact-head `24bde46d` CI passes
+7,723 tests and every stage except the unchanged dependency audit. A separate
+CARD hosted-approval test identified and corrected a PIN-only admission option
+that rejected verified human Auth sessions. Existing bound-device, witness,
+scope, manager, exact basis and expiry checks remain; machine and unbound or
+revoked PIN callers stay denied (70 focused tests pass). Rebuild and verify this
+latest server change before the original saved CARD refund is committed; hosted
+certificate expiry and central functional smoke remain pending.
+
+## 18 November — earlier beta local writes, startup and idle sync checkpoint
+
+The owner approved implementing the read-only audit recommendations with agents,
+preserving production and saved local work. PR #474, reviewed head 59514e5c,
+passed required CI and merged into beta 656c395a. It coalesces heartbeat writes
+to 60 seconds without delaying 10 second revocation checks or security notifications,
+and reuses empty legacy recovery ranges only inside one serializable transaction.
+Its 84 focused tests and independent review passed.
+
+PR #475, reviewed head e4cea65b, passed CI and merged into beta b27e6316.
+It contains verified local write routing, supported native store-rule edits
+while online and accurate count/content/deferred-service wording (168 focused
+tests passed together). PR #476 contains truthful bootstrap and shift-specific
+review presentation with stale-async guards (136 focused tests passed). Its
+initial CI caught two stale test contracts. Corrected head dc7a8e66 passes source,
+SQL/upgrade/history, lint, TypeScript and builds, but the high dependency audit
+now blocks merge: picomatch 4.0.7 remains latest with no published fix for
+GHSA-fc5q-39xc-vjpf. The upstream advisory was reviewed on 17 November; these
+POS fixes did not change dependencies. Keep required CI/audit policy intact and
+do not claim the startup fix is merged or installed yet.
+Refund admission and transfer dependency handoff passed 196 focused tests and
+independent review. All affected slices and updated CI fixtures passed together:
+610 tests in 29 suites.
+PR #477 contains that financial slice and the verified rules/evidence. The current grouped
+refund protocol still cannot use offline manager PIN approval as durable hosted
+proof; unsupported PIN refunds stop before local commit, and expired/lost hosted
+approval recovery remains separately tracked. Do not certify unlimited offline
+refund approval or complete installed acceptance from these tests.
+The [evidence](database/beta-local-first-recovery-2026-11-18.md) keeps source
+checks separate from full installed/restart/offline acceptance and publication.
+No hosted schema change, production write or another installer is approved here.
+
 ## 7 November — mixed-client scoped history transport
 
 Use an explicit scoped download request and server-verified scope on every
@@ -39,6 +250,280 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
+
+## 17 November — measured beta Electron catalogue acceptance
+
+PR #472 is merged into beta at efe0d948 after exact-head CI passed; the native
+sale-item fix still needs a newly published/installed beta beyond beta.10.
+An actual beta.10 inventory UI save produced one zero-stock SKU-000008 in pinned
+POS_Local_Beta, its durable journal29 and automatic cloud acknowledgement.
+Both databases contain the same identity, branch and values. A guarded brand
+update on the same synthetic Beta row downloaded as version2 with no upload
+echo. Independent read-only local and hosted agent checks confirm that limited
+round trip. Preserve the existing local-first writer and coordinator; keep
+nullable sale-item labels under their verified sales parent and retain safe SQL
+diagnostics. See [the scoped report](database/beta-sync-smoke-2026-11-17.md).
+Do not turn this into whole-POS, disconnected/restart or updated-client financial
+acceptance. No production database change, local reset, registration change or
+additional installer publication was part of this test.
+
+## 14 November — one-file beta setup and active replacement local SQL
+
+Owner requests one standalone local SQL file that creates only missing
+POS_Local_Beta, selects it internally and installs current full core/sync schema.
+Reuse the reviewed strict fresh payload, reject caller/implicit transactions and
+populated targets, and never drop a database on failure. Exact operator instance
+selection remains necessary; creating/installing the beta database does not
+change Electron connection fields. No production or installed DB application.
+
+Re-registration recovery was incorrectly gating read-only SQL discovery. Permit
+authorized discovery independently of retained recovery. Owner additionally
+confirms the replacement is active and requires new local SQL configuration and
+normal workflows. Admit only a positively verified fresh managed target under
+the exact active replacement/project, preserve previous pending history/profile/
+encrypted credentials separately, and pin/recheck actual database identity before
+readiness/restart. Never treat active registration alone as proof old work was
+recovered. The installer intentionally seeds one exact default store-group row;
+admission may retain that unchanged built-in row and the exact migration ledger,
+but no business/history/pending rows. Implement with focused agents/tests;
+publication remains separate.
+
+## 13 November — current beta database package and offline close
+
+The owner clarifies that the requested deliverable is SQL for existing Supabase
+and local SQL Server databases, matching the current event/outbox plus Change
+Tracking beta. Do not supply an old025–030-only file as the complete newer sync
+schema or run a fresh installer against populated data. Prepare guarded files
+and one downloadable bundle; record source/target hashes, recognized baselines,
+transaction ownership, rollback and focused fixture results. Supabase Beta is
+irjkmhgrjgcaoixcixut through lucky, system identifier7703759698107299042, with
+20261110031005 already installed on read-only inspection. Production remains
+excluded; its later upgrade needs its own baseline/delta and execution approval.
+
+Electron must work offline for supported actions when configured local SQL,
+offline authority and scoped baseline are ready. At offline close, finish local
+saves, verify readable durable pending storage, skip cloud sync and its required-
+sync dialog, and retain queues for reconnect/restart. Online close attempts the
+existing authorized final sync with bounded retry. Local save/storage failures
+remain real blockers. No local SQL plus no internet cannot support new business
+writes. Do not confuse network failure with actual permission denial or promise
+offline provider acceptance. Record this rule separately from SQL preparation.
+
+Automatic expired-history/date-window recovery uses committed checkpoints,
+scoped snapshots and verified operation evidence without deleting pending work.
+Date/time alone never establishes a conflict winner. Newly documented permanent
+receipt-based catalogue behavior remains distinct from implemented/tested schema.
+
+Prepared files now live under database/beta with a deterministic generator and
+frozen catalogue/source manifests. The cloud wrapper verifies/no-ops on the
+captured current beta and applies only the recognized prior reviewed delta;
+the local wrapper requires existing POS_Local_Beta/core24 and composes13 reviewed
+metadata modules atomically. The protected1.4.82 file and all source SQL blobs
+remain unchanged.36 focused Node tests and16 owned disposable LocalDB groups
+passed, including populated rerun, pending/checkpoint/grant preservation,
+rollback and portable FK-name checks. Only beta metadata was inspected remotely.
+No live schema application, production action or installer release occurred;
+fixture success is not installed/two-till acceptance. Fresh installations and
+future production deltas stay separate; do not bypass beta guards.
+
+Owner then clarified the local database does not yet exist after the expected
+51031 target refusal. Provide the separate current-fresh local entry, not a
+weakened existing-upgrade guard. It requires a pre-created empty POS_Local_Beta
+and runs the unchanged full beta core plus the current13-module upgrade. Document
+creation/selecting in SSMS. Fresh core/metadata commits remain separate; stop on
+errors and preserve any partial setup. Final checks:37 focused Node tests and19
+owned LocalDB groups, including three fresh/populated-refusal cases, passed.
+No operator database was created/applied. The already-current Supabase Beta
+project still uses its existing-project verifier; never fresh-replay it.
+
+## 13 November — explicit cluster and branch workflow rules
+
+The owner additionally requests cluster-based and branch-based rules. Extend the
+existing [workflow rulebook](pos-workflow-rules.md#cluster-and-branch-rules) with
+C1–C18, B1–B18 and a scope/acceptance matrix; require it from AGENTS.md. Preserve
+all previously approved terminal, PIN, permission, Settings and page workflows.
+
+Same-cluster eligible catalogue sharing, separate branch/location quantities and
+financial history, global SKU identity, posted-transfer provenance and the latest
+positive active same-cluster stock-availability exception remain controlling.
+Cluster membership is not user authority. Operations remains registered-branch
+bound for every role; Management scope must be independently verified. Shared
+SQL/replica contents and NULL assignments grant no extra access. Preserve section
+inheritance/locks, Dashboard selected-branch scope, explicit All Shops cluster
+filters and the Business Board authorized company directory.
+
+Cover initial bootstrap, push/pull, paused outbound work, reconnect and expired
+history recovery using each table's declared scope/ownership. Retain pending
+work and original identities on branch/cluster/connection changes. Private stock
+remains a saved preference, not proof of a new enforced ACL. Do not invent an
+arbitrary Management subset implementation, independent warehouse ACL or blanket
+intra-cluster approval requirement. Existing recorded runtime limitations remain
+unverified/unresolved by this documentation-only change. No live schema/data,
+runtime policy, Membership, production or installer-publication change is made.
+
+The owner further clarifies one shared running SKU sequence across all branches
+and clusters in the same POS database. Every distinct new product has a globally
+unique SKU; per-branch/cluster counters must not collide. Preserve the existing
+atomic allocator/reserved-range model, manual/import uniqueness and stable SKU
+on retry/replication of the same canonical product. A global sequence does not
+merge catalogue visibility. Offline reservations may create gaps or out-of-order
+creation times; strict gapless offline numbering is not established. Existing
+SKUs, counters, schema and business data are unchanged by this documentation.
+
+The owner selected separate cross-cluster reference-view and selected-product
+sellability controls. C16 records the desired product/target selection: viewing
+alone enables no sale or source stock/cost/financial access; sellability needs
+allowed visibility, ordinary branch/action rights and destination stock policy.
+Keep the same canonical product/SKU and preserve stock/history/pending evidence
+when hiding or disabling future selling. The current manual selector is not
+established as implemented. This is documentation approval only; reconcile
+existing transferred-product visibility during a separately authorized runtime
+change, without disabling legitimate existing trading or widening other access.
+
+The later controlling correction is C17/C18: a verified posted purchase receipt
+or completed incoming transfer adopts the SAME canonical product/SKU into the
+receiving cluster's normal catalogue permanently, with distinct branch quantities
+and retained origin/provenance. Zero stock must not hide/unshare it, downgrade it
+to reference-only or archive it globally. Normal product status, explicit selling
+restrictions, user rights and branch stock policy remain applicable. Further
+receiving reuses the existing record; show origin, catalogue memberships and
+local quantity separately. Persist membership independently of live stock and
+finite transfer/history windows. This supersedes requiring a separate manual
+reference/selling selection after legitimate receipt; optional manual reference
+controls remain for unadopted items. Unrelated clusters gain no automatic view.
+Purchase/zero-stock persistence and cross-platform enforcement are requirements,
+not verified implementation or permission to apply schema/data changes.
+
+## 13 November — approved workflow rulebook and PIN-user provisioning
+
+The owner approved the terminal/login/permission rules T1–T24 and shared Settings
+rules S1–S14, plus all Settings page/subpage responsibilities, and requested
+equivalent rules for Home, Selling, Inventory and related workflows. The permanent
+reference is [POS workflow rules](pos-workflow-rules.md), required by AGENTS.md.
+Its operational rules preserve existing approved financial, branch, catalogue,
+booking, report and recovery policies; they are requirements, not new pass results.
+
+The final T10 correction supersedes any reading that each user must previously
+sign in on each PC: automatically provision every eligible PIN user's authorized
+account/status/scope/permissions and protected sign-in verifier into connected
+local SQL through registered-device sync authority when online service is
+reachable, independent of the current person session. No readable PIN/password
+copying, universal branch access or automatic person login follows. Sign-in and
+approval credentials stay separate. A signed-in person's granted actions within
+their authority require no additional approval PIN. Existing explicit approval
+policies beyond direct authority remain in force; remove the unrelated manager
+prior-sign-in example from T10. Known revocation/denial cannot become offline
+admission, and disconnected devices retain approved freshness limitations.
+
+Preserve T13 explicit user grants/denials on ordinary account edits; explain an
+intentional role preset change before save. T15 requires visible page/action
+dependencies and a deliberate authorized grant, not silent privilege expansion.
+The current batch is documentation only: runtime compliance/permission defect
+verification, code fixes, database changes and installer publication are distinct.
+Membership remains ON HOLD and production is excluded.
+
+## 12 November — online fallback includes explicit replacement recovery
+
+The owner clarified that no connected local SQL must use the configured online
+database, and requested agents to fix the still-blocked re-registration. An
+explicit native-authorized online recovery can replace registration while
+retaining unknown previous local work in a sealed Main-only recovery hold.
+This supersedes requiring a readable local SQL target before every replacement;
+it does not mark queues empty or allow old local data under the new identity.
+Preserve previous binding/settings/evidence, enforce the local hold across
+startup/IPC/sync, use normal online account/branch authority, and keep schema,
+production and installer publication approvals separate.
+
+## 12 November — saved SQL connects during application startup
+
+The owner explicitly requires enabled, saved local SQL Server configuration to
+be restored and connected automatically as part of Electron startup. Do not defer
+connection until Settings, login or a business action. Show startup progress and
+verify the canonical connection, required schema and scoped bootstrap before
+publishing local trading readiness. Keep one coordinated native connection path,
+operator settings, permissions, pending work and existing unavailable-SQL fallback.
+This grants no new schema/data execution authority and does not classify a
+missing previous SQL profile as a fresh terminal or an empty queue. The separate
+beta.7 replacement-registration recovery case remains unresolved.
+
+## 12 November — explicit Emergency Access registration repair
+
+The owner reports beta.6 cannot recover the saved registration and cannot open
+registration in Emergency Access. Current credential-free diagnostics identify
+a terminal-token mismatch; ordinary retry cannot reconcile different identities.
+Fix the repair lockout through the existing verified Emergency Access session
+and an explicit operator choice, preserving saved evidence and native pending-
+work, branch and proof checks. This supersedes blanket hiding of the activation
+form in Emergency Access for a readable connection plus known registration
+failure: expose only an explicitly chosen guarded repair flow, never classify
+the failure as a fresh device or grant trading. Keep unreadable native storage
+closed. A dedicated native repair action may connect the saved previous SQL
+profile without requiring old registration restoration, editing its target or
+running schema/bootstrap changes. An absent/unreadable saved profile is not
+proof of no pending local work. Production,
+live schema/data changes, manual profile resets and relaxed identity admission
+remain excluded.
+
+## 12 November — retained registration selection and beta publication
+
+The owner reported beta.5's registration recovery pending and main startup
+failure, and explicitly requested agents to fix and publish the next beta.
+Baseline is `b8a9a781`. Installed diagnostics show an original-binding refusal;
+source reproductions prove an old plaintext fallback can hide a valid encrypted
+registration, and either format may be the newer copy. Consider the bounded
+retained candidates only through the existing strict native original-binding,
+project, proof and canonical verification. Preserve evidence and stop on an
+actually changed native context. Distinguish unreadable marker, binding/project,
+proof and verification failures using credential-free reasons on recovery and
+startup screens. Do not weaken branch/terminal locks or fabricate lost proof.
+After focused checks and exact-head CI, merge beta and publish the owner-requested
+beta installers. Production, schema/data changes and direct installed-profile
+repairs remain excluded.
+
+## 11 November — Electron saved settings must restore before sign-in
+
+The owner authorized agents to fix beta.4's saved-settings restore failure on
+Electron. Read the device's encrypted database/backend settings independently
+of retained-registration verification in recovery. A failed registration read
+must remain unknown and must not open new activation/trading access. Recover
+only the original proof-verified registration through a bounded native restore
+operation; ordinary activation writes keep their existing permissions. Preserve
+operator settings, stored evidence and pending work. Use focused isolated tests
+and beta PRs; production, installed-data repairs and another installer release
+retain separate approval boundaries. Baseline: `5011a42b`.
+
+## 7 November — two-way POS synchronization plan
+
+The owner requested permanent rules for the revised two-way sync plan and a
+backup of the earlier rules. SQL Server 2025 Express uses the existing ODBC
+connection and one durable business-event uploader. Change Tracking is limited
+to approved legacy current-state mirrors. Supabase sends authorized committed
+change groups back through the durable feed, with private Realtime wake signals
+and checkpoint-based catch-up. The [current plan](database/pos-sync-implementation-plan.md)
+controls staged implementation. Live acceptance requires matching data and an
+isolated two-till cutover and handback drill. The plan records proposed pilot
+settings. Store policies, staging targets and production actions retain their
+existing approval boundaries.
+
+Store rules synchronize in both directions. An authorized Management account
+can save for a permitted selected store through the cloud. An Operations till
+is restricted to its registered store. Use the existing verified settings save
+and preserve the original expected revision on any deferred native edit.
+Distribute the committed result to the eligible tills for that store. Keep
+Management replicas read-only and preserve the operator's existing connection
+fields.
+
+On 9 November the owner requested completing sync code on PR #451 with
+agents and focused tests. Only the production project is available. Keep
+hosted acceptance, the beta merge and installer publication pending. Run
+database checks against disposable instances and keep prepared SQL outside
+the deployed migrations.
+
+The owner subsequently created a separate Retail POS Beta project in
+luckycharms Org and authorized its POS schema, isolated test relay and
+two-till acceptance on PR #451. Use synthetic data and independent test SQL
+Server databases. This supersedes the hosted test hold for that isolated
+project only. Production and shared deployments remain outside the work.
 
 ## 7 November — branch history isolation and affected-PC follow-up approved
 
@@ -1370,6 +1855,12 @@ Textual import amounts must also survive decimal serialization into the existing
 IMPORT65 is prepared in beta PR396, runtime commit 7ffb9862d039941946d9a67b0dce2673a44f47c3. Final frozen-source full regression passed 5,660 tests with 7 skipped and 0 failed; 91 focused importer tests, TypeScript, scoped lint and diff checks passed. This is source/isolated-fixture verification only. The exact customer workbook symptom, installed Electron/mobile decimal-entry interaction and deployed beta acceptance remain unverified. No production import, database/schema/registration/permission change or publication was performed by this batch.
 
 
+## STOCK68 — selected-time stock quantity, 5 November
+
+Owner selected actual stock by original operational effective time. Late offline uploads may restate a past report; retain arrival/recording time separately. Inventory report requires selected date+time with explicit zone and exact saved shift.closed_at shortcut. A verified opening and complete deduplicated movement coverage are prerequisites; do not infer arbitrary old balances from current stock, item logs alone, row versions or arrival timestamps. Missing coverage must remain explicit with no invented zero quantities. Historical valuation is separate because current prices/costs do not establish prior value.
+
+The quantity-only kernel and36 synthetic/existing report tests are prepared in codex/historical-stock-report-beta at baseline a73f24e8. No UI/loader/writer/schema integration or database application exists yet. Required ledger/coverage/atomic-writer scope is recorded in docs/database/historical-stock-report-plan.md for review before shared writer changes. This is source preparation, not a complete historical reporting feature.
+
 ## SYNC68 — single data request lane, 5 November
 
 Owner requires one coordinated sync-data HTTP lane within the terminal's existing Main sync client, with fair bounded upload/download page scheduling. Electron durable pending business storage remains SQL Server only; a transient in-memory request scheduler is not a browser/file business outbox. Auth, registration/admission and health control requests remain independent. Preserve existing atomic batch groups, acknowledgements, request timeouts, permissions and checkout. Capture source identity at enqueue and verify before sending/accepting; changing backend/project/terminal/SQL profile may not relabel queued work. This does not imply one physical Supabase database connection or change pool/billing settings.
@@ -1530,6 +2021,41 @@ platform publication, so require the exact final scope, acceptance evidence and
 owner approval before that promotion. Unfinished recovery and stock-report work
 remain in their separate draft PRs; do not imply they are released.
 
+## STOCK401 — retained unfinished stock-history foundation, 5 November
+
+6 November: owner explicitly approved implementation/tests for the dedicated
+stock-event domain in `docs/database/stock-history-author-domain-plan.md`, using
+only existing enrolled Main-owned keys. No generic signing API, rotation, new
+enrollment or live database/deployment action. Reports must expose the same
+historical stock reader alongside its Inventory shortcut. Exact source-effect,
+cohort/opening/time coverage remains required; never certify unknown past stock.
+
+Owner reactivated completion on 6 November; this supersedes the later deferral
+description retained below as history. Continue reviewed report/Main/UI/export
+then actual effect-bound capture, durable single-lane sync and coverage proof.
+No historical quantity may be inferred from current stock or unverified clocks;
+no live schema/baseline application before exact review. The existing standalone
+local025–030 upgrade stays unchanged while prepared031 is unfinished. Keep PR401
+draft until complete independent regression and report acceptance.
+
+Owner approved actual goods-arrival time for receiving, default original
+Main/save stock-operation instant unless authorized explicit arrival is supplied;
+invoice date remains separate. Do not relabel old invoice entry dates as proven
+physical time. Effective-time reporting may restate with late offline evidence.
+
+PR401 now retains an optional storage/capture/read prototype and exact quantity
+kernel, with81 focused tests and20 actual disposable LocalDB groups passing,
+including15 isolated PostgreSQL cases. Its capture hooks default to null; Main/IPC,
+complete writers, validated cloud upload, registry integration, opening activation
+and UI/export remain unfinished. Existing receiving defers local stock effect to
+cloud; pending history must retain the original physical intent without applying
+stock again. Terminal-only ordinary sync does not authenticate a claimed original
+staff author/backdated approval; unknown provenance remains incomplete.
+
+Latest urgent release decision keeps this work DRAFT/unmerged and excludes local
+prepared031 from the urgent SQL72 bundle025–030. No stock schema/data/activation
+or real coverage has been applied. Do not claim a deployed report, full-suite or
+device acceptance. See the historical-stock-report plan for exact remaining work.
 ## Offline approval audit persistence — 5 November
 
 Owner approved a separate narrow helper correction after actual isolated Electron
@@ -1679,6 +2205,25 @@ portals with isolated scoped providers. Retaining the shell does not retain a
 previous branch page: both data and settings must confirm before mounting its
 protected content. Recheck identity/profile/permission changes with the full
 startup gate; do not infer backend access from these presentation fixtures.
+
+STOCK401 source refinement (6 November): the approved dedicated stock-author
+implementation uses a bounded original operation/cohort digest with later exact
+membership/effect proofs for bulk operations. Keep one Main-owned existing key
+and coordinated SQL journal lane, capture the real original author/transaction,
+and bind exact branch/terminal/document/source rows. Do not activate only small
+operations while claiming complete bulk history, use a generic renderer signer,
+or infer physical clock/coverage from a signature. Optional history problems
+retain their evidence and honest status without failing an otherwise accepted
+business upload or weakening required financial acknowledgements. No live SQL,
+opening, enrollment or release is authorized by this implementation refinement.
+
+6 November STOCK401 resumption: the owner reactivated all pending historical-stock
+source/test implementation after the Escape pause. Preserve the retained cohort
+proof and partial fifth-table work; finalize exact physical metadata and accepted
+source/effect/cohort/opening coverage before factory activation or complete-history
+claims. Refresh beta without overwriting existing features. Exact cloud/local
+upgrade files still require final review/approval before application; no real
+enrollment, baseline, business repair, Membership or publication is included.
 ## 6 November — automatic reconciliation before intervention
 
 Owner wants sync to attempt safe resolution of ERECONCILE first and surface a
@@ -1776,3 +2321,61 @@ installer publication retain their separate explicit owner approvals. True
 financial conflicts need the existing audited Administrator decision; schema
 installation must never invent proof, choose a timestamp winner, reset a cursor
 or acknowledge retained work.
+
+## 16 November — beta.9 closing-status compatibility correction
+
+Beta1.4.84-beta.9 was published from beta5f5dd04 (PR470 and prior sync/receipt
+fixes); release workflow43589219525 and public paired installers/update feeds
+were verified. Stable manifest and production main remained unchanged.
+
+The owner reports closing recovery/pending-count failures in that version with
+POS_Local_Beta selected. Read-only local evidence confirms text store IDs and no
+saved shifts or recovery rows. The recovery service incorrectly requires UUID
+branch/terminal labels despite the existing128-character text-scope protocol.
+Accept valid exact bounded labels while retaining strict database/record UUIDs,
+same source/profile/branch checks and all receipt/adoption guards. Do not clear
+queues or replace unverified pending counts with zero to suppress the warning.
+
+Focused tests and a real ODBC owned fixture verify the narrow correction and
+no-ACK pending preservation. Preserve numeric primary SQL errors across the
+existing diagnostic chain; the generic3621 termination wrapper is insufficient
+to establish the separate installed EREQUEST cause. This remains unverified;
+new installed acceptance and any new installer publication are distinct steps.
+No production or installed database/schema/vault changes are part of this fix.
+
+## 17 November — beta.10 native and hosted sync repair
+
+Owner requests agents to inspect the Electron window, fix its current SQL errors
+and resolve Supabase errors in beta, preserving production and saved local work.
+Beta.10 is published from ce602c2f; no new installer publication is implied.
+
+Read-only installed Query Store identifies repeated sale_items MERGE exceptions.
+Legacy NULL child branch labels are excluded by bootstrap/counts but their feed
+events were incorrectly global, exposing foreign sale items whose parent sales
+correctly are absent from this branch. Derive sale-item scope from the verified
+sales parent, retain NULL financial facts, reject explicit mismatches, and filter
+historical global events before paging/materialization. Never fetch foreign
+parents, disable constraints, rewrite historical financial rows or clear cursors.
+New metadata-only feed provenance must distinguish verified deletion ownership;
+unprovable historical tombstones require a hold rather than a fabricated ACK.
+Current isolated beta has no such old tombstones or missing-child feed entries.
+
+Separate beta logs prove42P10 from terminal-account app_users on_conflict=email;
+email is intentionally nonunique. Use its existing unique stable machine identity,
+verify ownership/read-back, and preserve valid legacy profiles and inactive denials.
+Preserve lifecycle SQL/HTTP/table evidence instead of replacing it with ESYNC.
+The guarded metadata-only patch was applied and verified on Retail POS Beta:
+scoped legacy item count0→6 and foreign feed items3→0. Its migration ledger version
+is20261117052540. Preserve original NULL fields; no financial backfill or cursor
+reset occurred. Native comparison/guard code still requires a new approved beta
+installer before installed-client acceptance; publication is a separate action.
+
+## 21 November — approved Stock Report and project rules
+
+Use the owner-approved brief stock pause only for the first isolated Retail
+POS Beta stocktake. Require each writer's checked cutoff, a full product count
+including zeros, independent review, and exact local/hosted proof. Continue
+approved source work and relevant tests in PR #401 without repeating routine
+approval. Preserve separate authorization for protected database actions,
+installer publication and production. The local rules reconciliation preserves
+the owner's existing sections and has a byte-verified prior copy.

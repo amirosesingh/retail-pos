@@ -1,6 +1,8 @@
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { bootstrapDiagnostic, tagBootstrapDiagnostic } = require("../diagnostics.cjs");
+const { sqlErrorDiagnostic } = require("../db/sql-error-diagnostic.cjs");
 const { posFeedEvidence } = require("./status-evidence.cjs");
+const { pilotEnrollment, TABLE: GROUPED_SETTINGS } = require("./grouped-store-settings.cjs");
 function retainDiagnostic(target, source) {
   const { bootstrapPhase: phase, bootstrapOrigin: origin, ...fields } = bootstrapDiagnostic(source, []);
   try {
@@ -13,14 +15,29 @@ function retainDiagnostic(target, source) {
 const syncLease = new AsyncLocalStorage();
 const authorHold = error => /^(?:ESYNC_SHIFT_AUTHOR_|ESHIFT_AUTHOR_)/.test(String(error?.code??""));
 class SyncCoordinator {
-  constructor({ pushWorker, pullWorker, publish = () => {}, recoverHeldStatuses = null }) { this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.recoverHeldStatuses=recoverHeldStatuses; this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false; this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 }; }
+  #groupedSettingsPilot;
+  #groupedSettingsPilotMode;
+  #uploadStoreSettingsEdit;
+  constructor({ pushWorker, pullWorker, publish = () => {}, recoverHeldStatuses = null, groupedSettingsPilot = null,
+    groupedSettingsPilotMode = null, uploadStoreSettingsEdit = null, observeStockFrontier = null, downloadStockHistory = null }) {
+    this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.recoverHeldStatuses=recoverHeldStatuses;
+    this.#groupedSettingsPilot=pilotEnrollment(groupedSettingsPilot);
+    this.#groupedSettingsPilotMode=["run", "handback"].includes(groupedSettingsPilotMode) ? groupedSettingsPilotMode : null;
+    this.#uploadStoreSettingsEdit=uploadStoreSettingsEdit;
+    this.observeStockFrontier=observeStockFrontier;
+    this.downloadStockHistory=downloadStockHistory;
+    this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false;
+    this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 };
+  }
   snapshot() { return { ...this.status, running:this.running, paused:this.paused }; }
   unresolved() { return this.unresolvedFailures??=new Map(); }
   publishFailureStatus(branchId) {
     const failures=[...this.unresolved().values()].filter(failure=>failure.branchId===String(branchId??""));
     const history=(this.historyHolds??=new Map()).get(String(branchId??''))??null;
+    const cash=(this.cashHolds??=new Map()).get(String(branchId??''))??null;
     this.status.historyUploadHeld=history;
-    this.status.lastError=[...new Set([...failures.map(failure=>failure.error),...(history?[history.message]:[])])].join(' ')||null;
+    this.status.cashUploadHeld=cash;
+    this.status.lastError=[...new Set([...failures.map(failure=>failure.error),...[history,cash].filter(Boolean).map(hold=>hold.message)])].join(' ')||null;
     this.status.credentialsInvalid=failures.some(failure=>failure.credentialsInvalid);
   }
   rememberFailure(error,options,direction) {
@@ -65,6 +82,76 @@ class SyncCoordinator {
   runPush(options) { return this.withExclusive(() => this.pushWorker.run(options)); }
   ownsExclusive(){return syncLease.getStore()===this;}
 
+  // Used by the disposable cutover drill. Installed scheduling derives its
+  // enrollment from Main and establishes this same handoff when needed.
+  prepareGroupedSettingsHandoff() {
+    const enrollment = this.#groupedSettingsPilot;
+    if (!enrollment) throw Object.assign(new Error("This coordinator has no grouped settings enrollment."),
+      { code: "ESYNC_GROUPED_SCOPE" });
+    return this.withExclusive(() => this.pullWorker.prepareGroupedSettingsHandoff(enrollment, () => this.paused));
+  }
+  runGroupedSettingsPilot() {
+    const enrollment = this.#groupedSettingsPilot;
+    if (!enrollment) return Promise.resolve({ status: "DISABLED", reason: null, branchId: null, position: null });
+    return this.withExclusive(async () => {
+      let result;
+      if (this.paused) {
+        result = { status: "PAUSED", reason: null, branchId: enrollment.branchId,
+          position: this.status.groupedSettingsPilot?.position ?? null };
+      } else {
+        try {
+          result = await this.pullWorker.runGroupedSettingsPilot(enrollment, () => this.paused);
+        } catch (error) {
+          const refused = ["ESYNC_GROUPED_SCOPE", "ESYNC_GROUPED_DATABASE_CHANGED", "ESYNC_GROUPED_DATABASE_UNVERIFIED",
+            "ESYNC_REQUEST_CONTEXT_CHANGED", "ESYNC_GROUPED_HANDOFF_REQUIRED"].includes(error?.code);
+          result = { status: refused ? "REFUSED" : "RETRY", reason: refused ? error.code : "ESYNC_GROUPED_RETRY",
+            branchId: enrollment.branchId, position: null };
+        }
+      }
+      this.status.groupedSettingsPilot = result;
+      this.publish(this.snapshot());
+      return result;
+    });
+  }
+
+  async #runInstalledGroupedSettings(enrollment, pullOnly) {
+    const branchId = enrollment.branchId;
+    let status, reason = null;
+    try {
+      if (this.paused) status = "PAUSED";
+      else if (this.#groupedSettingsPilotMode === "handback") {
+        await this.pullWorker.returnGroupedSettingsHandoff(enrollment, () => this.paused);
+        status = "HANDED_BACK";
+      } else {
+        await this.pullWorker.ensureGroupedSettingsHandoff(enrollment, () => this.paused);
+        if (!pullOnly && !this.paused && this.#uploadStoreSettingsEdit) {
+          try { this.status.storeSettingsEditUpload = await this.#uploadStoreSettingsEdit(); }
+          catch { this.status.storeSettingsEditUpload = { status: "RETRY", branchId, reason: "ESYNC_GROUPED_RETRY" }; }
+          this.publish(this.snapshot());
+        }
+        return this.runGroupedSettingsPilot();
+      }
+    } catch (error) {
+      reason = error?.code;
+      if (reason === "ESYNC_PAUSED") { status = "PAUSED"; reason = null; }
+      else if (["ELOCAL_UPLOAD_PENDING", "ESETTINGS_EDIT_PENDING"].includes(reason)) status = "DEFERRED";
+      else if (["ESYNC_GROUPED_REVIEW_REQUIRED", "ELOCAL_PENDING_UNVERIFIED", "ESYNC_GROUPED_PROTOCOL"].includes(reason)) status = "REVIEW_REQUIRED";
+      else if (["GROUPED_FEED_UNAVAILABLE", "HTTP_401", "HTTP_403"].includes(reason)) status = "UNAVAILABLE";
+      else if (["ESYNC_GROUPED_SCOPE", "ESYNC_GROUPED_DATABASE_CHANGED", "ESYNC_GROUPED_DATABASE_UNVERIFIED",
+        "ESYNC_REQUEST_CONTEXT_CHANGED", "ESYNC_GROUPED_HANDOFF_REQUIRED"].includes(reason)) status = "REFUSED";
+      else { status = "RETRY"; reason = "ESYNC_GROUPED_RETRY"; }
+    }
+    return this.#recordInstalledGroupedSettings(status, reason, branchId);
+  }
+
+  #recordInstalledGroupedSettings(status, reason, branchId) {
+    const prior = this.status.groupedSettingsPilot;
+    this.status.groupedSettingsPilot = { status, reason, branchId,
+      position: prior?.branchId === branchId && status !== "HANDED_BACK" ? prior.position : null };
+    this.publish(this.snapshot());
+    return this.status.groupedSettingsPilot;
+  }
+
   async refresh(branchId) {
     try {
       const reader=this.pushWorker?.reader;
@@ -101,12 +188,23 @@ class SyncCoordinator {
     const result=await this.runNow({ ...options, includeActivity:true, final:true, pushOnly:true });
     if(!result.ok)return result;
     if(result.historyUploadHeld)return{...result,ok:false,allUploaded:false,code:'EHISTORY_UPLOAD_REVIEW',error:result.historyUploadHeld.message};
+    const financialHold = result.cashUploadHeld ?? result.refundUploadHeld;
+    if(financialHold)return{...result,ok:false,allUploaded:false,code:financialHold.code,error:financialHold.message};
     if(result.deferredTables?.length)return {...result,ok:false,code:"ESYNC_AUTH_PENDING",error:`Settings changes still need an authorized sign-in: ${result.deferredTables.join(", ")}.`};
     const reader=this.pushWorker?.reader;
     const remaining=reader?.pendingSummary
       ? await reader.pendingSummary(options.branchId)
       : { pending:0,failed:0 };
-    if(Number(remaining.pending??0)>0||Number(remaining.failed??0)>0){
+    const pending=Number(remaining.pending??0),failed=Number(remaining.failed??0),total=pending+failed;
+    if(!Number.isSafeInteger(pending)||pending<0||!Number.isSafeInteger(failed)||failed<0||!Number.isSafeInteger(total))
+      return {...result,...remaining,ok:false,code:"ESYNC_PENDING",error:"Pending transaction status could not be verified."};
+    let reportHistoryPending=0;
+    if(total>0&&this.pushWorker?.stockHistory?.reviewHeldCount){
+      try{const reviewed=await this.pushWorker.stockHistory.reviewHeldCount(remaining,options.branchId,this.pushWorker.cloud?.terminalId?.()??'');
+        if(Number.isSafeInteger(reviewed)&&reviewed>0&&reviewed<=total)reportHistoryPending=reviewed;
+      }catch{/* Unknown schema/context/metadata remains critical; never guess. */}
+    }
+    if(total-reportHistoryPending>0){
       return {
         ...result,
         ...remaining,
@@ -115,10 +213,14 @@ class SyncCoordinator {
         error:"Required local transactions are still waiting for central acknowledgement.",
       };
     }
-    return { ...result, ...remaining, final:true };
+    return { ...result, ...remaining, final:true,allUploaded:total===0,...(reportHistoryPending?{reportHistoryPending}: {}) };
   }
   async runOnce(options = {}) {
     this.running=true;
+    if (options.branchId) {
+      if (this.status.storeSettingsEditUpload?.branchId !== options.branchId) delete this.status.storeSettingsEditUpload;
+      if (this.status.groupedSettingsPilot?.branchId !== options.branchId) delete this.status.groupedSettingsPilot;
+    }
     Object.assign(this.status, { pushed:0, merged:0, currentTable:null, startedAt:new Date().toISOString() });
     this.publishFailureStatus(options.branchId);
     const workerOptions = { ...options, onProgress: progress => {
@@ -133,6 +235,8 @@ class SyncCoordinator {
       this.status.recentTables.length=Math.min(this.status.recentTables.length,50);
       this.publish(this.snapshot());
     } };
+    const enrollment = this.#groupedSettingsPilotMode && this.#groupedSettingsPilot?.branchId === options.branchId
+      ? this.#groupedSettingsPilot : null;
     let result;let failedDirection="push";
     try {
       this.status.phase="pushing"; this.publish(this.snapshot());
@@ -140,6 +244,9 @@ class SyncCoordinator {
       try { if (!options.pullOnly) { pushed=await this.pushWorker.run(workerOptions); this.status.lastPushAt=new Date().toISOString();
         if(pushed?.historyUploadHeld)(this.historyHolds??=new Map()).set(String(options.branchId??''),pushed.historyUploadHeld);
         else (this.historyHolds??=new Map()).delete(String(options.branchId??''));
+        const financialHold = pushed?.cashUploadHeld ?? pushed?.refundUploadHeld;
+        if(financialHold)(this.cashHolds??=new Map()).set(String(options.branchId??''),financialHold);
+        else (this.cashHolds??=new Map()).delete(String(options.branchId??''));
         this.clearSuccessfulFailures(options,"push",pushed);this.publishFailureStatus(options.branchId); } }
       catch(error) { pushError=error;this.rememberFailure(error,options,"push"); }
       if(pushError?.code==="ECHANGEGAP" && ["shifts","shift_cash_counts","shift_reconciliations","shift_close_events","shift_notifications","shift_variance_alerts"].includes(pushError.table) && this.recoverHeldStatuses) {
@@ -148,16 +255,55 @@ class SyncCoordinator {
         try { this.status.heldStatusRecovery=await this.recoverHeldStatuses({branchId:options.branchId}); }
         catch { this.status.heldStatusRecovery={updated:0,reviewRequired:0,deferred:true,code:"EHELD_STATUS_RETRY"}; }
       }
-      if (pushError && (pushError.code === "ECHANGEGAP" || (!authorHold(pushError)&&[401,403].includes(Number(pushError.status))))) throw pushError;
-      let pulled = {};
+      if (pushError && (pushError.code === "ECHANGEGAP" || (!authorHold(pushError)&&[401,403].includes(Number(pushError.status))))) {
+        if (enrollment && !options.pushOnly && this.#groupedSettingsPilotMode === "run" &&
+            pushError.code === "ECHANGEGAP" && pushError.table !== GROUPED_SETTINGS)
+          await this.#runInstalledGroupedSettings(enrollment, options.pullOnly);
+        throw pushError;
+      }
+      let pulled = {}, handedBackForStock = false;
       if (!options.pushOnly) {
         failedDirection="pull";
         this.status.phase="pulling"; this.status.currentTable=null; this.publish(this.snapshot());
-        pulled=(await this.pullWorker.run(workerOptions)) ?? {}; this.status.lastPullAt=new Date().toISOString(); this.status.conflicts=Number(pulled.conflicts??this.status.conflicts); this.status.membershipDeferred=Boolean(pulled.membershipDeferred); this.status.membershipMirrored=Number(pulled.membershipMirrored??0);
+        const pullOptions = enrollment?.extended && this.#groupedSettingsPilotMode === "handback"
+          ? { ...workerOptions, extendedHandback: true } : workerOptions;
+        try {
+          pulled=(await (enrollment ? this.pullWorker.run(pullOptions, enrollment) : this.pullWorker.run(pullOptions))) ?? {};
+        } catch (error) {
+          if (error?.code !== "ESYNC_GROUPED_STOCK_PARENT_FENCED" || !enrollment?.extended ||
+              this.#groupedSettingsPilotMode !== "handback") throw error;
+          const handback = await this.#runInstalledGroupedSettings(enrollment, options.pullOnly);
+          if (handback.status !== "HANDED_BACK") throw error;
+          handedBackForStock = true;
+          pulled = (await this.pullWorker.run(pullOptions, enrollment)) ?? {};
+        } finally {
+          if (enrollment && this.#groupedSettingsPilotMode === "run")
+            await this.#runInstalledGroupedSettings(enrollment, options.pullOnly);
+        }
+        if (enrollment && this.#groupedSettingsPilotMode === "handback" && !handedBackForStock) {
+          if (pulled.deferredLocalChanges || pulled.deferredHeldDeletion)
+            this.#recordInstalledGroupedSettings("DEFERRED", "ELOCAL_UPLOAD_PENDING", enrollment.branchId);
+          else await this.#runInstalledGroupedSettings(enrollment, options.pullOnly);
+        }
+        this.status.lastPullAt=new Date().toISOString(); this.status.conflicts=Number(pulled.conflicts??this.status.conflicts); this.status.membershipDeferred=Boolean(pulled.membershipDeferred); this.status.membershipMirrored=Number(pulled.membershipMirrored??0);
         this.clearSuccessfulFailures(options,"pull",pulled);this.publishFailureStatus(options.branchId);
       }
       this.status.pushed=Number(pushed.pushed??this.status.pushed); this.status.merged=Number(pulled.merged??this.status.merged);
       if (pushError) { failedDirection="push"; throw pushError; }
+      if (this.downloadStockHistory && options.branchId && !options.final && !options.pushOnly && !this.paused) {
+        // All network requests run outside the trading lane. The lease only
+        // protects the local SQL Server stock-report metadata installation.
+        syncLease.exit(() => {
+          void Promise.resolve().then(() => this.downloadStockHistory({ branchId: options.branchId,
+            runInstall: work => this.withExclusive(() => work(() => this.ownsExclusive() && !this.paused)),
+          })).catch(() => undefined);
+        });
+      }
+      if (this.observeStockFrontier && options.branchId && !options.final && !options.pushOnly && !options.pullOnly && !this.paused) {
+        try {
+          await this.observeStockFrontier({branchId:options.branchId,assertLease:()=>this.ownsExclusive()&&!this.paused});
+        } catch { /* Optional observation cannot change the outcome of business sync. */ }
+      }
       this.status.phase="idle"; this.publishFailureStatus(options.branchId);
       result={ ok:true,...pushed,...pulled,historyHoldOnly:Boolean(this.status.historyUploadHeld&&![...this.unresolved().values()].some(failure=>failure.branchId===String(options.branchId??''))) };
     } catch(error) {
@@ -165,7 +311,7 @@ class SyncCoordinator {
       this.status.phase="idle";
       const message=this.rememberFailure(error,options,failedDirection);
       const code=String(error?.code??"ESYNC");
-      result=retainDiagnostic({ ok:false,code,error:message,table:failedTable||null },error);
+      result=retainDiagnostic({ ok:false,code,error:message,table:failedTable||null,...sqlErrorDiagnostic(error) },error);
     } finally {
       this.running=false;
       this.status.currentTable=null;

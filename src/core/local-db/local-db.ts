@@ -1,4 +1,10 @@
 import { effectiveDatabaseMode } from "./db-mode";
+import type {StockHistoryRequest,StockHistoryPage} from '@/lib/stock-history-report';
+import type { StockHistoryMovementPage, StockHistoryMovementRequest } from "@/lib/stock-history-movements";
+import type { StockActivityPage, StockActivityRequest } from "@/lib/stock-activity-query";
+import type { StockActivityBalances, StockActivityBalancesRequest } from "@/lib/stock-activity-balances";
+import type { StockHistoryProductMergeCapability, StockHistoryProductMergeFailure, StockHistoryProductMergeReceipt,
+  StockHistoryProductMergeRequest } from "@/lib/stock-history-product-merge";
 import { isManagementDevice } from "@/lib/management-device";
 /**
  * Bridge to the Windows desktop shell's local Microsoft SQL Server database.
@@ -11,6 +17,7 @@ import { isManagementDevice } from "@/lib/management-device";
 import { desktopBridge } from "@/lib/desktop-bridge-registry";
 import type { SyncOp } from "@/lib/sync-outbox";
 import type { ShiftState } from "@/core/types/pos-types";
+import type { TerminalConfig } from "@/core/activation/terminal-tokens";
 
 export type LocalDbConfig = {
   server: string;
@@ -291,6 +298,37 @@ export type DirectConnectionParams = {
   timeout?: number;
 };
 
+export type StoreSettingsEditUpload = {
+  branchId: string;
+  status: "EMPTY" | "PENDING" | "APPLIED" | "AWAITING_DOWNLOAD" | "RETRY" | "REVIEW_REQUIRED" |
+    "AWAITING_OPERATOR" | "PAUSED" | "UNAVAILABLE";
+  reason?: string | null;
+};
+type StoreSettingsReviewValues = { block_shift_close_on_hold?: boolean | null; max_drawer_cash_limit?: string | null };
+export type StoreSettingsEditReview = {
+  operationId: string;
+  expectedVersion: number;
+  currentVersion: number;
+  proposedValues: StoreSettingsReviewValues;
+  currentValues: StoreSettingsReviewValues;
+  decisionSha256: string;
+};
+
+export type RecoveryEvidenceKind = "shift" | "sale" | "stock";
+
+export type SavedRecoveryEvidence = {
+  ok: true;
+  batchId: string;
+  branchId: string;
+  kind: RecoveryEvidenceKind;
+  reference: string;
+  savedAt: string;
+  savedRows: number;
+  queuedRows: number;
+  originalProof: "saved" | "missing" | "partial";
+  receipt: "opening" | "financial-metadata" | "stock" | null;
+};
+
 export type LocalSyncStatus = {
   connected: boolean;
   tradingReady?: boolean;
@@ -317,6 +355,8 @@ export type LocalSyncStatus = {
   failed?: number;
   conflicts?: number;
   lastError?: string | null;
+  storeSettingsEditUpload?: StoreSettingsEditUpload;
+  groupedSettingsPilot?: { branchId: string | null; status: string; reason?: string | null };
   running?: boolean;
   paused?: boolean;
   enabled?: boolean;
@@ -376,7 +416,46 @@ export type LocalSyncStatus = {
   database?: string | null;
 };
 
+export type TerminalClearContext = {
+  tokenId: string;
+  projectUrl: string;
+  reason: "revoked" | "missing" | "unpair";
+  verificationProjectUrl?: string;
+};
+
+export type PendingRefundApproval = {
+  operationId: string;
+  saleId: string;
+  refundId: string;
+  branchId: string;
+  amountMinor: string;
+  expectedSaleVersion: string;
+  route: "grouped" | "financial";
+  requiresApproval: boolean;
+  receiptNo?: string;
+};
+
+export type RefundApprovalStatus =
+  | ({ ok: true; pending: true } & PendingRefundApproval)
+  | { ok: true; pending: false }
+  | { ok: false; error?: string; code?: string };
+
 export type PosBridge = {
+  terminalRepairStatus?: () => Promise<{ ok: boolean; ready?: boolean; code?: string; error?: string; requiresLocalDatabase?: boolean; mode?: "online"; localRecoveryPending?: boolean }>;
+  terminalRepairConnectDatabase?: () => Promise<{ ok: boolean; ready?: boolean; code?: string; error?: string; requiresLocalDatabase?: boolean; mode?: "online"; localRecoveryPending?: boolean }>;
+  terminalRepairContinueOnline?: (evidence: {sealed:string|null;plain:string|null;key:string|null}) => Promise<{ok:boolean;ready?:boolean;code?:string;error?:string;requiresLocalDatabase?:boolean;mode?:"online";localRecoveryPending?:boolean}>;
+  restoreTerminalConfig?: (config: TerminalConfig) => Promise<{ ok: boolean; config?: TerminalConfig | null; code?: string; error?: string }>;
+  clearTerminalConfig?: (context: TerminalClearContext) => Promise<{ ok: boolean; code?: string; error?: string }>;
+  prepareCentralTransfer?: (value: { transferId: string; stage: "approve" | "dispatch" | "receive" | "verify" }) => Promise<{ ok: boolean; transferId?: string; stage?: string; error?: string; code?: string }>;
+  getRefundApprovalStatus?: (value: { saleId: string; branchId: string }) => Promise<RefundApprovalStatus>;
+  recoverRefundApproval?: (value: { saleId: string; branchId: string; operationId: string; grantToken: string }) => Promise<{ ok: boolean; operationId?: string; error?: string; code?: string }>;
+  authorizeRefund?: (value: {
+    saleId: string; branchId: string; registeredTerminalId: string; requestedAmount: number;
+    grantToken?: string | null; requestId?: string; username?: string; credential?: string;
+    selfAuthorization?: boolean; reason?: string;
+    recoveryOperationId?: string;
+    proof?: { accessToken?: string; cashierToken?: string; sessionToken?: string };
+  }) => Promise<{ ok: boolean; grantToken?: string; authorizer?: { id: string; name: string; role: string }; code?: string; error?: string }>;
   authorizeOfflineDiscount?: (value: {
     requestId: string; actionKey: "discount_over_limit"; registeredTerminalId: string; branchId: string;
     username: string; credential: string; selfAuthorization?: boolean; reason: string; snapshot: unknown; payload: Record<string, string | number | boolean | null>; requestedAmount: number;
@@ -407,6 +486,16 @@ export type PosBridge = {
     error?: string;
     code?: string;
   }>;
+  queueStoreSettingsEdit?: (value: {
+    branchId: string;
+    expectedVersion: number;
+    operationId: string;
+    patch: { block_shift_close_on_hold?: boolean; max_drawer_cash_limit?: string };
+  }) => Promise<{ ok: boolean; operationId?: string; error?: string; code?: string }>;
+  reviewStoreSettingsEdit?: (value:
+    { action: "preview"; branchId: string } |
+    { action: "keep-central"; branchId: string; operationId: string; decisionSha256: string }
+  ) => Promise<{ ok: boolean; review?: StoreSettingsEditReview | null; operationId?: string; error?: string; code?: string }>;
   openDrawer?: (value: {
     reason: string;
     shiftId?: string | null;
@@ -414,7 +503,9 @@ export type PosBridge = {
     printer?: { deviceName?: string; share?: string };
   }) => Promise<{ ok: boolean; eventId?: string; error?: string; code?: string }>;
   database?: {
-    getState: () => Promise<{ enabled: boolean; configured?: boolean; connected: boolean; tradingReady?: boolean; state: string }>;
+    getState: () => Promise<{ enabled: boolean; configured?: boolean; connected: boolean; tradingReady?: boolean; state: string; localRecoveryPending?: boolean }>;
+    /** Existing native database:state notifications; consumers need not inspect configuration. */
+    subscribe?: (callback: (state: { enabled?: boolean; configured?: boolean; connected?: boolean; tradingReady?: boolean; state?: string; localRecoveryPending?: boolean }) => void) => () => void;
   };
   telemetry?: {
     presence: (value: { sessionStatus: "signed_in" | "idle"; staffName: string | null; staffRole: string | null }) => Promise<{ ok: boolean }>;
@@ -430,6 +521,8 @@ export type PosBridge = {
         offline?: boolean;
         pushed?: number;
         merged?: number;
+        allUploaded?: boolean;
+        reportHistoryPending?: number;
         error?: string;
         code?: string;
       }
@@ -437,9 +530,12 @@ export type PosBridge = {
     auto?: () => Promise<
       LocalSyncStatus & { ok?: boolean; busy?: boolean; skipped?: boolean; pushed?: number; merged?: number }
     >;
+    refreshApprovalActivity?: () => Promise<{ ok: boolean; inserted?: number; skipped?: boolean }>;
     pause?: () => Promise<LocalSyncStatus>;
     resume?: () => Promise<LocalSyncStatus>;
     getFailures?: () => Promise<Record<string, unknown>>;
+    getRecoveryEvidence?: (input: { batchId: string; kind: RecoveryEvidenceKind }) =>
+      Promise<SavedRecoveryEvidence | { ok: false; code: string; error: string }>;
     reconcile?: (options?: Record<string, unknown>) => Promise<Record<string, unknown>>;
     subscribe?: (cb: (status: LocalSyncStatus) => void) => () => void;
   };
@@ -453,6 +549,8 @@ export type PosBridge = {
     operationId?: string;
     branchId?: string;
     operations: SyncOp[];
+    /** Optional original arrival; current receiving permission/capability required in Main. */
+    stockArrival?: {effectiveAt:string;reason:string};
   }) => Promise<{ ok: boolean; replayed?: boolean; operationId?: string; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null; sqlDetail?: string | null }>;
   connect: (
     config: LocalDbConfig,
@@ -668,6 +766,18 @@ export type PosBridge = {
   managementReport?: (options: { kind: "sales" | "totals" | "shifts"; storeIds: string[]; from: string; to: string; zone: string; cursor?: { ts: string; id: string } | null; limit?: number; includeProfit?: boolean; shiftId?: string }) => Promise<{
     ok: boolean; complete?: boolean; source?: string; code?: string; error?: string; rows?: LocalSaleRow[]; storeTotals?: LocalSaleRow[]; hasMore?: boolean; cursor?: { ts: string; id: string } | null;
   }>;
+  managementInventory?: (request: import("@/lib/management-inventory-client").ManagementInventoryRequest) =>
+    Promise<import("@/lib/management-inventory-client").ManagementInventoryResult>;
+  stockHistory?: (request:StockHistoryRequest)=>Promise<{ok:boolean;page?:StockHistoryPage;code?:string;error?:string}>;
+  stockHistoryMovements?: (request: StockHistoryMovementRequest) => Promise<{ ok: boolean; page?: StockHistoryMovementPage; code?: string; error?: string }>;
+  stockActivity?: (request: StockActivityRequest) => Promise<{ ok: boolean; page?: StockActivityPage; code?: string; error?: string }>;
+  stockActivityBalances?: (request: StockActivityBalancesRequest) => Promise<{ ok: boolean; page?: StockActivityBalances; code?: string; error?: string }>;
+  productMergeCapability?: (request: { branchId: string }) => Promise<StockHistoryProductMergeCapability | StockHistoryProductMergeFailure>;
+  mergeProducts?: (request: StockHistoryProductMergeRequest) => Promise<StockHistoryProductMergeReceipt | StockHistoryProductMergeFailure>;
+  stocktakeControl?: (request: { action: "enroll" | "approve-financial" } | ({ stocktakeId: string } & ({ action: "arm" } |
+    { action: "prove"; phase: "arm" | "confirm" } | { action: "release"; fenceGeneration: string }))) =>
+    Promise<{ ok: boolean; result?: unknown; code?: string; error?: string }>;
+  stockArrivalCapability?: ()=>Promise<{ok:boolean;available?:boolean;reason?:string;code?:string;error?:string}>;
   onReadProgress?: (cb: (progress: { table: string; completed: number }) => void) => () => void;
   onBusinessChanged?: (
     cb: (change: {
@@ -680,7 +790,7 @@ export type PosBridge = {
     }) => void,
   ) => () => void;
   findReceipt?: (value: string, branchId: string, proof?: { sessionToken?: string; cashierToken?: string; accessToken?: string; refresh?: boolean }) => Promise<{ source: "local" | "cloud"; sale: LocalSaleRow; items?: LocalSaleRow[]; payments?: LocalSaleRow[] } | null>;
-  refundReceipt?: (value: { saleId: string; refundId: string; branchId: string; reason?: string | null }) => Promise<{ ok: boolean; replayed?: boolean; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null; sqlDetail?: string | null }>;
+  refundReceipt?: (value: { saleId: string; refundId: string; branchId: string; reason?: string | null; grantToken?: string }) => Promise<{ ok: boolean; replayed?: boolean; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null; sqlDetail?: string | null }>;
   /** Device settings stored in the branch SQL database. */
   getSetting?: (key: string) => Promise<{ ok: boolean; value?: string | null; error?: string }>;
   reserveStockCounter?: (prefix: string, minimum: number) => Promise<{ ok: boolean; sequence?: number; code?: string; error?: string }>;

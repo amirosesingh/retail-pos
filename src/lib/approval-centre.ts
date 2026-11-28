@@ -18,6 +18,9 @@ import type { AuthorizationRequest } from "./authorization";
 import type { AuthPayload } from "./authorization";
 import { activeBranchId } from "./active-branch";
 import { localDb } from "@/core/local-db/local-db";
+import { subscribeCentralAuthSession } from "./session-presence";
+import { subscribePinApprovalWake } from "./pin-approval-wake";
+import { subscribeNamedApprovalWake } from "./named-approval-wake";
 
 export const CENTRE_POLL_MS = 45_000;
 
@@ -133,10 +136,13 @@ export async function claimMatchingApproval(input: {
  * Live delivery of decisions and new requests. Falls back silently when the
  * database has no realtime — the poll still reconciles.
  */
-export function subscribeApprovals(onChange: () => void | Promise<void>, { allBranches = false, branchId = activeBranchId() } = {}): () => void {
+export function subscribeApprovals(onChange: () => void | Promise<void>, {
+  allBranches = false, branchId = activeBranchId(), namedWakeProject,
+}: { allBranches?: boolean; branchId?: string | null; namedWakeProject?: string } = {}): () => void {
   const cleanups: Array<() => void> = [];
   let stopped = false;
   let live = false;
+  let namedLive = false;
   let lastRead = Date.now();
   const visible = () => document.visibilityState !== "hidden" && (Boolean(localDb()) || navigator.onLine);
   let running = false;
@@ -170,11 +176,13 @@ export function subscribeApprovals(onChange: () => void | Promise<void>, { allBr
     if (!change.tables?.length || change.tables.includes("authorization_requests")) changed();
   });
   if (offLocal) cleanups.push(offLocal);
+  if (branchId && !allBranches) cleanups.push(subscribePinApprovalWake(branchId, changed));
+  if (namedWakeProject) cleanups.push(subscribeNamedApprovalWake(namedWakeProject, changed, value => { namedLive = value; }));
   // Protected PIN sessions have no direct Postgres subscription. Reconcile
   // while visible so remote decisions still reach Holds without navigation.
   if (typeof window !== "undefined") {
     const timer = window.setInterval(() => {
-      if (visible() && !running && Date.now() - lastRead >= (live ? 300_000 : 5_000)) changed();
+      if (visible() && !running && Date.now() - lastRead >= (live && (!namedWakeProject || namedLive) ? 300_000 : 5_000)) changed();
     }, 5_000);
     cleanups.push(() => window.clearInterval(timer));
     window.addEventListener("focus", changed);
@@ -189,17 +197,31 @@ export function subscribeApprovals(onChange: () => void | Promise<void>, { allBr
   // PIN-only terminals use the protected relay and the visible-page
   // reconciliation poll. Without a Supabase staff JWT, a filtered Postgres
   // subscription is rejected before RLS as an "invalid column" error.
-  if (!hasStaffSession()) return () => cleanups.forEach((cleanup) => cleanup());
-  if (branchId || allBranches) cleanups.push(subscribeOwnedPostgresChanges(
-    supabaseExternal,
-    "pos-approval-centre",
-    { event: "*", schema: "public", table: "authorization_requests", ...(allBranches ? {} : { filter: `store_id=eq.${branchId}` }) },
-    changed,
-    status => {
-      const connected = status === "SUBSCRIBED";
-      if (connected && !live) changed();
-      live = connected;
-    },
-  ));
+  if (branchId || allBranches) {
+    let stopRealtime: (() => void) | undefined;
+    const updateRealtime = () => {
+      if (!hasStaffSession()) {
+        stopRealtime?.();
+        stopRealtime = undefined;
+        live = false;
+        return;
+      }
+      if (stopRealtime) return;
+      stopRealtime = subscribeOwnedPostgresChanges(
+        supabaseExternal,
+        "pos-approval-centre",
+        { event: "*", schema: "public", table: "authorization_requests", ...(allBranches ? {} : { filter: `store_id=eq.${branchId}` }) },
+        changed,
+        status => {
+          const connected = status === "SUBSCRIBED";
+          if (connected && !live) changed();
+          live = connected;
+        },
+      );
+    };
+    cleanups.push(subscribeCentralAuthSession(updateRealtime));
+    cleanups.push(() => stopRealtime?.());
+    updateRealtime();
+  }
   return () => cleanups.forEach((cleanup) => cleanup());
 }

@@ -17,6 +17,7 @@
  * channel cannot become world-callable by being forgotten.
  */
 const adminSession = require("./admin-session.cjs");
+const { requiresBookingCollection } = require("./db/write-policy.cjs");
 
 const OPEN = "open";
 const SUPERVISOR = "supervisor";
@@ -77,7 +78,17 @@ const CHANNEL_LEVELS = {
   "business:snapshot": OPEN,
   "business:query": OPEN,
   "business:management-report": OPEN, // explicit report permissions below; handler additionally verifies sealed management registration and complete replica
+  "business:management-inventory": OPEN, // dedicated read-only local replica inspection
+  "business:stock-history": OPEN, // dedicated Main reader rechecks current SQL account and trusted branch
+  "business:stock-history-movements": OPEN, // same dedicated stock report admission
+  "business:stock-activity": OPEN, // same dedicated stock report admission
+  "business:product-merge-capability": OPEN, // dedicated verified Operations PC protocol
+  "business:merge-products": OPEN, // Main derives paired scope and original actor
+  "business:stocktake-control": ADMIN, // the handler requires an exact hosted pilot and a current POS administrator
+  "business:stock-arrival-capability": OPEN, // dedicated Main reader rechecks receiving authority and original capture readiness
   "business:save-authorization-rule": OPEN,
+  "business:queue-store-settings-edit": OPEN,
+  "business:review-store-settings-edit": OPEN,
   "business:shift-expected": OPEN,
   "business:shift-close-start": OPEN,
   "business:shift-close-count": OPEN,
@@ -91,8 +102,11 @@ const CHANNEL_LEVELS = {
   "sync:held-sale-review-list": ADMIN,
   "sync:held-sale-review-preview": ADMIN,
   "sync:held-sale-review-resolve": ADMIN,
+  "sync:recovery-evidence": ADMIN,
   "receipts:find-exact": OPEN,
   "receipts:refund": OPEN,
+  "receipts:refund-approval-status": OPEN, // Main checks current person, branch and original receipt
+  "receipts:recover-refund-approval": OPEN, // Main attaches verified evidence; never reruns a refund
   "pos:status": OPEN,
   "pos:database-config": OPEN,
   "pos:connection-audit": OPEN,
@@ -129,6 +143,9 @@ const CHANNEL_LEVELS = {
   "staff:verify-pin": OPEN,
   "staff:verify-approval-pin": OPEN, // signed-in operator may present an approver credential
   "approval:authorize-offline-discount": OPEN, // fixed Main-owned audit; current sale authority below
+  "approval:authorize-refund": OPEN, // Main binds current refund authority to one saved receipt
+  "transfers:prepare-central": OPEN, // stage-specific current permission is checked in Main
+  "approval:refresh-activity": OPEN, // fixed scoped catch-up; current POS authority and trusted frame checked in Main
   "approval:own-token-vault": OPEN, // POS main-frame only; fixed encrypted token keys, PIN-locked envelope before sign-in
   "approval:enroll-verifier": OPEN, // permission checked in allowed() and again by the backend
   "staff:sign-in": OPEN,
@@ -143,6 +160,9 @@ const CHANNEL_LEVELS = {
   "config:read": OPEN,
   "config:get": OPEN,
   "terminal:read": OPEN,
+  // Main permits only a missing mirror of this device's retained binding,
+  // after checking its original proof against the configured POS backend.
+  "terminal:restore": OPEN,
   // A terminal whose registration was revoked or deleted erases its own saved
   // activation. That is the machine cleaning up after itself, so it must work
   // with a cashier signed in, or nobody at all.
@@ -245,6 +265,9 @@ const CHANNEL_LEVELS = {
   "cloud:set": ADMIN,
   "cloud:remove": ADMIN,
   "terminal:write": ADMIN,
+  "terminal:repair-status": ADMIN,
+  "terminal:repair-connect-database": ADMIN,
+  "terminal:repair-continue-online": ADMIN,
   "config:write": ADMIN,
   "config:set": ADMIN,
   "config:reset": ADMIN,
@@ -302,6 +325,9 @@ const FIRST_RUN_CHANNELS = new Set([
  * app — those are not repairs and stay with a real administrator.
  */
 const RECOVERY_CHANNELS = new Set([
+  "terminal:repair-status",
+  "terminal:repair-connect-database",
+  "terminal:repair-continue-online",
   "pos:connect",
   "pos:configure-cloud",
   "pos:forget-connection",
@@ -446,6 +472,19 @@ function refusal(level, channel, args = []) {
 
 /** True when the caller may run this channel with these arguments right now. */
 function allowed(channel, args = []) {
+  if (["receipts:refund-approval-status", "receipts:recover-refund-approval"].includes(channel))
+    return adminSession.hasPosAuthority() && adminSession.hasPermission("can_process_refund");
+  if (channel === "approval:authorize-refund") return adminSession.hasPosAuthority() && adminSession.hasPermission("can_process_refund");
+  if (channel === "business:stock-arrival-capability") {
+    return adminSession.hasPosAuthority() && (adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_receive_purchase_order"));
+  }
+  if (["business:management-inventory", "business:stock-history", "business:stock-history-movements", "business:stock-activity"].includes(channel)) {
+    if (!adminSession.hasPosAuthority() || !(adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_view_inventory"))) return false;
+    if (args[0]?.export === true && !(adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_export_reports"))) return false;
+    return true; // Only the admitted POS frame may touch the session in its handler.
+  }
+  if (channel === "business:stocktake-control")
+    return adminSession.hasPosAuthority() && adminSession.hasLevel(ADMIN);
   if (channel === "approval:authorize-offline-discount") {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_process_sale")) return false;
     // Sender admission belongs to the fixed handler; another window must not
@@ -460,6 +499,8 @@ function allowed(channel, args = []) {
     // The fixed handler verifies the trusted frame before touching the session.
     return adminSession.hasPosAuthority() && adminSession.identity()?.level === "admin";
   }
+  if (channel === "sync:recovery-evidence")
+    return adminSession.hasPosAuthority() && (adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_manage_sync_backup"));
   if (channel === "business:management-report") {
     if (!adminSession.hasPosAuthority()) return false;
     const request = args[0];
@@ -507,6 +548,8 @@ function allowed(channel, args = []) {
     }
     return false;
   }
+  if (channel === "business:write-batch" && requiresBookingCollection("general", args[1]) &&
+      (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_collect_booking"))) return false;
   if (channel === "business:commit-aggregate") {
     const kind = String(args[0]?.kind ?? "");
     const permissions = {
@@ -528,6 +571,8 @@ function allowed(channel, args = []) {
       held_order: ["can_hold_cart", "can_process_sale", "can_reopen_held_order", "can_discard_held_order", "can_void_cart"],
     }[kind];
     if (!adminSession.hasPosAuthority()) return false;
+    if (requiresBookingCollection(kind, args[0]?.operations) &&
+        !adminSession.hasPermission("can_collect_booking")) return false;
     if (!permissions) {
       if (!adminSession.hasLevel(SUPERVISOR)) return false;
     } else if (!permissions.some((permission) => adminSession.hasPermission(permission))) {
@@ -619,6 +664,12 @@ function allowed(channel, args = []) {
     }
     return false;
   }
+  if (channel === "business:queue-store-settings-edit" || channel === "business:review-store-settings-edit") {
+    if (!adminSession.hasPosAuthority() ||
+        !(adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_access_pos_settings"))) return false;
+    adminSession.touch();
+    return true;
+  }
   const level = levelFor(channel, args);
   if (level === OPEN) return true;
   if (FIRST_RUN_CHANNELS.has(channel) && firstRun()) return true;
@@ -657,14 +708,44 @@ function allowed(channel, args = []) {
  * Wraps `ipcMain.handle` so every channel — the ones registered today and any
  * added later — passes the gate before its body runs.
  */
-function install(ipcMain, { isFirstRun, writeBarrier, isManagementDevice } = {}) {
+function localRecoveryAction(channel, args = []) {
+  if (/^(?:business:|db:|local:|staff:|receipts:)/.test(channel)) return true;
+  // Discovery uses Windows instance metadata or a temporary master connection.
+  // It never reopens/saves the held profile or grants local trading readiness.
+  if (channel.startsWith("database:")) return ![
+    "database:get-state", "database:authorize-settings", "database:list-servers",
+    "database:test-server", "database:list-databases",
+  ].includes(channel);
+  if (channel.startsWith("sqladmin:")) return true;
+  if (channel.startsWith("sync:")) return !["sync:get-status", "sync:get-failures", "sync:recovery-evidence", "sync:pause"].includes(channel);
+  if (channel.startsWith("pos:")) return true;
+  if (channel === "config:set") return ["localDatabaseProfile", "localDatabaseEnabled"].includes(String(args[0]).trim());
+  return ["config:write", "config:reset"].includes(channel);
+}
+function install(ipcMain, { isFirstRun, writeBarrier, isManagementDevice, isLocalRecoveryPending, canConfigureLocalRecovery, isRetainedLocalRecoveryPending } = {}) {
   if (typeof isFirstRun === "function") firstRun = isFirstRun;
   const original = ipcMain.handle.bind(ipcMain);
   ipcMain.handle = (channel, listener) =>
     original(channel, (event, ...args) => {
-      // Management PCs use the hosted database. Do not let a stale local pool
-      // or cached branch credentials become an alternate business-data path.
-      if (isManagementDevice?.() && /^(?:business:|db:|local:|staff:|receipts:refund$|sync:(?:run-now|reconcile|resume)$|pos:(?:write|write-batch|query|snapshot|compare-summary|compare-rows)$)/.test(channel))
+      const retainedConfigWrite = channel === "config:set"
+        ? ["localDatabaseProfile", "localDatabaseEnabled"].includes(String(args[0]).trim())
+        : ["config:write", "config:reset"].includes(channel);
+      const currentLocalControl = ["database:validate", "database:save-connect", "database:set-enabled",
+        "database:retry-startup", "database:disconnect"].includes(channel) && canConfigureLocalRecovery?.() === true;
+      // These older control surfaces accept arbitrary target profiles or SQL.
+      // They cannot prove that they leave the archived source untouched.
+      const unboundLocalControl = channel.startsWith("sqladmin:") || [
+        "database:migrate", "database:provision-connect", "database:restore", "database:remove-configuration",
+        "pos:connect", "pos:reconnect", "pos:retry-connection", "pos:forget-connection", "pos:remove-connection",
+        "pos:apply-schema", "pos:apply-schema-tables", "pos:restore", "pos:restore-verify", "pos:restore-drill",
+      ].includes(channel);
+      if ((isRetainedLocalRecoveryPending?.() && (retainedConfigWrite || unboundLocalControl)) ||
+          (isLocalRecoveryPending?.() && localRecoveryAction(channel, args) && !currentLocalControl))
+        return { ok: false, code: "ELOCAL_RECOVERY_PENDING", error: "Use the online database while the previous local setup is awaiting verified recovery. Saved local work has been kept." };
+      // Native stock reports admit their own verified Management read scope.
+      // Keep general business queries, writes and PIN admission unavailable.
+      const managementStockRead = ["business:management-inventory", "business:stock-history", "business:stock-history-movements", "business:stock-activity"].includes(channel);
+      if (isManagementDevice?.() && !managementStockRead && /^(?:business:|db:|local:|staff:|receipts:refund$|sync:(?:run-now|reconcile|resume)$|pos:(?:write|write-batch|query|snapshot|compare-summary|compare-rows)$)/.test(channel))
         return { ok: false, code: "MANAGEMENT_ONLINE_ONLY", error: "Management devices use the online database and a staff sign-in." };
       if (!allowed(channel, args)) return refusal(levelFor(channel, args), channel, args);
       if (writeBarrier && require("./sync/write-barrier.cjs").BUSINESS_WRITE_CHANNELS.has(channel))
@@ -688,4 +769,5 @@ module.exports = {
   allowed,
   refusal,
   install,
+  localRecoveryAction,
 };

@@ -100,6 +100,7 @@ async function applyShiftGraphs({
   branchId,
   prepared,
   recovery,
+  groupedOpening = false,
 }) {
   if (!prepared?.graphs.size) return 0;
   if (!reader) refuse("The local closing-change guard is required.", "ELOCAL_PENDING_UNVERIFIED");
@@ -149,7 +150,7 @@ async function applyShiftGraphs({
       recovery?.note(transaction,shiftId,graph);prepared.exactNoops?.add(shiftId);continue;
     }
     if(recovery?.requiresExact(shiftId))refuse("Retained closing history did not receive an exact no-op proof.","ELOCAL_PENDING_UNVERIFIED");
-    if(graph.graphToken===null)continue;
+    if (graph.graphToken === null && !groupedOpening) continue;
     const ordered = registry.tables
       .filter((table) => GRAPH_TABLES.includes(table.cloudTable))
       .sort((a, b) => a.dependencyOrder - b.dependencyOrder);
@@ -258,7 +259,7 @@ async function applyShiftGraphs({
         );
     }
     if (exact && exactGraph(graph, branchId, shiftId) !== exact) refuse("The exact closing response changed during application.");
-    await store.adopt(transaction, graph);
+    if (!groupedOpening) await store.adopt(transaction, graph);
   }
   return applied;
 }

@@ -10,10 +10,23 @@
  */
 import { localDb, type LocalStaffRow } from "@/core/local-db/local-db";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
+import { resolveLocalWriteRoute } from "./write-route";
 
 /** Dedicated Main-owned audit path; never falls back to arbitrary cashier writes. */
 type OfflineDiscountMethod = NonNullable<NonNullable<ReturnType<typeof localDb>>["authorizeOfflineDiscount"]>;
 export const hasNativeOfflineDiscountCapability = () => typeof localDb()?.authorizeOfflineDiscount === "function";
+type RefundMethod = NonNullable<NonNullable<ReturnType<typeof localDb>>["authorizeRefund"]>;
+export const hasNativeRefundCapability = () => typeof localDb()?.authorizeRefund === "function";
+export const isNativeRefundGrant = (value: unknown): value is string => typeof value === "string" && /^native-refund-v1:[A-Za-z0-9_-]{43}$/.test(value);
+export async function authorizeNativeRefund(value: Omit<Parameters<RefundMethod>[0], "registeredTerminalId">): ReturnType<RefundMethod> {
+  const bridge = localDb(), terminal = readTerminalConfig();
+  try {
+    if (await resolveLocalWriteRoute(bridge) === "cloud") return { ok: false, code: "EONLINE_REQUIRED", error: "This device uses the central refund authorization." };
+    if (!bridge?.authorizeRefund || !terminal?.tokenId) return { ok: false, code: "EAPPROVAL_UNAVAILABLE", error: "Update and register the desktop app before authorizing a local refund." };
+    return await bridge.authorizeRefund({ ...value, registeredTerminalId: terminal.tokenId });
+  }
+  catch (error) { return { ok: false, code: (error as { code?: string }).code ?? "EAPPROVAL_UNAVAILABLE", error: (error as Error).message || "The local refund authorization could not be verified." }; }
+}
 export async function authorizeOfflineDiscount(value: Omit<Parameters<OfflineDiscountMethod>[0], "registeredTerminalId">): ReturnType<OfflineDiscountMethod> {
   const bridge = localDb(), terminal = readTerminalConfig();
   if (!bridge?.authorizeOfflineDiscount || !terminal?.tokenId)

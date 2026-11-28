@@ -1,18 +1,11 @@
 /**
  * The one way in and out of stored data.
  *
- * Every write in the app goes through `dbRouter.write`, which tries the
- * targets in order:
- *
- *  1. this terminal — local SQL Server on Windows, the on-disk queue in a
- *     browser — and the change is flagged for cloud sync;
- *  2. the central database directly, if the local store is missing, full or
- *     refuses the write ("Cloud direct" shows in the status pill);
- *  3. nothing: the action stops and the operator is shown a modal saying the
- *     data could not be stored anywhere.
- *
- * Reads come from whatever is available: the local snapshot first when the
- * connection is down, the cloud otherwise.
+ * Supported writes use the configured local SQL transaction and durable
+ * journal on Windows. An unreadable local state or a refused local write
+ * stops the operation. Web, SQL-disabled devices and approved online-only
+ * sessions use the central writer and the existing browser pending queue.
+ * Centrally administered workflows retain their own authorized entry points.
  */
 import { commitOps, commitLabel, type CommitTarget } from "@/core/api/pos-db";
 import { AllTargetsFailed, isCloudDirect, isConnectionError } from "@/core/local-db/db-mode";
@@ -31,8 +24,7 @@ export type { CommitTarget, QueryOptions, ReadSource };
 export const dbRouter = {
   /**
    * Store a group of changes. Resolves once the data is genuinely saved;
-   * when it went to the central database the terminal copy is written in the
-   * background by the commit layer, so nothing at the till waits for it.
+   * central acceptance is downloaded by the existing native coordinator.
    */
   write(context: string, ops: SyncOp[]): Promise<CommitTarget> {
     return commitOps(context, ops);

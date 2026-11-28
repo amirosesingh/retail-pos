@@ -23,7 +23,7 @@ describe("qualified startup snapshot", () => {
     const runNow=vi.fn(async (options:{branchId:string}) => ({ok:Boolean(options.branchId)})), ensure=vi.fn(), markReady=vi.fn();
     const replica=new ManagementReplica({cloud:{managementBranches:async()=>({ok:true,branches:allowed.map(id=>({id}))})},databaseService:{snapshot:()=>({enabled:true,configured:true})},connectionManager:{isConnected:()=>true},lifecycle:{bootstrapType:()=>"bootstrap_7300",bootstrap:vi.fn()},jobs:{active:async()=>null,completed:async()=>({})},coordinator:{withExclusive:(handler:()=>unknown)=>handler(),runNow}});
     const source=readFileSync("electron/main.cjs","utf8"),start=source.indexOf("function prepareLocalData("),end=source.indexOf("\nlet localDatabaseRecoveryPromise",start);
-    const context={isManagementDevice:()=>true,managementReplica:replica,localDataLifecycle:{ensure},databaseService:{markReady},localBranchId:()=>null,prepare:undefined as undefined|(()=>Promise<unknown>)};
+    const context={isManagementDevice:()=>true,managementReplica:replica,localDataLifecycle:{ensure},databaseService:{markReady,snapshot:()=>({localRecoveryPending:false})},localBranchId:()=>null,prepare:undefined as undefined|(()=>Promise<unknown>)};
     runInNewContext(`let localDataPreparePromise=null;${source.slice(start,end)};globalThis.prepare=prepareLocalData;`,context);
     expect(await context.prepare!()).toMatchObject({ok:true,branches:allowed.length});
     expect(runNow.mock.calls.map(call=>call[0].branchId)).toEqual(allowed);
@@ -103,7 +103,7 @@ describe("qualified startup snapshot", () => {
   it.each(["ECHANGEGAP", "EHISTORY_RECOVERY", "EHISTORY_BASELINE_EXPIRED", "HTTP_503"])("Main does not mint readiness from a failed incomplete preparation (%s)", async code => {
     const failure = Object.assign(new Error("original"), { code }), markReady = vi.fn(), transition = vi.fn();
     const source = readFileSync("electron/main.cjs", "utf8"), start = source.indexOf("function prepareLocalData("), end = source.indexOf("\nlet localDatabaseRecoveryPromise", start);
-    const context = { diagnostics: { logConnection: vi.fn(), bootstrapDiagnostic: () => ({}) }, syncRegistry: { tables: [] }, databaseService: { markReady, transition }, databaseConfig: { profile: () => ({}) }, localBranchId: () => "branch", isManagementDevice: () => false, localDataLifecycle: { ensure: async () => { throw failure; }, preserveCachedReady: () => false }, prepare:undefined as undefined|(()=>Promise<unknown>) };
+    const context = { diagnostics: { logConnection: vi.fn(), bootstrapDiagnostic: () => ({}) }, syncRegistry: { tables: [] }, databaseService: { markReady, transition, snapshot:()=>({localRecoveryPending:false}) }, databaseConfig: { profile: () => ({}) }, localBranchId: () => "branch", isManagementDevice: () => false, localDataLifecycle: { ensure: async () => { throw failure; }, preserveCachedReady: () => false }, prepare:undefined as undefined|(()=>Promise<unknown>) };
     runInNewContext(`let localDataPreparePromise=null;${source.slice(start,end)};globalThis.prepare=prepareLocalData;`, context);
     await expect(context.prepare!()).rejects.toBe(failure);
     expect(markReady).not.toHaveBeenCalled(); expect(transition).toHaveBeenCalledWith("enabled_bootstrapping", expect.objectContaining({ code, syncReady: false }));

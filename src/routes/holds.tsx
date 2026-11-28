@@ -91,7 +91,7 @@ function HoldTickets() {
       }
     };
     void refresh();
-    const unsubscribe = subscribeApprovals(refresh);
+    const unsubscribe = subscribeApprovals(refresh, { branchId: currentStore.id || undefined });
     return () => {
       active = false;
       unsubscribe();

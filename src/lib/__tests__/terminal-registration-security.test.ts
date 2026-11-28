@@ -86,7 +86,7 @@ describe("terminal registration trust boundary", () => {
 
   it("does not report Electron activation before the OS-vault mirror is durable", () => {
     const activation = source("src/core/activation/terminal-tokens.ts");
-    const persisted = activation.indexOf("await mirrorTerminalConfigToDesktop();");
+    const persisted = activation.indexOf("await completeDesktopActivation(config, desktop);");
     const succeeded = activation.indexOf('note("succeeded"');
     expect(persisted).toBeGreaterThan(activation.indexOf("export async function activateTerminal"));
     expect(persisted).toBeLessThan(succeeded);

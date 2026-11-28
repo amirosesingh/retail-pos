@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { normalizeFinancialBasisAttestation,normalizeOpeningFinancialBasisAttestation } from "../../electron/security/shift-financial-protocol.cjs";
 import { normalizeAttestation, normalizeClosingStart } from "../../electron/security/shift-author-protocol.cjs";
+import { financialRefundApprovalSchema } from "./sync-refund-approval-schema";
 
 export const syncOperationSchema = z.object({
   deletePhase: z.boolean().optional(),
@@ -25,10 +26,14 @@ export const syncAggregateSchema = z.object({
   shiftFinancialBasis: z.object({basisJson:z.string().min(2).max(6*1024*1024),proof:z.unknown()}).strict().optional(),
   registerFinancialBoundary:z.literal(true).optional(),
   financialLedgerProjection:z.literal(true).optional(),
+  financialRefundApprovals:z.array(financialRefundApprovalSchema).min(1).max(100).optional(),
   shiftFinancialOpening:z.object({openingJson:z.string().min(2).max(6*1024*1024),proof:z.unknown()}).strict().optional(),
+  stockSourceCohorts:z.array(z.object({proofJson:z.string().min(2).max(8192)}).strict()).min(1).max(8).optional(),
 }).transform((aggregate, ctx) => {
   const invalid = () => { ctx.addIssue({ code: "custom", message: "Invalid frozen shift intent" }); return z.NEVER; };
+  if(aggregate.financialRefundApprovals&&!aggregate.financialLedgerProjection)return invalid();
   if(aggregate.shiftFinancialOpening&&aggregate.financialLedgerProjection)return invalid();
+  if(aggregate.stockSourceCohorts&&(aggregate.shiftIntent||aggregate.shiftFinancialOpening||aggregate.financialLedgerProjection||aggregate.registerFinancialBoundary))return invalid();
   if (!aggregate.shiftIntent) return aggregate.operations && aggregate.shiftAuthor === undefined && aggregate.shiftClosingStart === undefined && aggregate.shiftFinancialBasis === undefined && aggregate.registerFinancialBoundary===undefined ? { ...aggregate, operations: aggregate.operations } : invalid();
   if (aggregate.operations !== undefined || aggregate.shiftAuthor === undefined) return invalid();
   if(aggregate.shiftFinancialOpening||aggregate.financialLedgerProjection)return invalid();

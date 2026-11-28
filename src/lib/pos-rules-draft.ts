@@ -24,3 +24,20 @@ export function reconcileRulesDraft(
 ): PosRules {
   return force || rulesEqual(draft, previouslyConfirmed) ? newlyConfirmed : draft;
 }
+
+export function changedDrawerLimit(text: string | null, baseline: number): text is string {
+  return text !== null && text.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "") !== String(baseline);
+}
+
+/** The native offline pilot accepts only these two fields and preserves exact money text. */
+export function offlineRulesPatch(draft: PosRules, base: PosRules, drawerLimit: string | null) {
+  const patch: { block_shift_close_on_hold?: boolean; max_drawer_cash_limit?: string } = {};
+  const supported = ["block_shift_close_on_hold", "max_drawer_cash_limit"];
+  if ((Object.keys(base) as (keyof PosRules)[]).some(key => !supported.includes(key) && draft[key] !== base[key])) return null;
+  if (draft.block_shift_close_on_hold !== base.block_shift_close_on_hold) patch.block_shift_close_on_hold = draft.block_shift_close_on_hold;
+  if (changedDrawerLimit(drawerLimit, base.max_drawer_cash_limit)) {
+    if (!/^(?:0|[1-9][0-9]{0,25})(?:\.[0-9]{1,12})?$/.test(drawerLimit)) return null;
+    patch.max_drawer_cash_limit = drawerLimit;
+  }
+  return Object.keys(patch).length ? patch : null;
+}

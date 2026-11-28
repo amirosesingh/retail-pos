@@ -2,6 +2,7 @@ import { productReadColumns, canUseEcommerceDevice } from "@/lib/ecommerce-devic
 import { readShiftSharing } from '@/lib/shift-sharing-policy';
 import { createProductProjectionReader } from "@/lib/product-projection";
 import { productClassification } from "@/lib/product-classification";
+import { productMergeRevision } from "@/lib/stock-history-product-merge";
 import { withoutWorkspacePurpose } from "@/lib/retired-workspace-settings";
 import { commitRowCount, runProgressBatch, yieldToUi } from "@/lib/commit-progress";
 import { readCataloguePages } from "@/lib/catalogue-read";
@@ -21,7 +22,8 @@ import {
 } from "@/integrations/supabase/external-client";
 import { defaultSettings, sampleState } from "@/lib/pos-seed";
 import { broadcastSettingsChange, runOpLive } from "@/lib/sync-engine";
-import { localDb } from "@/core/local-db/local-db";
+import { localDb, type PosBridge } from "@/core/local-db/local-db";
+import { resolveLocalWriteRoute } from "@/core/local-db/write-route";
 import { routedQuery } from "@/core/api/db-query";
 import type { SyncOp } from "@/lib/sync-outbox";
 import {
@@ -57,6 +59,7 @@ import {
 } from "@/lib/browser-sync-outbox";
 import { withRelativeStock, type StockDelta } from "@/lib/sync-stock";
 import { safeCreatedAt, safeReceiptNo } from "@/lib/report-data-safety";
+import { parseAmount } from "@/core/pricing/amount";
 
 import { isLinkedRecordError, usageBlock, type ProductUsage } from "@/lib/product-delete";
 import type {
@@ -149,10 +152,12 @@ export async function productDeleteBlock(id: string): Promise<DeleteGuardVerdict
 
 export const rowToProduct = (r: Row): Product => normalizeUuidFields({
   id: r.id,
+  mergeRevision: productMergeRevision(r.sku, r.row_version),
   createdAt: r.created_at ?? undefined,
   name: r.name,
   sku: r.sku ?? r.barcode ?? "",
   barcode: r.barcode ?? "",
+  brand: productClassification(r.brand) || undefined,
   category: productClassification(r.category),
   group: productClassification(r.product_group),
   subCategory: productClassification(r.sub_category),
@@ -873,14 +878,22 @@ export const rowToSale = (r: Row): Sale => normalizeUuidFields({
   change: num(r.change_amount),
   method: (r.payment_type ?? "cash") as PaymentMethod,
   payments: (() => {
-    if (Array.isArray(r.payments)) return r.payments as Sale["payments"];
-    if (typeof r.payments !== "string" || !r.payments.trim()) return undefined;
-    try {
-      const parsed = JSON.parse(r.payments);
-      return Array.isArray(parsed) ? (parsed as Sale["payments"]) : undefined;
-    } catch {
-      return undefined;
+    let payments: unknown = r.payments;
+    if (typeof payments === "string") {
+      try {
+        payments = JSON.parse(payments);
+      } catch {
+        return undefined;
+      }
     }
+    if (!Array.isArray(payments)) return undefined;
+    // The sync feed can serialize an exact decimal as text inside the receipt JSON.
+    return payments.map((payment) => {
+      const rawAmount: unknown = payment?.amount;
+      if (typeof rawAmount !== "string") return payment;
+      const amount = parseAmount(rawAmount);
+      return amount === null ? payment : { ...payment, amount };
+    });
   })(),
   memberId: r.member_id ?? null,
   pointsEarned: num(r.points_earned),
@@ -1176,6 +1189,17 @@ export function registerMembershipTierNames(tiers: {id:string;name:string}[]) {
 }
 const tierId = (name: MemberTier) => tierIdByName[name] ?? null;
 const tierName = (id: string | null): MemberTier => (id && tierNameById[recordId(id)]) || "Bronze";
+
+export function saleCommitRpcArgs(sale: Sale, member: Member | null) {
+  return {
+    _sale: saleToRow(sale),
+    _items: saleItemRows(sale),
+    _payments: salePaymentRows(sale),
+    _movements: saleActivityRows(sale),
+    _member: member ? memberToRow(member, tierId) : null,
+    _exchange_bill: isLegacyExchange(sale.exchangeOfReceiptNo) ? null : sale.exchangeOfReceiptNo ?? null,
+  };
+}
 
 /* ------------------------------ bootstrap ------------------------------ */
 
@@ -2276,18 +2300,32 @@ async function runBatchLive(context: string, ops: SyncOp[], report?: (completed:
  * Callers await this before printing, clearing the cart or starting the next
  * action — nothing moves on while the data is still only in memory.
  */
-export function commitOps(context: string, ops: SyncOp[]): Promise<CommitTarget> {
+export type StockArrival = Readonly<{ effectiveAt: string; reason: string }>;
+type CommitOptions = { requireLocalAggregate?: boolean; stockArrival?: StockArrival };
+
+export function commitOps(
+  context: string,
+  ops: SyncOp[],
+  refundGrant?: string | null,
+  options: CommitOptions = {},
+): Promise<CommitTarget> {
   return withDataTask(context, async task => {
     const total = commitRowCount(ops);
     task?.report(0,total);
     if ((total ?? 0) >= 200 || ops.length >= 25) await yieldToUi();
-    const target = await commitOpsInternal(context, normalizeUuidFields(ops),task?.report);
+    const target = await commitOpsInternal(context, normalizeUuidFields(ops), task?.report, refundGrant, options);
     if (target !== "offline" && total !== null) task?.report(total,total);
     return target;
   });
 }
 
-async function commitOpsInternal(context: string, ops: SyncOp[], report?: (completed: number, total: number | null) => void): Promise<CommitTarget> {
+async function commitOpsInternal(
+  context: string,
+  ops: SyncOp[],
+  report: ((completed: number, total: number | null) => void) | undefined,
+  refundGrant: string | null | undefined,
+  { requireLocalAggregate, stockArrival }: CommitOptions,
+): Promise<CommitTarget> {
   if (!ops.length) return noteCommitTarget("cloud");
   // A packaged or browser till may carry an encrypted tenant override. Never
   // let an early write resolve the client against the build-time tenant first.
@@ -2300,9 +2338,15 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
   const { ops: cloudOps, deltas } = withRelativeStock(ops);
 
   const local = localDb();
-  if (local?.writeBatch) {
-    const state = await local.database?.getState?.().catch(() => null);
-    if (state?.enabled && state?.connected && (state.tradingReady ?? state.connected)) {
+  if (stockArrival && !local?.commitAggregate) {
+    throw Object.assign(new Error("Separate arrival times are not available on this device yet. The receiving invoice has not been saved."),
+      { code: "ESTOCK_ARRIVAL_UNAVAILABLE" });
+  }
+  if (await resolveLocalWriteRoute(local) === "local") {
+    if (!local?.writeBatch || (requireLocalAggregate && !local.commitAggregate)) {
+      throw Object.assign(new Error("The local SQL Server transaction writer is unavailable. Restart the updated application before saving."),
+        { code: "ELOCAL_WRITER_UNAVAILABLE" });
+    }
       const refund =
         ops.length === 1 && ops[0].kind === "rpc" && ops[0].fn === "sale_refund" ? ops[0] : null;
       const sharedPosSettings =
@@ -2334,6 +2378,13 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
                           : /hold|ticket/i.test(context)
                             ? "held_order"
                             : "general";
+      if (requireLocalAggregate && aggregateKind === "settings") {
+        throw new Error("This local transaction does not support shared settings.");
+      }
+      if (stockArrival && aggregateKind !== "receiving") {
+        throw Object.assign(new Error("A separate arrival time is only available when saving a receiving invoice."),
+          { code: "ESTOCK_ARRIVAL_UNAVAILABLE" });
+      }
       const branchRow = ops
         .flatMap((op): Row[] => {
           if (op.kind === "insert" || op.kind === "upsert") return op.rows as Row[];
@@ -2357,18 +2408,20 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
           "",
       );
       const stored =
-        refund && local.refundReceipt
+        !requireLocalAggregate && refund && local.refundReceipt
           ? await local.refundReceipt({
               saleId: String(refund.args._sale_id),
               refundId: String(refund.args._client_refund_id),
               branchId: String((refund.args as Record<string, unknown>)._branch_id ?? ""),
               reason: refund.args._reason == null ? null : String(refund.args._reason),
+              ...(refundGrant ? { grantToken: refundGrant } : {}),
             })
           : local.commitAggregate && aggregateKind !== "settings"
             ? await local.commitAggregate({
                 kind: aggregateKind,
                 branchId: branchId || undefined,
                 operations: ops,
+                ...(stockArrival ? { stockArrival } : {}),
               })
             : await local.writeBatch(context, ops);
       if (!stored.ok) {
@@ -2381,14 +2434,16 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
         });
       }
       return noteCommitTarget("local");
-    }
-    if (state?.enabled && state?.connected && state.tradingReady === false) {
-      throw new Error(
-        "Local SQL Server is connected, but its POS schema is not ready. Open Database & Cloud Connection and apply the current local database update before taking payment.",
-      );
-    }
   }
 
+  if (requireLocalAggregate) {
+    throw new Error("The local SQL Server transaction is unavailable. Reopen the booking before trying again.");
+  }
+
+  if (stockArrival) {
+    throw Object.assign(new Error("Connect this terminal's local database before saving a separate arrival time. The receiving invoice has not been saved."),
+      { code: "ESTOCK_ARRIVAL_UNAVAILABLE" });
+  }
   const operational = ops.every((op) => isOperationalTable(op.table));
   // Browser/Capacitor has no SQL Server. Keep only this pending batch in
   // IndexedDB before starting the network request, then remove it immediately
@@ -2686,8 +2741,8 @@ export const db = {
    * much stock back, and marks the bill. Replaying the same refund id (retry,
    * double tap, queued replay) changes nothing a second time.
    */
-  refundSale(saleId: string, refundId: string, reason?: string, branchId?: string) {
-    return queue("Refunding sale", {
+  refundSale(saleId: string, refundId: string, reason?: string, branchId?: string, grantToken?: string | null) {
+    return commitOps("Refunding sale", [{
       kind: "rpc",
       table: "sales",
       fn: "sale_refund",
@@ -2698,23 +2753,24 @@ export const db = {
         _reason: reason ?? null,
         _branch_id: branchId ?? null,
       },
-    });
+    }], grantToken);
   },
 
   /** Correct the tender recorded against a completed bill (e.g. card -> cash). */
-  async updateSalePayment(saleId: string, method: PaymentMethod, branchId: string, _payments?: Sale["payments"]) {
+  async updateSalePayment(saleId: string, method: PaymentMethod, branchId: string, saleVersion?: number) {
     const [{ correctSaleTender }, { getPosCallerAuth }] = await Promise.all([
       import("@/lib/tender-correction-client"), import("@/lib/pos-caller-auth"),
     ]);
     const credentials = await getPosCallerAuth();
-    const result = await correctSaleTender({ data: { ...credentials, saleId, storeId: branchId, method } });
+    const result = await correctSaleTender({ data: { ...credentials, saleId, storeId: branchId, method, saleVersion } });
     if (!result.ok) throw new Error(result.error);
     const bridge = localDb();
-    if (bridge?.findReceipt) {
+    if (bridge?.findReceipt && !result.groupedSaleVersion) {
       try { await bridge.findReceipt(saleId, branchId, { ...credentials, refresh: true }); }
       catch { showNotification("Payment corrected in the cloud. Reconnect and sync to refresh this terminal's local copy.", "info"); }
     }
     await broadcastSettingsChange("sales");
+    return result.groupedSaleVersion;
   },
 
   /** Batch-push pending audit rows; returns the ids that landed in the cloud. */
@@ -2728,9 +2784,10 @@ export const db = {
       module: string;
       details: Record<string, unknown>;
     }[],
+    localWriter?: NonNullable<PosBridge["writeBatch"]>,
   ) {
-    if (localDb()?.writeBatch) {
-      await commitOps("Saving audit logs", [
+    if (localWriter || localDb()?.writeBatch) {
+      const operations: SyncOp[] = [
         {
           kind: "upsert",
           table: "audit_logs",
@@ -2748,7 +2805,13 @@ export const db = {
             created_at: r.at,
           })),
         },
-      ]);
+      ];
+      if (localWriter) {
+        const saved = await localWriter("Saving audit logs", operations);
+        if (!saved?.ok) throw new Error(saved?.error ?? "Activity logs could not be saved to the local database.");
+      } else {
+        await commitOps("Saving audit logs", operations);
+      }
       return rows.map((r) => r.id);
     }
     if (!hasStaffSession()) {
@@ -2845,6 +2908,7 @@ export const db = {
     inv: ReceivingInvoice,
     movementStoreId?: string | null,
     updateProductPrices = false,
+    stockArrival?: StockArrival,
   ) =>
     commitOps("Saving receiving invoice", [
       { kind: "upsert", table: "purchase_orders", rows: [invoiceRow(inv)] },
@@ -2859,7 +2923,7 @@ export const db = {
         : []),
       ...receivingActivityOps(inv, movementStoreId),
       ...receivingPriceOps(inv, updateProductPrices),
-    ]),
+    ], undefined, { stockArrival }),
 
   /**
    * Save corrections to an existing invoice in place. Removed lines are
@@ -2872,6 +2936,7 @@ export const db = {
     movementStoreId?: string | null,
     correction?: { previous: ReceivingInvoice; attemptId: string },
     updateProductPrices = false,
+    stockArrival?: StockArrival,
   ) =>
     commitOps("Updating receiving invoice", [
       { kind: "upsert", table: "purchase_orders", rows: [invoiceRow(inv)] },
@@ -2893,7 +2958,7 @@ export const db = {
         ? receivingCorrectionOps(inv, correction.previous, correction.attemptId)
         : receivingActivityOps(inv, movementStoreId)),
       ...receivingPriceOps(inv, updateProductPrices),
-    ]),
+    ], undefined, { stockArrival }),
 
   /**
    * Autosave an unfinished receiving order. Same rows as a finalized one, but
@@ -2916,7 +2981,12 @@ export const db = {
   /* --------------------- awaited, confirmed versions --------------------- */
 
   /** Save a completed bill and wait until it is stored somewhere. */
-  async commitSale(sale: Sale, products: Product[], member: Member | null): Promise<CommitTarget> {
+  async commitSale(
+    sale: Sale,
+    products: Product[],
+    member: Member | null,
+    bookingOperations?: SyncOp[],
+  ): Promise<CommitTarget> {
     // A retry may find the header already committed. Reuse its real id and
     // reconcile every required child rather than mistaking a partial sale for completion.
     const onlineOnly = effectiveDatabaseMode() === "online";
@@ -2932,15 +3002,16 @@ export const db = {
         values: { stock_quantity: row.stock_quantity, stock_by_store: row.stock_by_store },
         requireMatch: true };
     });
-    if (member) ops.push({ kind: "upsert", table: "members", rows: [memberToRow(member, tierId)] });
+    const saleArgs = saleCommitRpcArgs(sale, member);
+    if (saleArgs._member) ops.push({ kind: "upsert", table: "members", rows: [saleArgs._member] });
     ops.push(
-      { kind: "upsert", table: "sales", rows: [saleToRow(sale)], onConflict: "id" },
-      { kind: "upsert", table: "sale_items", rows: saleItemRows(sale), onConflict: "id" },
+      { kind: "upsert", table: "sales", rows: [saleArgs._sale], onConflict: "id" },
+      { kind: "upsert", table: "sale_items", rows: saleArgs._items, onConflict: "id" },
     );
-    const tenders = salePaymentRows(sale);
+    const tenders = saleArgs._payments;
     if (tenders.length)
       ops.push({ kind: "upsert", table: "payment_transactions", rows: tenders, onConflict: "id" });
-    const movements = saleActivityRows(sale);
+    const movements = saleArgs._movements;
     if (movements.length)
       ops.push({ kind: "upsert", table: "item_activity_logs", rows: movements, onConflict: "id" });
     if (sale.exchangeOfReceiptNo && !isLegacyExchange(sale.exchangeOfReceiptNo)) {
@@ -2965,6 +3036,10 @@ export const db = {
         requireMatch: true,
       });
     }
+    if (bookingOperations) {
+      if (onlineOnly) throw new Error("The booking database mode changed. Reopen the booking before trying again.");
+      return commitOps("Saving booking sale", [...ops, ...bookingOperations], undefined, { requireLocalAggregate: true });
+    }
     if (onlineOnly) {
       // One central transaction owns the immutable financial graph, member
       // effect and stock deltas. The database movement trigger also maintains
@@ -2975,14 +3050,7 @@ export const db = {
         kind: "rpc",
         table: "sales",
         fn: "pos_sale_commit",
-        args: {
-          _sale: saleToRow(sale),
-          _items: saleItemRows(sale),
-          _payments: tenders,
-          _movements: movements,
-          _member: member ? memberToRow(member, tierId) : null,
-          _exchange_bill: isLegacyExchange(sale.exchangeOfReceiptNo) ? null : sale.exchangeOfReceiptNo ?? null,
-        },
+        args: saleArgs,
       });
       return noteCommitTarget("cloud");
     }

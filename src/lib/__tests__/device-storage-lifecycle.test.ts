@@ -15,6 +15,8 @@ describe("Windows till storage hygiene", () => {
       "pos_config.json",
       "terminal-config.bin",
       "local-db-config.bin",
+      "terminal-online-recovery.bin",
+      "terminal-current-local.bin",
       "cloud-credentials.bin",
     ]) {
       expect(hygiene.isRequiredEntry(name)).toBe(true);
@@ -40,12 +42,14 @@ describe("Windows till storage hygiene", () => {
     fs.writeFileSync(path.join(dir, "Cache", "data_1"), "x");
     fs.writeFileSync(path.join(dir, "pos_config.json"), "{}");
     fs.writeFileSync(path.join(dir, "terminal-config.bin"), "sealed");
+    fs.writeFileSync(path.join(dir, "terminal-current-local.bin"), "current-local-sealed");
 
     const first = hygiene.runOnLaunch(dir, "1.0.0");
     expect(first.upgraded).toBe(true); // fresh install
     expect(fs.existsSync(path.join(dir, "Cache", "data_1"))).toBe(false);
     expect(fs.readFileSync(path.join(dir, "terminal-config.bin"), "utf8")).toBe("sealed");
     expect(fs.existsSync(path.join(dir, "pos_config.json"))).toBe(true);
+    expect(fs.readFileSync(path.join(dir, "terminal-current-local.bin"), "utf8")).toBe("current-local-sealed");
 
     expect(hygiene.runOnLaunch(dir, "1.0.0").upgraded).toBe(false);
     expect(hygiene.runOnLaunch(dir, "1.0.1").upgraded).toBe(true);

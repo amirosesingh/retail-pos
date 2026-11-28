@@ -4,6 +4,9 @@ const fixture = vi.hoisted(() => ({
   mayManage: true,
   boundSession: false,
   registryStatus: 200,
+  management: false,
+  realScope: false,
+  rpc: vi.fn(),
   load: vi.fn(),
   save: vi.fn(),
 }));
@@ -19,10 +22,15 @@ vi.mock("@/lib/external-supabase-config", () => ({
   runtimeEnvValue: () => "isolated-service-key",
   supabaseConfig: () => ({ url: "https://rules.test", key: "isolated-public-key" }),
 }));
-vi.mock("@/core/api/relay-policy.server", () => ({
-  canCrossBranches: () => false,
-  resolveRelayScope: async () => ({ isSupervisor: false, permissions: { can_access_pos_settings: fixture.mayManage } }),
-}));
+vi.mock("@/core/api/relay-policy.server", async importOriginal => {
+  const actual = await importOriginal<typeof import("@/core/api/relay-policy.server")>();
+  return {
+    ...actual,
+    resolveRelayScope: async (...args: Parameters<typeof actual.resolveRelayScope>) => fixture.realScope
+      ? actual.resolveRelayScope(...args)
+      : { isSupervisor: false, permissions: { can_access_pos_settings: fixture.mayManage } },
+  };
+});
 vi.mock("@/lib/secure-settings.server", () => ({ verifyPosStaff: async () => ({
   userId: "00000000-0000-4000-8000-000000000001", role: "supervisor", isAdmin: false,
   permissions: { can_access_pos_settings: fixture.mayManage },
@@ -53,14 +61,21 @@ const saveData = () => ({ ...native(), patch: { allow_branch_shift_sharing: true
 
 beforeEach(() => {
   fixture.mayManage = true; fixture.boundSession = false; fixture.registryStatus = 200;
+  fixture.management = false; fixture.realScope = false; fixture.rpc.mockReset();
   fixture.load.mockReset().mockResolvedValue({ source: "DATABASE", rules: {}, rowVersion: 7, shiftSharingAvailable: true });
   fixture.save.mockReset().mockResolvedValue({ rules: {}, rowVersion: 8 });
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/terminal_tokens?")) return Response.json([{
-      id: terminal, platform: "pc", status: "used", location_id: branch, is_claimed: true,
-      claim_proof: proof, claimed_platform: "electron", management_registration: false,
+      id: terminal, platform: "pc", status: "used", location_id: fixture.management ? null : branch, is_claimed: true,
+      claim_proof: proof, claimed_platform: "electron", management_registration: fixture.management,
     }], { status: fixture.registryStatus });
     if (url.endsWith("/auth/v1/user")) return Response.json({ id: "00000000-0000-4000-8000-000000000001" });
+    if (fixture.realScope && url.includes("/app_users?")) return Response.json([{
+      id: "00000000-0000-4000-8000-000000000001", user_id: "editor", is_active: true,
+      role: fixture.management ? "admin" : "staff", store_id: fixture.management ? null : branch,
+      permissions: { can_access_pos_settings: true },
+    }]);
+    if (fixture.realScope && url.endsWith("/rpc/pos_rules_save")) return fixture.rpc(init);
     throw new Error("Unexpected database call in isolated rules fixture");
   }));
 });
@@ -76,6 +91,42 @@ describe("native rules transports retain proof and terminal authority", () => {
   it("HTTP save retains proof, expected version and the normal terminal's branch", async () => {
     expect((await http(saveRoute, saveData())).status).toBe(200);
     expect(fixture.save).toHaveBeenCalledWith(branch, { allow_branch_shift_sharing: true }, accessToken, 7);
+  });
+  it("saves from Management and Operations for the same store through the canonical revision RPC", async () => {
+    const actual = await vi.importActual<typeof import("../pos-rules.server")>("../pos-rules.server");
+    fixture.save.mockImplementation(actual.saveRules);
+    fixture.realScope = true;
+    let version = 7;
+    let writes = 0;
+    fixture.rpc.mockImplementation((request: RequestInit) => {
+      expect(new Headers(request.headers).get("authorization")).toBe(`Bearer ${accessToken}`);
+      expect(request.method).toBe("POST");
+      const body = JSON.parse(String(request.body));
+      expect(body._store_id).toBe(branch);
+      if (body._expected_version !== version)
+        return Response.json({ message: "STALE_RULES" }, { status: 409 });
+      version++;
+      writes++;
+      return Response.json({ store_id: branch, row_version: version, rules: body._patch });
+    });
+
+    fixture.management = true;
+    const management = await http(saveRoute, saveData());
+    expect(management.status).toBe(200);
+    expect(await management.json()).toMatchObject({ branchId: branch, snapshot: { rowVersion: 8 } });
+    expect((await http(saveRoute, saveData())).status).toBe(409);
+    expect(writes).toBe(1);
+
+    fixture.management = false;
+    const edit = { ...saveData(), patch: { allow_branch_shift_sharing: false }, expectedVersion: 8 };
+    expect((await http(saveRoute, { ...edit, storeId: other })).status).toBe(403);
+    expect(fixture.rpc).toHaveBeenCalledTimes(2);
+    const operations = await http(saveRoute, edit);
+    expect(operations.status).toBe(200);
+    expect(await operations.json()).toMatchObject({ branchId: branch, snapshot: { rowVersion: 9 } });
+    expect((await http(saveRoute, edit)).status).toBe(409);
+    expect(writes).toBe(2);
+    expect(fixture.rpc).toHaveBeenCalledTimes(4);
   });
   it.each([undefined, "b".repeat(64)])("HTTP read and save reject missing/wrong proof %s", async invalid => {
     for (const route of [readRoute, saveRoute]) {

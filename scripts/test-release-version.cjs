@@ -18,7 +18,8 @@ test('release preparation needs no installed packages and is repeatable', () => 
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'pos-version-test-'));
   try {
     for (const file of ['scripts/bump-version.cjs', 'scripts/release-version.cjs',
-      'electron/db/installer-source.cjs', 'database/sqlserver/retail-pos-local-database.sql']) {
+      'electron/db/installer-source.cjs', 'database/sqlserver/retail-pos-local-database.sql',
+      'database/sqlserver/prepared/booking-upload-v1.sql']) {
       const destination = path.join(dir, file);
       fs.mkdirSync(path.dirname(destination), { recursive: true });
       fs.copyFileSync(path.join(__dirname, '..', file), destination);
@@ -29,8 +30,12 @@ test('release preparation needs no installed packages and is repeatable', () => 
     run();
     const sql = fs.readFileSync(path.join(dir, 'database/sqlserver/retail-pos-local-database.sql'), 'utf8');
     assert.match(sql, /Application version: 1\.4\.77\+revision\.1\r?\n/);
+    const updatePath = path.join(dir, 'database/sqlserver/retail-pos-local-update.sql');
+    const update = fs.readFileSync(updatePath, 'utf8');
+    assert.match(update, /CREATE TABLE dbo\.pos_sync_booking_payloads_v1/);
     run();
     assert.equal(fs.readFileSync(path.join(dir, 'database/sqlserver/retail-pos-local-database.sql'), 'utf8'), sql);
+    assert.equal(fs.readFileSync(updatePath, 'utf8'), update);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

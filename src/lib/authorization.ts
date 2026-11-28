@@ -6,7 +6,7 @@ import { canAuthorize as sharedCanAuthorize, approvalAuthority as sharedApproval
  * the actions, describes how a rule is shaped and works out which rule
  * applies to a branch; every check that matters happens on the server.
  */
-import { GATE_RULE_KEY, type GateAction, type PosRules } from "./pos-rules";
+import { GATE_RULE_KEY, type GateAction, type PosRules } from "./pos-rules.ts";
 import { normalizeSnapshot, type TicketSnapshot } from "./ticket-snapshot";
 
 export type { TicketSnapshot } from "./ticket-snapshot";

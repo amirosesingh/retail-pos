@@ -605,6 +605,7 @@ describe("Main asynchronous session adoption", () => {
       guard: require("../../../electron/ipc-guard.cjs"),
       adminSession: session,
       sessionAdoptionRevision: 0,
+      offlineStaffLoginWitness: null,
       databaseManager: f.manager,
       terminalStore: {
         read: () => f.context.terminal,

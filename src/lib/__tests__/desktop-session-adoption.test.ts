@@ -6,6 +6,7 @@ const session = require("../../../electron/admin-session.cjs");
 const guard = require("../../../electron/ipc-guard.cjs");
 const activation = require("../../../electron/verified-activation.cjs");
 const { install } = require("../../../electron/ipc-privilege.cjs");
+const { matchesHostedStaffSession } = require("../../../electron/sync/offline-staff-refresh.cjs");
 const source = readFileSync(new URL("../../../electron/main.cjs", import.meta.url), "utf8");
 const start = source.indexOf('  ipcMain.handle("admin:adopt-session",');
 const body = source.slice(start, source.indexOf('  ipcMain.handle("admin:unlock",', start));
@@ -13,9 +14,13 @@ const epochGuard=source.slice(source.indexOf("function captureSessionAdoption()"
 const registration = { tokenId: "terminal-a", deviceType: "pc", deviceUse: "operations", locationId: "A", backendUrl: "https://operator.test", supabaseUrl: "https://operator-db.test", deviceClaimProof: "fixture-replica-secret" };
 const descriptor = { id: "terminal-a", platform: "pc", mode: "operations", branchId: "A" };
 const success = { ok: true, level: "staff", subject: "cashier", branchId: "A", permissions: { can_process_sale: true }, terminal: descriptor };
+const hostedPinProof = { sessionToken: "fixture-session", cashierToken: "fixture-cashier", deviceBindingProof: "a".repeat(64) };
+const hostedPinWitness = { ...hostedPinProof, id: "4aab155e-c435-4305-88c6-e0d2f3b1b405", username: success.subject,
+  level: success.level, branchId: success.branchId, permissions: success.permissions };
 beforeEach(() => session.clear());
 afterEach(() => { vi.restoreAllMocks(); session.clear(); });
-function harness(payload: unknown = success, status = 200, saved: unknown = registration) {
+function harness(payload: unknown = success, status = 200, saved: unknown = registration,
+  witness: typeof hostedPinWitness | null = null) {
   let sealed = saved;
   const handlers = new Map<string, (...args: unknown[]) => Promise<Record<string, unknown>>>();
   const ipc = { handle: (name: string, listener: (...args: unknown[]) => Promise<Record<string, unknown>>) => handlers.set(name, listener) };
@@ -24,11 +29,17 @@ function harness(payload: unknown = success, status = 200, saved: unknown = regi
   const fetch = vi.fn(async () => Response.json(payload, { status }));
   const grant = vi.spyOn(session, "grant");
   const proof = vi.fn(), audit = vi.fn(), safeChange = vi.fn<() => Promise<void>>(async () => {});
-  const invalidate = new Function("ipcMain", "guard", "adminSession", "terminalStore", "activationBoundary", "fetch", "authorizationServerUrl", "syncCloud", "rememberVerifiedBranch", "assertSafeRegistrationChange", "recordRegistrationChange","databaseManager","cloudCredentials","enrollCurrentShiftAuthor", `let sessionAdoptionRevision=0;${epochGuard}${body};return()=>{sessionAdoptionRevision++};`)(
-    ipc, guard, session, { read: () => sealed, write, lastBinding: () => saved }, activation, fetch, () => "https://operator.test", { setAuthorizationProof: proof }, vi.fn(), safeChange, audit,{pool:{}},{read:()=>({url:"https://fixture.supabase.co"})},vi.fn(),
+  const witnessState: { invalidate: () => void; readWitness: () => typeof hostedPinWitness | null } = new Function(
+    "ipcMain", "guard", "adminSession", "terminalStore", "activationBoundary", "fetch", "authorizationServerUrl",
+    "syncCloud", "rememberVerifiedBranch", "assertSafeRegistrationChange", "recordRegistrationChange", "databaseManager",
+    "cloudCredentials", "enrollCurrentShiftAuthor", "offlineStaffLoginWitness", "matchesHostedStaffSession",
+    `let sessionAdoptionRevision=0;${epochGuard}${body};return { invalidate:()=>{sessionAdoptionRevision++}, readWitness:()=>offlineStaffLoginWitness };`)(
+    ipc, guard, session, { read: () => sealed, write, lastBinding: () => saved }, activation, fetch,
+    () => "https://operator.test", { setAuthorizationProof: proof }, vi.fn(), safeChange, audit,
+    { pool: {} }, { read: () => ({ url: "https://fixture.supabase.co" }) }, vi.fn(), witness, matchesHostedStaffSession,
   );
   const call = (provided: unknown = { cashierToken: "fixture-session", deviceBindingProof: "a".repeat(64) }, candidate?: unknown) => handlers.get("admin:adopt-session")!({}, provided, candidate);
-  return { call, write, fetch, grant, proof, audit, safeChange, invalidate, setSealed: (value: unknown) => { sealed = value; } };
+  return { call, write, fetch, grant, proof, audit, safeChange, ...witnessState, setSealed: (value: unknown) => { sealed = value; } };
 }
 function noMutation(app: ReturnType<typeof harness>) { expect(app.write).not.toHaveBeenCalled(); expect(app.grant).not.toHaveBeenCalled(); expect(app.proof).not.toHaveBeenCalled(); }
 describe("installed Main session adoption protocol", () => {
@@ -44,6 +55,24 @@ describe("installed Main session adoption protocol", () => {
     const app = harness({ ok: false, code: "EAUTH_DENIED", error: "PRIVATE proof/account details" }, status);
     const result = await app.call({ cashierToken: "fixture-session" });
     expect(result).toMatchObject({ ok: false, code: "EAUTH_DENIED", status }); expect(JSON.stringify(result)).not.toContain("PRIVATE"); noMutation(app);
+  });
+  it.each([401, 403])("invalidates only the denied hosted PIN witness (%s)", async status => {
+    const app = harness({ ok: false, code: "EAUTH_DENIED" }, status, registration, hostedPinWitness);
+    expect(await app.call({ ...hostedPinProof, cashierToken: "different-cashier" })).toMatchObject({ ok: false, code: "EAUTH_DENIED", status });
+    expect(app.readWitness()).toBe(hostedPinWitness);
+    expect(await app.call(hostedPinProof)).toMatchObject({ ok: false, code: "EAUTH_DENIED", status });
+    expect(app.readWitness()).toBeNull();
+    noMutation(app);
+  });
+  it("preserves the exact hosted PIN witness on re-adoption and clears it when permissions change", async () => {
+    const result = { ...success, authorId: hostedPinWitness.id };
+    const app = harness(result, 200, registration, hostedPinWitness);
+    expect(await app.call(hostedPinProof)).toMatchObject({ ok: true, level: "staff" });
+    expect(app.readWitness()).toBe(hostedPinWitness);
+    app.fetch.mockResolvedValueOnce(Response.json({ ...result, permissions: { can_process_sale: false } }));
+    expect(await app.call(hostedPinProof)).toMatchObject({ ok: true, level: "staff" });
+    expect(app.readWitness()).toBeNull();
+    expect(session.hasPermission("can_process_sale")).toBe(false);
   });
   it.each([500, 503, 504])("preserves temporary backend failure %s without turning it into a permissions failure", async status => {
     const app = harness({ ok: false, code: "EAUTH_UNAVAILABLE", error: "PRIVATE SQL details" }, status);

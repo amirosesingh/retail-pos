@@ -307,11 +307,11 @@ function DesktopUpdateCard() {
           </Button>
         )}
       </div>
-      {installing && <p role="status" className="text-sm">Downloading if needed, then synchronizing pending data before installation. Keep the application open.</p>}
+      {installing && <p role="status" className="text-sm">Saving local changes before installation. Keep the application open.</p>}
       {installError && <p role="alert" className="text-sm text-destructive">{installError}</p>}
       <p className="px-1 text-xs text-muted-foreground">
         {supported
-          ? "Updates download automatically in the background. Choose Update & Restart when ready, or continue working and install on the next safe restart. Your open shift, logs, terminal registration and local database are preserved."
+          ? "Updates download in the background. Choose Restart and install when ready. Records saved locally can remain queued for synchronization after the update."
           : "The browser build always serves the newest files. Downloads here are for the Windows till installer."}
       </p>
         </div>

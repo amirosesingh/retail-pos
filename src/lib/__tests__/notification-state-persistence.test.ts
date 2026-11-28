@@ -2,6 +2,14 @@ import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setActivityAudienceIdentity } from "../activity-audience";
 
+const realtime = vi.hoisted(() => ({
+  staff: false,
+  subscribe: vi.fn<(client: unknown, topic: string, filter: { filter?: string }, onChange: () => void, onStatus: (status: string) => void) => () => void>(),
+  stop: vi.fn(),
+}));
+vi.mock("@/core/api/sync-relay", () => ({ hasStaffSession: () => realtime.staff }));
+vi.mock("../owned-postgres-subscription", () => ({ subscribeOwnedPostgresChanges: realtime.subscribe }));
+
 const posFetch = vi.fn(() => Promise.resolve({ ok: true, json: async () => ({ ok: true }) }));
 const readCredentials = vi.fn<
   () => Promise<{ sessionToken?: string; cashierToken?: string; accessToken?: string }>
@@ -25,6 +33,9 @@ const localStorage = {
 describe("per-user notification state", () => {
   beforeEach(() => {
     setActivityAudienceIdentity(null);
+    realtime.staff = false;
+    realtime.subscribe.mockReset().mockReturnValue(realtime.stop);
+    realtime.stop.mockClear();
     values.clear();
     posFetch.mockClear();
     readCredentials.mockReset();
@@ -164,6 +175,42 @@ describe("per-user notification state", () => {
     const activity = await import("../activity-events");
     expect(await activity.listActivityEvents()).toEqual([]);
     expect(posFetch).not.toHaveBeenCalled();
+  });
+
+  it("wakes the branch-scoped bell after staff verification and Realtime reconnect", async () => {
+    const { subscribeActivityEvents } = await import("../activity-events");
+    const { setCentralAuthSessionPresent } = await import("../session-presence");
+    setCentralAuthSessionPresent(false);
+    const refresh = vi.fn();
+    const stop = subscribeActivityEvents(refresh, "viewed-branch");
+    try {
+      expect(realtime.subscribe).not.toHaveBeenCalled();
+      realtime.staff = true;
+      setCentralAuthSessionPresent(true, "verified-token");
+      expect(realtime.subscribe).toHaveBeenCalledOnce();
+      const [, , filter, changed, status] = realtime.subscribe.mock.calls[0];
+      expect(filter.filter).toBe("store_id=eq.viewed-branch");
+      expect(refresh).toHaveBeenCalledOnce();
+
+      status("SUBSCRIBED");
+      status("SUBSCRIBED");
+      changed();
+      status("CHANNEL_ERROR");
+      status("SUBSCRIBED");
+      expect(refresh).toHaveBeenCalledTimes(4);
+
+      setCentralAuthSessionPresent(true, "refreshed-token");
+      expect(realtime.subscribe).toHaveBeenCalledOnce();
+      realtime.staff = false;
+      setCentralAuthSessionPresent(false);
+      expect(realtime.stop).toHaveBeenCalledOnce();
+    } finally {
+      stop();
+    }
+    realtime.staff = true;
+    setCentralAuthSessionPresent(true, "new-session");
+    expect(realtime.subscribe).toHaveBeenCalledOnce();
+    setCentralAuthSessionPresent(false);
   });
 
   it("keeps a notification visible when its durable clear fails", async () => {

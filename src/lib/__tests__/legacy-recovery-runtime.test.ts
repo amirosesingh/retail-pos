@@ -28,6 +28,7 @@ function mainConsumers() {
     databaseManager: { isConnected: () => true }, changeReader: f.base, legacyRecoveryRuntime: f.runtime,
     conflictRepository: { unresolved: async () => [] }, localBranchId: () => branch,
     syncCoordinator: { paused: false, resume() {}, pause() {}, runFinal }, syncCloud: { health },
+    electronNet: { isOnline: () => true },
     pendingShiftCloseSync: new Set(["saved-closing"]), mandatoryShiftSyncRun: null,
     SHUTDOWN_SYNC_TIMEOUT_MS: 1000, reportCloseProgress() {},
     settleWithin: async (work: () => Promise<unknown>) => { try { return { ok: true, value: await work() }; } catch (error) { return { ok: false, error }; } },

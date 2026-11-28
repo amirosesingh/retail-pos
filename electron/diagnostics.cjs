@@ -83,6 +83,12 @@ const TRANSPORT_FIELDS = {
 const ownValue = (object, key) => {
   try { return Object.getOwnPropertyDescriptor(object, key)?.value; } catch { return undefined; }
 };
+// Best effort on crash/reporting paths. Lazy loading also keeps source-extracted
+// diagnostic harnesses independent of the caller's module-resolution context.
+function sqlErrorDiagnostic(error) {
+  try { return require("./db/sql-error-diagnostic.cjs").sqlErrorDiagnostic(error); }
+  catch { return {}; }
+}
 
 /** Private, best-effort breadcrumbs must never replace an error or affect sync. */
 function tagBootstrapDiagnostic(error, fields) {
@@ -137,6 +143,7 @@ function logConnection(event, detail = {}) {
     if (key === "bootstrapOrigin" && !BOOTSTRAP_ORIGINS.has(value)) continue;
     if (key === "httpStatus" && (!Number.isInteger(value) || value < 100 || value > 599)) continue;
     if (key === "nonJsonResponse" && typeof value !== "boolean") continue;
+    if (key === "sqlNumber" && (!Number.isSafeInteger(value) || value <= 0 || value > 2147483647)) continue;
     safe[key] = typeof value === "string"
       ? value
           .replace(/https?:\/\/[^\s]+/gi, "[url]")
@@ -207,6 +214,7 @@ function databaseErrors(limit = 100) {
       code: detail?.code ?? null,
       message: detail?.message ?? "The database operation did not complete.",
       occurrences: Number(previous?.occurrences ?? 0) + 1,
+      ...sqlErrorDiagnostic(detail),
       ...Object.fromEntries(Object.entries(TRANSPORT_FIELDS).flatMap(([key, values]) => values.has(ownValue(detail, key)) ? [[key, ownValue(detail, key)]] : [])),
     });
   }
@@ -336,6 +344,7 @@ function writeReport(extra = {}) {
 }
 
 module.exports = {
+  sqlErrorDiagnostic,
   tagBootstrapDiagnostic,
   bootstrapDiagnostic,
   logCrash,

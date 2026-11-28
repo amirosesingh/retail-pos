@@ -149,10 +149,10 @@ describe("safe actual Main → diagnostic log boundary", () => {
     const failure = await refresh(h).then(() => { throw Error("Expected failure"); }, (error: unknown) => error);
     const logs = logHarness(), markReady = vi.fn();
     const source = readFileSync("electron/main.cjs", "utf8"), start = source.indexOf("function prepareLocalData("), end = source.indexOf("\nlet localDatabaseRecoveryPromise", start);
-    const context = { diagnostics: logs.diagnostics, syncRegistry: registry, databaseService: { markReady }, databaseConfig: { profile: () => ({ retentionDays: 90 }) }, localBranchId: () => "branch-fixture", isManagementDevice: () => false, localDataLifecycle: { ensure: vi.fn().mockRejectedValue(failure), preserveCachedReady: () => true }, prepare: undefined as undefined | (() => Promise<unknown>) };
+    const context = { diagnostics: logs.diagnostics, syncRegistry: registry, databaseService: { markReady, snapshot: () => ({localRecoveryPending:false}) }, databaseConfig: { profile: () => ({ retentionDays: 90 }) }, localBranchId: () => "branch-fixture", isManagementDevice: () => false, localDataLifecycle: { ensure: vi.fn().mockRejectedValue(failure), preserveCachedReady: () => true }, prepare: undefined as undefined | (() => Promise<unknown>) };
     runInNewContext(`let localDataPreparePromise=null;${source.slice(start,end)};globalThis.prepare=prepareLocalData;`, context);
     await expect(context.prepare!()).rejects.toBe(failure);
-    expect(markReady).toHaveBeenCalledExactlyOnceWith({ phase: "sync_pending", syncReady: false, code: "HTTP_503", error: "HTTP 503", differences: undefined });
+    expect(markReady).toHaveBeenCalledExactlyOnceWith({ phase: "sync_pending", syncReady: false, code: "HTTP_503", error: "HTTP 503", differences: undefined, table: "products" });
     expect(logs.output).toHaveLength(1);expect(logs.output[0].file).toMatch(/failure\.log$/);
     expect(logs.parsed()).toMatchObject({ category: "synchronization", stage: "bootstrap", code: "HTTP_503", message: "HTTP 503", table: "products", bootstrapPhase: "download", bootstrapOrigin: "refresh", httpStatus: 503, nonJsonResponse: true, outcome: "failure" });
     expect(logs.output[0].line).not.toMatch(/PRIVATE|https:|branch-fixture|terminal-fixture|credentials|sqlServerBootstrap/);

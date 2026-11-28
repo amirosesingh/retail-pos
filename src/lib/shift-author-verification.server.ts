@@ -3,6 +3,7 @@ import { serviceRest, verifyRelayCaller } from "@/core/api/pos-relay.server";
 import { resolveRelayScope } from "@/core/api/relay-policy.server";
 import { databaseAuthority } from "./desktop-database-authority.server";
 import { supabaseConfig } from "./external-supabase-config";
+import { canonicalBranchId } from "./branch-id";
 import type { VerifiedTerminalDescriptor } from "./terminal-binding.server";
 import { normalizeBinding, normalizeEnrollment, normalizeAttestation, normalizeClosingStart, enrollmentMessage, intentMessage, closingStartMessage } from "../../electron/security/shift-author-protocol.cjs";
 
@@ -13,6 +14,8 @@ type RegistryKey = { key_id: string; author_id: string; terminal_id: string; pro
 const encoder = new TextEncoder();
 // Request-local cryptographic key witness; grants are still read freshly.
 const verifiedAuthorKeys = new WeakMap<object,RegistryKey>();
+const verifiedStockKeys = new WeakMap<object,RegistryKey>();
+const stockVerificationRequests = new WeakMap<object, { keys: Map<string,Promise<Awaited<ReturnType<typeof registry>>>>; authors: Map<string,Promise<Awaited<ReturnType<typeof databaseAuthority>>>> }>();
 const requestSchema = z.object({
   sessionToken: z.string().min(1).max(400).optional(),
   cashierToken: z.string().min(1).max(2000).optional(),
@@ -166,6 +169,77 @@ export async function shiftAuthorTerminalEnrolled(terminalId: string): Promise<b
   return (await registry({ projectOrigin: projectOrigin(), terminalId })).terminalEnrolled;
 }
 
+/** One bounded upload can reuse identical CURRENT registry/account reads. The
+ * cache is request-local/private; it never accepts caller-supplied key material,
+ * survives a request, replaces signature checks or bypasses SQL's fresh locks. */
+export function createStockEventVerificationRequest(): object {
+  const token=Object.freeze({});stockVerificationRequests.set(token,{keys:new Map(),authors:new Map()});return token;
+}
+async function stockRegistry(binding: {projectOrigin:string;terminalId:string;authorId:string;keyId:string},request?:object){
+  if(!request)return registry(binding);
+  const cache=stockVerificationRequests.get(request);if(!cache)return denied("ESTOCK_AUTHOR_INVALID");
+  const id=JSON.stringify([binding.projectOrigin,binding.terminalId,binding.authorId,binding.keyId]);
+  if(!cache.keys.has(id))cache.keys.set(id,registry(binding));return cache.keys.get(id)!;
+}
+
+/** Dedicated stock domain only. Returns no key material or write capability. */
+export async function verifyStockEventRegistryProof(value: unknown, request?:object) {
+  const { normalizeStockEvent, stockEventMessage } = await import("../../electron/security/stock-event-author-protocol.cjs");
+  let proof: ReturnType<typeof normalizeStockEvent>;
+  try { proof = normalizeStockEvent(value); } catch { return denied("ESTOCK_AUTHOR_INVALID"); }
+  if (proof.projectOrigin !== projectOrigin()) return denied("ESTOCK_AUTHOR_INVALID");
+  const key = (await stockRegistry(proof,request)).key;
+  if (!key || !matchingKey(key, proof)) return denied("ESTOCK_AUTHOR_INVALID");
+  const { signature, ...fields } = proof;
+  if (!await validSignature(key.public_key, signature, stockEventMessage(fields))) return denied("ESTOCK_AUTHOR_INVALID");
+  // Revoked history can still authenticate its exact accepted receipt. A new
+  // claim must separately pass current authority and actual-effect admission.
+  Object.freeze(proof);
+  verifiedStockKeys.set(proof, key);
+  return proof;
+}
+
+/** Dedicated original source-cohort purpose in the existing stock domain. */
+export async function verifyStockSourceCohortRegistryProof(value:unknown,request?:object){
+  const {normalizeStockSourceCohortProof,stockSourceCohortMessage}=await import("../../electron/security/stock-event-author-protocol.cjs");
+  let proof:ReturnType<typeof normalizeStockSourceCohortProof>;
+  try{proof=normalizeStockSourceCohortProof(value);}catch{return denied("ESTOCK_AUTHOR_INVALID");}
+  if(proof.projectOrigin!==projectOrigin())return denied("ESTOCK_AUTHOR_INVALID");
+  const key=(await stockRegistry(proof,request)).key;
+  if(!key||!matchingKey(key,proof))return denied("ESTOCK_AUTHOR_INVALID");
+  const{signature,...fields}=proof;
+  if(!await validSignature(key.public_key,signature,stockSourceCohortMessage(fields)))return denied("ESTOCK_AUTHOR_INVALID");
+  Object.freeze(proof);verifiedStockKeys.set(proof,key);return proof;
+}
+
+/** Typed coverage metadata only; never grants a business write or proves that
+ * the prefix/cohort is accepted. SQL validates the challenge/source separately. */
+export async function verifyStockCoverageFrontierRegistryProof(value:unknown,request?:object){
+  const{normalizeStockCoverageFrontierProof,stockCoverageFrontierMessage}=await import('../../electron/security/stock-event-author-protocol.cjs');
+  let proof:ReturnType<typeof normalizeStockCoverageFrontierProof>;
+  try{proof=normalizeStockCoverageFrontierProof(value);}catch{return denied('ESTOCK_AUTHOR_INVALID');}
+  if(proof.projectOrigin!==projectOrigin())return denied('ESTOCK_AUTHOR_INVALID');
+  const key=(await stockRegistry(proof,request)).key;
+  if(!key||!matchingKey(key,proof)||canonicalBranchId(key.terminal_id)!==canonicalBranchId(proof.terminalId))return denied('ESTOCK_AUTHOR_INVALID');
+  const{signature,...fields}=proof;
+  if(!await validSignature(key.public_key,signature,stockCoverageFrontierMessage(fields)))return denied('ESTOCK_AUTHOR_INVALID');
+  Object.freeze(proof);verifiedStockKeys.set(proof,key);return proof;
+}
+
+export async function readVerifiedStockEventAuthor(proof: Awaited<ReturnType<typeof verifyStockEventRegistryProof>>|Awaited<ReturnType<typeof verifyStockSourceCohortRegistryProof>>|Awaited<ReturnType<typeof verifyStockCoverageFrontierRegistryProof>>,request?:object): Promise<ShiftAuthorAuthority> {
+  if (!verifiedStockKeys.has(proof)) return { allowed: false, code: "ESTOCK_AUTHOR_INVALID" };
+  const key = (await stockRegistry(proof,request)).key;
+  if (!key || !matchingKey(key, proof) || key.revoked_at !== null) return { allowed: false, code: "ESTOCK_AUTHOR_REVOKED" };
+  const cache=request?stockVerificationRequests.get(request):null;
+  if(request&&!cache)return {allowed:false,code:"ESTOCK_AUTHOR_INVALID"};
+  if(cache&&!cache.authors.has(proof.authorId))cache.authors.set(proof.authorId,databaseAuthority({appUserId:proof.authorId},{strictAvailability:true}));
+  const authority=cache?await cache.authors.get(proof.authorId)!:await databaseAuthority({ appUserId: proof.authorId }, { strictAvailability: true });
+  if (!authority?.authorId || !sameId(authority.authorId, proof.authorId) || authority.subject !== proof.subject)
+    return { allowed: false, code: "ESTOCK_AUTHOR_REVOKED" };
+  if (authority.branchId && canonicalBranchId(authority.branchId) !== canonicalBranchId(proof.branchId)) return { allowed: false, code: "ESTOCK_AUTHOR_BRANCH_FORBIDDEN" };
+  return { allowed: true, authority };
+}
+
 /** FIN62 foundation only: not routed and not sufficient mutation authorization.
  * Callers must still validate the actual operation/field policy and receipt.
  * Existing shift domains and their accepted replay semantics remain unchanged. */
@@ -189,8 +263,46 @@ export async function verifyFinancialAuthorAttestation(input: {
   if(!await validSignature(key.public_key,signature,financialOperationMessage(fields)))return denied("EFINANCIAL_AUTHOR_INVALID");
   return proof;
 }
+
+/** The checkout signature covers the exact sale, line, tender and stock evidence
+ * plus the installation and feed boundary. The present uploader is irrelevant. */
+export async function verifyCashCheckoutAttestation(input: {
+  attestation: unknown; checkoutJson: string; terminal: VerifiedTerminalDescriptor;
+  branchId: string; operationId: string; installationGeneration: string; databaseGuid: string; feedEpoch: string;
+}) {
+  const { normalizeCashCheckoutAttestation, cashCheckoutMessage } =
+    await import("../../electron/security/financial-author-protocol.cjs");
+  let proof: ReturnType<typeof normalizeCashCheckoutAttestation>;
+  try { proof = normalizeCashCheckoutAttestation(input.attestation); }
+  catch { return denied("ECASH_CHECKOUT_AUTHOR_INVALID"); }
+  if (typeof input.checkoutJson !== "string" || !input.checkoutJson ||
+      input.checkoutJson.length > 524288 || input.terminal.platform !== "pc" || input.terminal.mode !== "operations" ||
+      proof.projectOrigin !== projectOrigin() || proof.terminalId !== input.terminal.id ||
+      proof.branchId !== input.branchId || proof.branchId !== input.terminal.branchId ||
+      proof.operationId !== input.operationId || proof.installationGeneration !== input.installationGeneration ||
+      proof.databaseGuid !== input.databaseGuid || proof.feedEpoch !== input.feedEpoch)
+    return denied("ECASH_CHECKOUT_AUTHOR_INVALID");
+  const raw = encoder.encode(input.checkoutJson);
+  if (raw.byteLength > 524288) return denied("ECASH_CHECKOUT_AUTHOR_INVALID");
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", raw));
+  if (proof.payloadHash !== Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join(""))
+    return denied("ECASH_CHECKOUT_AUTHOR_INVALID");
+  const key = (await registry(proof)).key;
+  if (!key || !matchingKey(key, proof)) return denied("ECASH_CHECKOUT_AUTHOR_INVALID");
+  const { signature, ...fields } = proof;
+  if (!await validSignature(key.public_key, signature, cashCheckoutMessage(fields)))
+    return denied("ECASH_CHECKOUT_AUTHOR_INVALID");
+  if (key.revoked_at !== null) return denied("ECASH_CHECKOUT_AUTHOR_REVOKED");
+  const authority = await databaseAuthority({ appUserId: proof.authorId }, { strictAvailability: true });
+  if (!authority?.authorId || !sameId(authority.authorId, proof.authorId) ||
+      authority.subject !== proof.subject || (authority.branchId && authority.branchId !== proof.branchId) ||
+      authority.permissions.can_process_sale !== true)
+    return denied("ECASH_CHECKOUT_AUTHOR_FORBIDDEN");
+  return proof;
+}
+
 /** Necessary current action flag, not a replacement for row/field authorization. */
-export async function readFinancialAuthorPermission(value: unknown): Promise<ShiftAuthorAuthority> {
+export async function readFinancialAuthorPermission(value: unknown, options: { allowAdminRefund?: boolean } = {}): Promise<ShiftAuthorAuthority> {
   const {normalizeFinancialAttestation}=await import("../../electron/security/financial-author-protocol.cjs");
   let proof: ReturnType<typeof normalizeFinancialAttestation>;
   try { proof=normalizeFinancialAttestation(value); } catch { return {allowed:false,code:"EFINANCIAL_AUTHOR_INVALID"}; }
@@ -202,7 +314,9 @@ export async function readFinancialAuthorPermission(value: unknown): Promise<Shi
   const flags: Record<string,string>={OPEN:"can_open_shift",SALE:"can_process_sale",REFUND:"can_process_refund",TENDER:"can_edit_tenders",VOID:"can_void_item"};
   const flag=flags[String(proof.action)];
   if(!flag)return {allowed:false,code:"EFINANCIAL_AUTHOR_INVALID"};
-  return authority.permissions[flag]===true?{allowed:true,authority}:{allowed:false,code:"EFINANCIAL_AUTHOR_PERMISSION_REVOKED"};
+  const allowed = authority.permissions[flag] === true ||
+    (options.allowAdminRefund === true && proof.action === "REFUND" && authority.level === "admin");
+  return allowed ? {allowed:true,authority} : {allowed:false,code:"EFINANCIAL_AUTHOR_PERMISSION_REVOKED"};
 }
 /** Companion proof uses the same already-verified graph author, with no second
  * registry request and no change to frozen v1 graph bytes. Not admission alone. */

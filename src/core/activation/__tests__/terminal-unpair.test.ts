@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ platform: "windows", reset: vi.fn(), calls: [] as string[], rpc: vi.fn(), clear: vi.fn(), remove: vi.fn(), flush: vi.fn() }));
+const f = vi.hoisted(() => ({ platform: "windows", reset: vi.fn(), calls: [] as string[], rpc: vi.fn(), clear: vi.fn(), remove: vi.fn(), flush: vi.fn(), signout: vi.fn() }));
 vi.mock("@/integrations/supabase/external-client", () => ({
   resetExternalClient: vi.fn(), createTenantClient: vi.fn(),
-  supabaseExternal: { rpc: f.rpc, auth: { signOut: async () => { f.calls.push("signout"); } } },
+  supabaseExternal: { rpc: f.rpc, auth: { signOut: f.signout } },
 }));
 vi.mock("@/core/activation/device-proof", () => ({ deviceProofHash: async () => "proof-hash" }));
-vi.mock("@/lib/device-secrets", () => ({ getDeviceSecret: vi.fn(), setDeviceSecret: vi.fn(), clearDeviceSecret: (key: string) => f.calls.push(key) }));
+vi.mock("@/lib/device-secrets", () => ({ getDeviceSecret: vi.fn(), setDeviceSecret: async () => {}, clearDeviceSecret: (key: string) => f.calls.push(key) }));
 vi.mock("@/lib/secure-cloud-config", () => ({ removeCloudCredentials: f.remove }));
 vi.mock("@/lib/backend-config", () => ({ saveBackendUrl: async () => { f.calls.push("backend"); return { ok: true }; } }));
 vi.mock("@/platform-config/approval-token-client", () => ({ clearApprovalToken: async () => { f.calls.push("approval"); } }));
@@ -21,19 +21,21 @@ vi.mock("@/lib/external-supabase-config", () => ({
 }));
 vi.mock("@/core/activation/terminal-platform", () => ({ terminalRuntimePlatform: () => f.platform }));
 vi.mock("../mobile-registration-identity", () => ({ resetMobileRegistrationIdentity: f.reset }));
-import { unpairTerminal, stampHeartbeat } from "../terminal-tokens";
+import { clearTerminalConfig, readTerminalConfig, unpairTerminal, stampHeartbeat, writeTerminalConfig, type TerminalConfig } from "../terminal-tokens";
 beforeEach(() => {
   f.calls.length = 0; f.platform = "windows"; f.reset.mockReset().mockResolvedValue(undefined);
   f.rpc.mockReset().mockResolvedValue({ error: null });
+  f.signout.mockReset().mockImplementation(async () => { f.calls.push("signout"); });
   f.clear.mockReset().mockImplementation(async () => { f.calls.push("mirror"); return { ok: true }; });
   f.remove.mockReset().mockImplementation(async () => { f.calls.push("cloud"); return { ok: true }; });
   f.flush.mockReset().mockImplementation(async () => { f.calls.push("flush"); });
-  vi.stubGlobal("window", { pos: { clearTerminalConfig: f.clear, writeTerminalConfig: vi.fn() }, localStorage: { removeItem: vi.fn() }, dispatchEvent: vi.fn() });
+  vi.stubGlobal("window", { pos: { clearTerminalConfig: f.clear, writeTerminalConfig: vi.fn(), readTerminalConfig: async () => ({ ok: true, config: null }) }, localStorage: { getItem: () => null, removeItem: vi.fn() }, dispatchEvent: vi.fn() });
 });
 afterEach(() => vi.unstubAllGlobals());
 it("ends Auth before removing connection settings and waits for durable native cleanup", async () => {
   await unpairTerminal();
   expect(f.calls.indexOf("signout")).toBeLessThan(f.calls.indexOf("cloud"));
+  expect(f.calls.indexOf("mirror")).toBeLessThan(f.calls.indexOf("cloud"));
   expect(f.calls.indexOf("mirror")).toBeLessThan(f.calls.indexOf("flush"));
   expect(f.calls.at(-1)).toBe("flush");
   expect(f.calls).toContain("terminal-account");
@@ -46,6 +48,8 @@ it("reports an unsuccessful credential removal rather than claiming a complete r
 it("waits for Electron's identity deletion and reports its failure", async () => {
   f.clear.mockResolvedValue({ ok: false });
   await expect(unpairTerminal()).rejects.toThrow("Could not clear the saved terminal registration");
+  expect(f.remove).not.toHaveBeenCalled();
+  expect(f.calls).not.toContain("activation.record.v1");
   expect(f.flush).not.toHaveBeenCalled();
 });
 
@@ -67,4 +71,26 @@ it.each(["android", "ios"])("retains the saved connection on %s but removes devi
   expect(f.calls).toContain("terminal.config");
   expect(f.calls).toContain("terminal-account");
   expect(f.calls.at(-1)).toBe("flush");
+});
+
+it("preserves mobile activation when the verification connection changes during sign-out", async () => {
+  f.platform = "android";
+  Reflect.deleteProperty(window, "pos");
+  const config: TerminalConfig = { tokenId: "terminal-a", supabaseUrl: "https://registered.example", supabaseKey: "test-publishable-key", locationId: "store-a", locationName: "Store A", activatedAt: "2026-11-01T00:00:00Z" };
+  writeTerminalConfig(config);
+  let finish!: () => void;
+  let current = true;
+  f.signout.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+  const unpairing = unpairTerminal({ config, reason: "revoked", verificationProjectUrl: config.supabaseUrl, isCurrent: () => current });
+  current = false;
+  finish();
+  await expect(unpairing).rejects.toMatchObject({ code: "EACTIVATION_CONTEXT_CHANGED" });
+  expect(readTerminalConfig()).toEqual(config);
+  expect(f.clear).not.toHaveBeenCalled();
+  expect(f.reset).not.toHaveBeenCalled();
+  expect(f.calls).not.toContain("activation.record.v1");
+  expect(f.calls).not.toContain("terminal-account");
+  expect(f.calls).not.toContain("approval");
+  expect(f.flush).not.toHaveBeenCalled();
+  await clearTerminalConfig();
 });

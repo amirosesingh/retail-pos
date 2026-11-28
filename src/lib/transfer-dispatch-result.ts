@@ -65,6 +65,8 @@ export function mayReconcileDispatch(error: unknown): boolean {
 /** Whitelisted operational guidance; never expose SQL, product names or arbitrary backend text. */
 export function dispatchFailure(error: unknown): { success: false; code: string; error: string } {
   const value = fields(error); const code = String(value.code ?? ""); const message = String(value.message ?? "");
+  if (["EONLINE_REQUIRED", "TRANSFER_UPLOAD_PENDING", "TRANSFER_HANDOFF_UPGRADE_REQUIRED"].includes(code))
+    return { success: false, code, error: code === "EONLINE_REQUIRED" ? "Dispatch requires a connection to head office. The saved local transfer remains intact." : "Synchronize this terminal's saved transfer and its dependencies before dispatching. No dispatch was submitted." };
   if (code === "TRANSFER_INSUFFICIENT_STOCK" || code === "23514" && /^Short by [\d.]+ of .+ at the sending (?:branch|warehouse)$/i.test(message))
     return { success: false, code: "TRANSFER_INSUFFICIENT_STOCK", error: "Not enough stock is available at the sending location. Receive or count the stock there, or reduce the dispatch quantity. No stock was dispatched." };
   if (["TRANSFER_REQUEST_INVALID", "TRANSFER_DISPATCH_CONFLICT"].includes(message) || ["TRANSFER_REQUEST_INVALID", "TRANSFER_DISPATCH_CONFLICT"].includes(code))

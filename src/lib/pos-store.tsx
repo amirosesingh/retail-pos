@@ -2,6 +2,7 @@ import { preserveSessionDrafts } from "./session-draft";
 import { effectiveOperatingShiftSharing, operatingShiftAllowed, readShiftSharing, subscribeShiftSharing } from './shift-sharing-policy';
 import { branchReadApplies, latestOpenShiftForBranch, reconcileActiveShiftRows, shiftIsOpenForBranch } from "./branch-shift-state";
 import { BranchOperationGate } from "./branch-operation-gate";
+import { RefundSaveAttempts, observeRefundDatabaseContext } from "./refund-save-attempt";
 import { formatMoney, setPosCurrency } from "./currency";
 import { subscribeDatabaseMode } from "@/core/local-db/db-mode";
 import { subscribeSettingsRefresh } from "./settings-refresh";
@@ -104,6 +105,8 @@ import {
   setKnownBranches,
 } from "./active-branch";
 import { isShiftOverdue, localTerminalId } from "./shift-hours";
+import { loadProductMergeClient } from "./stock-history-product-merge-browser";
+import { applyProductMergeReceipt, explainHeldProduct } from "./stock-history-product-merge";
 import { beginShiftSession, endShiftSessions } from "./shift-sessions";
 import { setPublicHosts } from "./coupon-hosts";
 import { branchDisplayName } from "./human-readable";
@@ -131,9 +134,12 @@ import { commitBooking, deleteBookingRow, loadBookings } from "./bookings-db";
 import { trackTransition } from "./status-history";
 import {
   cancelBookingAuthoritative,
+  commitBookingHandover,
   collectBookingPayment,
   refundBookingPayment,
   readBookingBalance,
+  readable as bookingError,
+  type BookingHandoverReceipt,
 } from "./booking-collection";
 import {
   clearSectionOverride,
@@ -351,6 +357,7 @@ type Ctx = {
     grantToken?: string | null,
     loadedSale?: Sale,
   ) => Promise<boolean>;
+  hasUncertainRefundSale: (saleId: string, loadedSale?: Sale) => boolean;
   changeSalePayment: (
     saleId: string,
     method: PaymentMethod,
@@ -411,7 +418,7 @@ type Ctx = {
   patchProducts: (ids: string[], patch: Partial<Product>) => Promise<CommitTarget>;
   archiveProducts: (ids: string[]) => Promise<CommitTarget>;
   restoreProducts: (ids: string[]) => Promise<CommitTarget>;
-  mergeProducts: (masterId: string, duplicateIds: string[]) => Promise<BlockedDelete[]>;
+  mergeProducts: (masterId: string, duplicateIds: string[], resumeOperationId?: string) => Promise<BlockedDelete[]>;
   adjustStock: (id: string, delta: number, storeId?: string) => Promise<CommitTarget | null>;
   moveStock: (
     id: string,
@@ -673,6 +680,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Protect a locally committed receipt until a later local/cloud snapshot has
   // actually observed it. Focus and Realtime refreshes may race the sync push.
   const pendingSalesRef = useRef(new Set<string>());
+  const refundSaveAttempts = useRef(new RefundSaveAttempts());
+  const refundDatabaseEpoch = useRef(0);
+  useEffect(() => {
+    const database = window.pos?.database;
+    if (!database) return;
+    return observeRefundDatabaseContext(database, () => { refundDatabaseEpoch.current++; });
+  }, []);
   // Who is acting right now — stamped on transfer approvals and receipts.
   const actorRef = useRef("Manager");
   actorRef.current = terminalUser?.name || user?.email || "Manager";
@@ -712,6 +726,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const scopeReadKey = scopedSettingsReadKey(readIdentity, scopeIds, scopeReadEpoch);
   const scopeReadKeyRef = useRef(scopeReadKey);
   scopeReadKeyRef.current = scopeReadKey;
+  const refundContext = useCallback(() => JSON.stringify([scopeReadKeyRef.current, sessionEpoch(), bootstrapGeneration.current,
+    refundDatabaseEpoch.current, actorStaffIdRef.current, readTerminalConfig()?.tokenId ?? null, effectiveDatabaseMode()]), []);
   const scopeReadsEnabled = useRef(false);
   scopeReadsEnabled.current = readsReady && storesLoaded;
   const retrySettingsScope = useCallback(() => {
@@ -1990,10 +2006,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
         closedByRole: user?.role ?? terminalUser?.role,
         overdue: isShiftOverdue(activeShift, defaultTradingHours),
       };
-      // Electron's trusted shift-count/approval IPC has already committed the
-      // financial close atomically. Rewriting it from the untrusted renderer
-      // would both duplicate the operation and reopen a privilege bypass.
-      if (!localDb()) await db.commitShift(closed);
+      // The trusted local or hosted closing step has already saved the shift.
+      // Mirror its completed state here without sending a second shift write.
       // Everyone who was signed in on this shift is signed out with it.
       endShiftSessions({ shiftId: closed.id });
       setState((s) => ({
@@ -2062,6 +2076,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     async (
       input: Omit<Sale, "id" | "receiptNo" | "createdAt"> & { receiptNo?: string },
       memberSnapshot?: Member | null,
+      persistBooking?: (sale: Sale, products: Product[], member: Member | null) => Promise<BookingHandoverReceipt>,
     ) => {
       const snapshot = stateRef.current;
       const policyError = exchangePolicyError(input.lines, input.total, input.exchangeOfReceiptNo ?? null);
@@ -2165,11 +2180,20 @@ export function PosProvider({ children }: { children: ReactNode }) {
       try {
         for (let attempt = 0; ; attempt++) {
           try {
-            await db.commitSale(sale, touchedProducts, updatedMember);
+            if (persistBooking) {
+              const receipt = await persistBooking(sale, touchedProducts, updatedMember);
+              sale = receipt.sale;
+              if (receipt.replayed) {
+                requestBackgroundRefresh();
+                return sale;
+              }
+            } else {
+              await db.commitSale(sale, touchedProducts, updatedMember);
+            }
             break;
           } catch (error) {
             if (attempt >= 2 || !isDuplicateBillNumber(error)) throw error;
-            if (sale.clientTxnId && (await db.saleAttemptExists(sale.clientTxnId)) === "yes") break;
+            if (!persistBooking && sale.clientTxnId && (await db.saleAttemptExists(sale.clientTxnId)) === "yes") break;
             const nextNo = await reserveBillNumber(
               store?.receiptPrefix?.trim() || store?.code || "R",
               [...snapshot.sales.map((s) => s.receiptNo), sale.receiptNo],
@@ -2650,11 +2674,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     return updated;
   }, []);
 
-  /**
-   * Hand a booking over. The server checks the outstanding amount, takes the
-   * final tender and closes the booking in one go; only then is a sale
-   * receipt written, so a booking can never be collected unpaid.
-   */
+  /** Hand over the booking only after its final payment and sale are saved together. */
   const collectBooking = useCallback(
     async (id: string, amount: number, method: PaymentMethod, clientPaymentId?: string) => {
       const current = stateRef.current.bookings.find((b) => b.id === id);
@@ -2666,74 +2686,48 @@ export function PosProvider({ children }: { children: ReactNode }) {
       } catch (error) { toast.error(error instanceof Error ? error.message : "Select the booking's branch first."); return null; }
       const endOperation = beginAutoLockOperation();
       try {
-      const check = await readBookingBalance(id);
-      if (!check.ok) {
-        toast.error("Payment could not be verified", { description: check.error });
-        return null;
-      }
-      const outstanding = check.state.outstanding;
-      const settled = r2(Math.min(Math.max(amount, 0), outstanding));
-      if (outstanding > 0 && settled < outstanding) {
-        toast.error("A balance is still outstanding", {
-          description: `${money(outstanding)} must be collected before handover.`,
-        });
-        return null;
-      }
-
-      const server = await collectBookingPayment({
-        bookingId: id,
-        amount: settled,
-        method,
-        cashier: current.cashier,
-        clientPaymentId: clientPaymentId ?? crypto.randomUUID(),
-        complete: true,
-      });
-      if (!server.ok) {
-        toast.error("Collection refused", { description: server.error });
-        return null;
-      }
-
+      const handover: { receipt?: BookingHandoverReceipt } = {};
       const sale = await recordSale({
         storeId: current.storeId,
-        shiftId: activeShift?.id ?? current.shiftId,
+        shiftId: activeShift.id,
         lines: current.lines,
         subtotal: current.subtotal,
         discount: current.discount,
         tax: current.tax,
         total: current.total,
         paid: current.total,
-        change: r2(Math.max(0, amount - outstanding)),
+        change: 0,
         method,
         memberId: current.memberId,
         pointsEarned: 0,
         cashier: current.cashier,
         bookingRef: current.ref,
+        clientTxnId: clientPaymentId ?? crypto.randomUUID(),
+      }, undefined, async (prepared, products, member) => {
+        handover.receipt = await commitBookingHandover(id, amount, prepared, products, member);
+        return handover.receipt;
       });
-      const finalPayment: BookingPayment = {
-        id: clientPaymentId ?? crypto.randomUUID(),
-        amount: settled,
-        method,
-        at: new Date().toISOString(),
-        cashier: current.cashier,
-      };
+      const receipt = handover.receipt;
+      if (!receipt) throw new Error("The database did not confirm the booking receipt.");
+      const payment = receipt.payment;
+      const settled = payment?.amount ?? 0;
       const updated: Booking = {
         ...current,
-        paid: server.state.settledPaid,
-        payments:
-          settled && !server.state.duplicate
-            ? [...current.payments, finalPayment]
-            : current.payments,
+        paid: receipt.paid,
+        payments: payment && !current.payments.some(saved => saved.id === payment.id)
+          ? [...current.payments, payment]
+          : current.payments,
         status: "collected",
-        closedAt: new Date().toISOString(),
+        closedAt: receipt.closedAt,
         saleReceiptNo: sale.receiptNo,
         jobStatus: current.job ? "collected" : current.jobStatus,
-        jobStatusAt: current.job ? new Date().toISOString() : current.jobStatusAt,
+        jobStatusAt: current.job ? receipt.closedAt : current.jobStatusAt,
       };
-      await commitBooking(updated);
       setState((s) => ({
         ...s,
         bookings: s.bookings.map((b) => (b.id === id ? updated : b)),
       }));
+      if (receipt.replayed) return { booking: updated, sale };
       logger.log("sale_event", "Booking collected", "bookings", {
         ref: updated.ref,
         receiptNo: sale.receiptNo,
@@ -2762,6 +2756,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
         });
       }
       return { booking: updated, sale };
+      } catch (error) {
+        toast.error("Collection refused", { description: bookingError(error instanceof Error ? error.message : "Booking handover failed.") });
+        return null;
       } finally { releaseBranch(); endOperation(); }
     },
     [activeShift, recordSale],
@@ -2778,6 +2775,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
     return saved;
   },[]);
 
+  const hasUncertainRefundSale = useCallback((saleId: string, loadedSale?: Sale) => {
+    const sale = stateRef.current.sales.find(row => row.id === saleId) ?? loadedSale;
+    return Boolean(sale && refundSaveAttempts.current.hasUncertain({ saleId, branchId: sale.storeId,
+      amount: Math.abs(sale.total), context: refundContext }));
+  }, [refundContext]);
   const refundSale = useCallback(
     async (
       saleId: string,
@@ -2785,73 +2787,63 @@ export function PosProvider({ children }: { children: ReactNode }) {
       loadedSale?: Sale,
     ): Promise<boolean> => {
       const sale = stateRef.current.sales.find((x) => x.id === saleId) ?? loadedSale;
-      if (!sale || sale.refunded) return false;
+      if (!sale || (sale.refunded && !hasUncertainRefundSale(saleId, loadedSale))) return false;
       const payload = {
         sale_id: sale.id,
         receipt_no: sale.receiptNo,
         total: Math.abs(sale.total),
       };
-      const [{ verifyBusinessAuthorization }, { getPosCallerAuth }] = await Promise.all([
-        import("./authorization-client"),
-        import("./pos-caller-auth"),
-      ]);
-      const authorization = await verifyBusinessAuthorization({
-        data: {
-          ...(await getPosCallerAuth()),
-          actionKey: "refund",
-          storeId: sale.storeId,
-          payload,
-          requestedAmount: Math.abs(sale.total),
-          grantToken: grantToken ?? null,
+      return refundSaveAttempts.current.run({
+        saleId, branchId: sale.storeId, amount: Math.abs(sale.total), grantToken,
+        context: refundContext,
+        authorize: async (retryGrant, assertCurrent) => {
+          const [{ verifyRefundAuthorization }, { getPosCallerAuth }] = await Promise.all([
+            import("./authorization-client"),
+            import("./pos-caller-auth"),
+          ]);
+          assertCurrent();
+          const caller = await getPosCallerAuth();
+          assertCurrent();
+          return verifyRefundAuthorization({
+            data: {
+              ...caller,
+              actionKey: "refund",
+              storeId: sale.storeId,
+              payload,
+              requestedAmount: Math.abs(sale.total),
+              grantToken: retryGrant,
+            },
+          });
+        },
+        // Retain Main's handle after an uncertain reply; only its proven
+        // original receipt replay can complete the same stable refund.
+        save: refundGrant => db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId, refundGrant),
+        accepted: isCurrent => {
+          logger.log("sale_event", "Sale refunded", "receipts", { saleId, receiptNo: sale.receiptNo });
+          recordActivity({
+            type: "sale_refund", severity: "critical", title: "Refund issued",
+            message: `Bill ${sale.receiptNo} was refunded.`, storeId: sale.storeId ?? null,
+            entityType: "sale", entityId: sale.receiptNo, amount: sale.total,
+          });
+          setState((s) => {
+            if (!isCurrent()) return s;
+            const existingSale = s.sales.find((x) => x.id === saleId);
+            const sale = existingSale ?? loadedSale;
+            if (!sale || sale.refunded) return s;
+            const products = s.products.map((p) => {
+              const quantity = sale.lines.reduce((total, line) => total + (line.productId === p.id ? line.qty : 0), 0);
+              return quantity ? bump(p, sale.storeId, quantity, s.settings.integrations.autoArchiveZeroStock !== false) : p;
+            });
+            return {
+              ...s, products,
+              sales: existingSale ? s.sales.map((x) => (x.id === saleId ? { ...x, refunded: true } : x))
+                : [{ ...sale, refunded: true }, ...s.sales],
+            };
+          });
         },
       });
-      if (!authorization.ok) throw new Error(authorization.error);
-      // The stable refund id makes a retry idempotent. Nothing visible changes
-      // until the authoritative gateway has accepted the refund.
-      await db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId);
-      logger.log("sale_event", "Sale refunded", "receipts", {
-        saleId,
-        receiptNo: sale.receiptNo,
-      });
-      recordActivity({
-        type: "sale_refund",
-        severity: "critical",
-        title: "Refund issued",
-        message: `Bill ${sale.receiptNo} was refunded.`,
-        storeId: sale.storeId ?? null,
-        entityType: "sale",
-        entityId: sale.receiptNo,
-        amount: sale.total,
-      });
-      setState((s) => {
-        const existingSale = s.sales.find((x) => x.id === saleId);
-        const sale = existingSale ?? loadedSale;
-        if (!sale || sale.refunded) return s;
-        const products = s.products.map((p) => {
-          const quantity = sale.lines.reduce(
-            (total, line) => total + (line.productId === p.id ? line.qty : 0),
-            0,
-          );
-          return quantity
-            ? bump(
-                p,
-                sale.storeId,
-                quantity,
-                s.settings.integrations.autoArchiveZeroStock !== false,
-              )
-            : p;
-        });
-        return {
-          ...s,
-          products,
-          sales: existingSale
-            ? s.sales.map((x) => (x.id === saleId ? { ...x, refunded: true } : x))
-            : [{ ...sale, refunded: true }, ...s.sales],
-        };
-      });
-      return true;
     },
-    [],
+    [refundContext, hasUncertainRefundSale],
   );
 
   /** Correct the tender recorded on a completed bill (e.g. rung up as card). */
@@ -2872,7 +2864,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           : stateRef.current.sales.find((x) => x.id === saleId);
       if (!sale || sale.method === method) return false;
       const payments = sale.payments?.map(payment => ({ ...payment, method }));
-      await db.updateSalePayment(saleId, method, sale.storeId, payments);
+      const groupedSaleVersion = await db.updateSalePayment(saleId, method, sale.storeId, sale.rowVersion);
       logger.log("sale_event", "Bill payment method corrected", "receipts", {
         saleId,
         receiptNo: sale.receiptNo,
@@ -2884,7 +2876,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
         ...s,
         // Historical pages are owned by the receipt screen. Do not inject an
         // old bill into this newest-first, bounded live-sales window.
-        sales: s.sales.map((x) => (x.id === saleId ? { ...x, method, payments } : x)),
+        sales: s.sales.map((x) => (x.id === saleId && (!groupedSaleVersion || (x.rowVersion ?? 0) < groupedSaleVersion)
+          ? { ...x, method, payments, rowVersion: groupedSaleVersion ?? x.rowVersion } : x)),
       }));
       return true;
     },
@@ -3350,8 +3343,24 @@ export function PosProvider({ children }: { children: ReactNode }) {
    * scanning the old code still finds the item.
    */
   const mergeProducts = useCallback(
-    async (masterId: string, duplicateIds: string[]): Promise<BlockedDelete[]> => {
+    async (masterId: string, duplicateIds: string[], resumeOperationId?: string): Promise<BlockedDelete[]> => {
       const all = stateRef.current.products;
+      const branchId = stateRef.current.currentStoreId;
+      const actorId = actorStaffIdRef.current;
+      const epoch = sessionEpoch();
+      const isCurrent = () => sessionEpoch() === epoch &&
+        stateRef.current.currentStoreId === branchId && actorStaffIdRef.current === actorId;
+      const { tryPilotProductMerge } = await loadProductMergeClient();
+      if (!isCurrent()) throw new Error("The branch or signed-in user changed. Open the merge again.");
+      const receipt = await tryPilotProductMerge({
+        branchId, actorId, masterId, duplicateIds, products: all, resumeOperationId, isCurrent,
+      });
+      if (!isCurrent()) throw new Error("The branch or signed-in user changed. Open the merge again.");
+      if (receipt) {
+        setState(s => ({ ...s, products: applyProductMergeReceipt(s.products, receipt) }));
+        return receipt.held.map(explainHeldProduct);
+      }
+      if (resumeOperationId) throw new Error("The saved merge is unavailable for this terminal.");
       const master = all.find((p) => p.id === masterId);
       if (!master) return [];
       const losers = all.filter((p) => duplicateIds.includes(p.id) && p.id !== masterId);
@@ -4232,27 +4241,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
    */
   const receiveTransfer = useCallback(async (id: string): Promise<RpcResult> => {
     const s0 = stateRef.current;
+    const epoch = sessionEpoch();
+    const generation = bootstrapGeneration.current;
     const before = s0.transfers.find((x) => x.id === id);
     if (!before || before.status !== "dispatched")
       return { success: false, error: "Transfer is not dispatched." };
-    const now = new Date().toISOString();
-    const persisted = await receiveTransferInDb(id, actorRef.current);
+    const actor = actorRef.current;
+    const persisted = await receiveTransferInDb(id, actor);
     if (!persisted.success) return persisted;
-
-    setState((s) => ({
-      ...s,
-      transfers: s.transfers.map((x) =>
-        x.id === id
-          ? {
-              ...x,
-              status: "received",
-              receivedBy: actorRef.current,
-              receivedAt: now,
-              updatedAt: now,
-            }
-          : x,
-      ),
-    }));
+    if (sessionEpoch() !== epoch || bootstrapGeneration.current !== generation ||
+        !sameBranchId(stateRef.current.currentStoreId, s0.currentStoreId)) return persisted;
+    requestBackgroundRefresh();
 
     logger.log("inventory", "Stock transfer arrived", "transfers", {
       transferId: id,
@@ -4265,7 +4264,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       entityId: id,
       from: "dispatched",
       to: "received",
-      actorName: actorRef.current,
+      actorName: actor,
       storeId: before.toStoreId,
       metadata: { ref: before.ref, fromStoreId: before.fromStoreId },
     });
@@ -4274,7 +4273,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       type: "transfer_received",
       title: `Transfer ${before.ref} received`,
       message: `${destination || "The receiving branch"} confirmed that the delivery arrived.`,
-      actorName: actorRef.current,
+      actorName: actor,
       storeId: before.fromStoreId,
       entityType: "stock_transfer",
       entityId: before.id,
@@ -4285,18 +4284,19 @@ export function PosProvider({ children }: { children: ReactNode }) {
         receiving_store_id: before.toStoreId,
       },
     });
-    return { success: true };
+    return persisted;
   }, []);
 
   /**
    * Physical verification. The counted quantity — and only that — goes onto
-   * the destination shelf. The cloud call is the authority: if it refuses
-   * (already posted, permission, connection), nothing is left half-moved
-   * because the local mirror is only written once the database agrees.
+   * the destination shelf. Re-read the scoped stock after the cloud commit
+   * so the renderer shows the actual destination product and balance.
    */
   const verifyTransfer = useCallback(
     async (id: string, lines: LineQty[], reason?: string): Promise<RpcResult> => {
       const s0 = stateRef.current;
+      const epoch = sessionEpoch();
+      const generation = bootstrapGeneration.current;
       const before = s0.transfers.find((x) => x.id === id);
       if (!before) return { success: false, error: "That transfer no longer exists." };
       if (before.status !== "received")
@@ -4309,40 +4309,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (short && !reason?.trim())
         return { success: false, error: "A short delivery needs a reason." };
 
-      const res = await verifyTransferInDb(id, actorRef.current, counted, reason);
+      const actor = actorRef.current;
+      const res = await verifyTransferInDb(id, actor, counted, reason);
       if (!res.success) return res;
-
-      const arriving = counted.filter((l) => l.qty > 0);
-      const now = new Date().toISOString();
+      if (sessionEpoch() !== epoch || bootstrapGeneration.current !== generation ||
+          !sameBranchId(stateRef.current.currentStoreId, s0.currentStoreId)) return res;
+      // The backend can match a different destination SKU, and a live read
+      // may already have the posted balance by the time this response arrives.
+      requestBackgroundRefresh();
       const status: TransferStatus = short ? "completed_with_discrepancy" : "completed";
-
-      setState((s) => ({
-        ...s,
-        products: bumpItems(
-          s.products,
-          arriving,
-          before.toStoreId,
-          1,
-          s.settings.integrations.autoArchiveZeroStock !== false,
-        ),
-        transfers: s.transfers.map((x) =>
-          x.id === id
-            ? {
-                ...x,
-                status,
-                verifiedBy: actorRef.current,
-                verifiedAt: now,
-                postedAt: now,
-                discrepancyReason: short ? reason?.trim() : x.discrepancyReason,
-                items: x.items.map((i) => {
-                  const qty = counted.find((l) => l.productId === i.productId)?.qty ?? 0;
-                  return { ...i, receivedQty: qty, verifiedQty: qty };
-                }),
-                updatedAt: now,
-              }
-            : x,
-        ),
-      }));
 
       logger.log("inventory", "Stock transfer verified", "transfers", {
         transferId: id,
@@ -4357,11 +4332,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
         entityId: id,
         from: "received",
         to: status,
-        actorName: actorRef.current,
+        actorName: actor,
         storeId: before.toStoreId,
         metadata: { ref: before.ref, fromStoreId: before.fromStoreId, lines: counted, reason },
       });
-      return { success: true };
+      return res;
     },
     [],
   );
@@ -4493,6 +4468,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     recordSale,
     correctSale,
     refundSale,
+    hasUncertainRefundSale,
     changeSalePayment,
     createBooking,
     addBookingPayment,

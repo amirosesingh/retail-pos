@@ -29,8 +29,8 @@ function validatePending(authority,value,kind){
  if(!crypto.verify(null,Buffer.from(message),crypto.createPublicKey({key:Buffer.from(key.publicKey,'base64url'),format:'der',type:'spki'}),Buffer.from(signature,'base64url')))fail('ESYNC_SHIFT_AUTHOR_INVALID');return proof;
 }
 class ShiftFinancialRuntime{
- constructor({manager,cloud,terminal,authority,vault,operationsRepository,registry,checkpoints,legacy}){
-  Object.assign(this,{manager,cloud,terminal,authority,vault,operationsRepository,registry,checkpoints,legacy});this.contexts=new Map();this.pending=new Map();
+ constructor({manager,cloud,terminal,authority,vault,operationsRepository,registry,checkpoints,legacy,uploadCashCheckout=null,uploadGroupedRefund=null,stockHistory=null}){
+  Object.assign(this,{manager,cloud,terminal,authority,vault,operationsRepository,registry,checkpoints,legacy,uploadCashCheckout,uploadGroupedRefund,stockHistory});this.contexts=new Map();this.pending=new Map();
  }
  isManagement(){const terminal=this.terminal()??{};return terminal.deviceUse==='management'||terminal.deviceType==='management';}
  async footprint(branchId,terminalId){
@@ -85,8 +85,8 @@ class ShiftFinancialRuntime{
   const sql=this.manager.sql(),tx=new sql.Transaction(this.manager.pool);await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);try{await operations.schema(tx);await bases.schema(tx);cap.source.assertSource();await tx.commit();}catch(error){await tx.rollback().catch(()=>{});throw error;}
   const reader=guarded(new ChangeReader(this.manager,this.registry,{financialBases:bases,financialOperations:operations,financialCoverageSource:cap.source}));
   const journal=guarded(new ShiftSyncJournal(this.operationsRepository,{authorRequired:true,financialBases:bases,financialOperations:operations}));
-  const push=guarded(new PushWorker({reader,cloud:this.cloud,checkpoints:this.checkpoints,registry:this.registry,validateAuthor:proof=>this.authority.validatePending(proof),validateClosingStart:proof=>this.authority.validatePendingClosingStart(proof),validateFinancialBasis:proof=>validatePending(this.authority,proof,'basis'),validateFinancialOperation:proof=>validatePending(this.authority,proof,'operation'),financialHistoryEnabled:true}));
-  context={source:cap.source,scope:cap.scope,operations,bases,reader,journal,push,assertCurrent,knowledge:new Map(),observer:new ShiftFinancialObservations(operations,{financialBases:bases}),draftProvider:createShiftFinancialDraftProvider(bases,{enabled:true}),aggregate:guarded(new AggregateRepository(this.manager,this.operationsRepository,{financialOperations:operations})),receipts:guarded(new ReceiptRepository(this.manager,this.cloud,{financialOperations:operations}))};
+  const push=guarded(new PushWorker({reader,cloud:this.cloud,checkpoints:this.checkpoints,registry:this.registry,validateAuthor:proof=>this.authority.validatePending(proof),validateClosingStart:proof=>this.authority.validatePendingClosingStart(proof),validateFinancialBasis:proof=>validatePending(this.authority,proof,'basis'),validateFinancialOperation:proof=>validatePending(this.authority,proof,'operation'),financialHistoryEnabled:true,uploadCashCheckout:this.uploadCashCheckout,uploadGroupedRefund:this.uploadGroupedRefund,stockHistory:this.stockHistory}));
+  context={source:cap.source,scope:cap.scope,operations,bases,reader,journal,push,assertCurrent,knowledge:new Map(),observer:new ShiftFinancialObservations(operations,{financialBases:bases}),draftProvider:createShiftFinancialDraftProvider(bases,{enabled:true}),aggregate:guarded(new AggregateRepository(this.manager,this.operationsRepository,{financialOperations:operations})),receipts:guarded(new ReceiptRepository(this.manager,this.cloud,{financialOperations:operations,stockHistory:this.operationsRepository.stockHistory}))};
   this.contexts.set(key,context);return{...context,online:cap.online,preparedCapability:cap};
  }
  async knowledgeMatches(context,branchId,shiftId){
@@ -164,9 +164,11 @@ class ShiftFinancialRuntime{
   const rows=(await this.manager.pool.request().input('sale',saleId).input('branch',branchId).query('SELECT shift_id FROM dbo.sales WHERE id=@sale AND store_id=@branch;')).recordset??[];
   if(rows.length!==1)fail('ERECEIPT');const shiftId=rows[0].shift_id?String(rows[0].shift_id).toLowerCase():null,cap=await this.capability(branchId,shiftId),context=await this.contextForTerminal(branchId,cap);if(shiftId)await this.shiftContext(branchId,shiftId,context,cap);
   if(!context)return{repository:this.legacy.receipts,author:null};
-  if(shiftId===null){context.assertCurrent();return{repository:context.receipts,author:null,terminalId:context.scope.terminalId,expectedShiftId:null};}
+  const source=Object.freeze({projectOrigin:context.scope.projectOrigin,branchId:context.scope.branchId,
+   terminalId:context.scope.terminalId,databaseGuid:context.source.identity.databaseGuid});
+  if(shiftId===null){context.assertCurrent();return{repository:context.receipts,author:null,terminalId:context.scope.terminalId,expectedShiftId:null,source,assertCurrent:context.assertCurrent};}
   requestCapture?.assertCurrent();const capture=typeof requestCapture?.financialCapture==='function'?requestCapture.financialCapture('REFUND'):requestCapture??this.authority.captureFinancial('REFUND');
-  const author=await this.authority.prepare(capture);context.assertCurrent();return{repository:context.receipts,author,terminalId:context.scope.terminalId,expectedShiftId:shiftId};
+  const author=await this.authority.prepare(capture);context.assertCurrent();return{repository:context.receipts,author,terminalId:context.scope.terminalId,expectedShiftId:shiftId,source,assertCurrent:context.assertCurrent};
  }
  async runPush(options){const context=await this.contextForTerminal(options.branchId);return(context?.push??this.legacy.push).run(options);}
 }

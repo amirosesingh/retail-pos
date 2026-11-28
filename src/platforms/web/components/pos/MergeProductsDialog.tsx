@@ -41,6 +41,10 @@ export function MergeProductsDialog({
   const [masterId, setMasterId] = useState(products[0]?.id ?? "");
   const [blocks, setBlocks] = useState<MergeBlock[]>([]);
   const [checking, setChecking] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [retry, setRetry] = useState<{ masterId: string; duplicateIds: string[]; masterName: string } | null>(null);
+
+  useEffect(() => { setRetry(null); }, [open, currentStore.id]);
 
   useEffect(() => {
     if (open) setMasterId(products[0]?.id ?? "");
@@ -74,7 +78,7 @@ export function MergeProductsDialog({
   ];
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={next => { if (!saving) onOpenChange(next); }}>
       <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Merge duplicate products</DialogTitle>
@@ -146,23 +150,32 @@ export function MergeProductsDialog({
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button
-            disabled={products.length < 2 || !masterId || checking || blocks.length > 0}
+            disabled={saving || (!retry && (products.length < 2 || !masterId || checking || blocks.length > 0))}
             onClick={async () => {
-              const blocked = await mergeProducts(
-                masterId,
-                losers.map((p) => p.id),
-              );
-              toast.success(`Merged ${losers.length + 1} records into ${master?.name}`);
-              onOpenChange(false);
-              onMerged?.();
-              if (blocked.length) onBlocked?.(blocked);
+              setSaving(true);
+              const attempt = retry ?? { masterId, duplicateIds: losers.map(p => p.id), masterName: master?.name ?? "the selected product" };
+              try {
+                const blocked = await mergeProducts(attempt.masterId, attempt.duplicateIds);
+                const retired = attempt.duplicateIds.length - blocked.length;
+                if (retired > 0) toast.success(`Merged ${retired} duplicate${retired === 1 ? "" : "s"} into ${attempt.masterName}`);
+                else toast.error("No duplicate products could be merged");
+                onOpenChange(false);
+                if (retired > 0) onMerged?.();
+                if (blocked.length) onBlocked?.(blocked);
+              } catch (error) {
+                if (error instanceof Error && "code" in error &&
+                  (/^ESYNC_PRODUCT_MERGE_/.test(String(error.code)) || error.code === "PRODUCT_MERGE_BUSY")) setRetry(attempt);
+                toast.error(error instanceof Error ? error.message : "The merge could not be confirmed.");
+              } finally {
+                setSaving(false);
+              }
             }}
           >
-            Merge products
+            {saving ? "Merging…" : retry ? "Retry merge" : "Merge products"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -43,6 +43,59 @@ describe("native posted financial mutation boundary", () => {
       { kind: "update", table: "bookings", match: { id: "booking" }, values: { paid: 12, status: "collected" } },
     ], identity({ can_process_sale: false, can_collect_booking: true })).enforcePermissions).toBe(true);
   });
+  it("requires a booking collection grant for native booking payment writes", () => {
+    const session = require("../../../electron/admin-session.cjs");
+    const privilege = require("../../../electron/ipc-privilege.cjs");
+    const operations = [
+      { kind: "insert", table: "booking_payments", rows: [{ id: "deposit", booking_id: "booking", amount: 12 }] },
+      { kind: "update", table: "bookings", match: { id: "booking" }, values: { paid: 12 } },
+    ];
+    const payment = { kind: "payment", operations };
+    const mayCommit = (aggregate: unknown) => privilege.allowed("business:commit-aggregate", [aggregate]);
+    try {
+      session.grant("staff", "fixture", { can_process_sale: true, can_manage_bookings: true }, "pos", "branch-a");
+      expect(mayCommit(payment)).toBe(false);
+      expect(() => aggregatePolicy("payment", operations, session.identity())).toThrow("Booking collection permission");
+      expect(() => aggregatePolicy("held_order", operations, session.identity())).toThrow("unrelated booking writes");
+      expect(mayCommit({ kind: "booking", operations })).toBe(false);
+      expect(() => aggregatePolicy("booking", operations, session.identity())).toThrow("Booking collection permission");
+
+      session.grant("supervisor", "fixture", { can_process_sale: true }, "pos", "branch-a");
+      expect(mayCommit({ kind: "general", operations })).toBe(false);
+      expect(privilege.allowed("business:write-batch", ["Fixture", operations])).toBe(false);
+      expect(() => aggregatePolicy("general", operations, session.identity())).toThrow("Booking collection permission");
+
+      const saleTender = { kind: "insert", table: "payment_transactions", rows: [{ id: "tender", sale_id: "sale", amount: 12 }] };
+      expect(mayCommit({ kind: "payment", operations: [saleTender] })).toBe(true);
+      expect(aggregatePolicy("payment", [saleTender], session.identity()).enforcePermissions).toBe(true);
+
+      session.grant("staff", "fixture", {
+        can_process_sale: true, can_collect_booking: true, "page:bookings": false,
+        "page:pos-general-booking": false, "page:pos-racket-service": false,
+      }, "pos", "branch-a");
+      expect(mayCommit(payment)).toBe(false);
+      session.grant("staff", "fixture", { can_collect_booking: true }, "pos", "branch-a");
+      expect(mayCommit(payment)).toBe(true);
+      expect(aggregatePolicy("payment", operations, session.identity()).enforcePermissions).toBe(true);
+    } finally {
+      session.clear();
+    }
+  });
+  it("preserves booking creation with a deposit, final linking and cancellation without a payment relabel", () => {
+    const initialDeposit = [
+      { kind: "upsert", table: "bookings", rows: [{ id: "booking", paid: 12, status: "active" }] },
+      { kind: "upsert", table: "booking_payments", rows: [{ id: "deposit", booking_id: "booking", amount: 12 }] },
+    ];
+    expect(aggregatePolicy("booking", initialDeposit, identity({ can_create_booking: true })).enforcePermissions).toBe(true);
+    const link = [{ ...initialDeposit[0], rows: [{ ...initialDeposit[0].rows[0],
+      status: "collected", sale_receipt_no: "BOOKING-RECEIPT" }] }, initialDeposit[1]];
+    expect(aggregatePolicy("booking", link, identity({ can_manage_bookings: true })).enforcePermissions).toBe(true);
+    const cancel = [
+      { kind: "insert", table: "booking_payments", rows: [{ id: "refund", booking_id: "booking", kind: "refund", amount: -12 }] },
+      { kind: "update", table: "bookings", match: { id: "booking" }, values: { paid: 0, status: "cancelled" } },
+    ];
+    expect(aggregatePolicy("booking", cancel, identity({ can_cancel_booking: true, can_process_refund: true })).enforcePermissions).toBe(true);
+  });
   it.each([false, true])("checks the persisted replacement before an exchange link (valid=%s)", async valid => {
     let writes = 0;
     class Request {

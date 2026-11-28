@@ -21,7 +21,7 @@ const openShiftLabel = `${openedAt}OPEN · ${shiftId.slice(0, 8)}`;
 type Element = { type: string | ((props: Record<string, unknown>) => Element); props: Record<string, unknown> };
 type Owner = { index: number; effects: number; slots: unknown[]; deps: Array<unknown[] | undefined>; cleanups: Array<unknown> };
 
-function fixture() {
+function fixture({ initialState }: { initialState?: Promise<object> } = {}) {
   const handlers = new Map(), terminal = { tokenId: "00000000-0000-4000-8000-000000000003", deviceType: "pc", deviceUse: "operations", locationId: branch, deviceBindingProof: "a".repeat(64) };
   const manager = { pool: {}, get tradingReady() { throw Error("Sign-in must not require trading readiness"); } };
   const ipc = { handle: (name: string, handler: unknown) => handlers.set(name, handler) }; install(ipc);
@@ -30,7 +30,7 @@ function fixture() {
   const epoch = main.slice(main.indexOf("function captureSessionAdoption()"), main.indexOf("\nfunction enrollCurrentShiftAuthor"));
   const account = { id: author, username: "fixture.admin", role: "admin", store_id: branch, permissions: {} };
   const fetch = vi.fn(async () => Response.json({ ok: true, cashier: account, sessionToken: "synthetic-session" }));
-  new Function("ipcMain", "guard", "adminSession", "databaseManager", "terminalStore", "cloudCredentials", "authorizationServerUrl", "localBranchId", "fetch", "syncCloud", "enrollCurrentShiftAuthor", "rememberVerifiedBranch", `let sessionAdoptionRevision=0;${epoch}${auth}`)(
+  new Function("ipcMain", "guard", "adminSession", "databaseManager", "terminalStore", "cloudCredentials", "authorizationServerUrl", "localBranchId", "fetch", "syncCloud", "enrollCurrentShiftAuthor", "rememberVerifiedBranch", `let sessionAdoptionRevision=0,offlineStaffLoginWitness=null;${epoch}${auth}`)(
     ipc, guard, session, manager, { read: () => terminal }, { read: () => ({ url: "https://fixture.supabase.co" }) }, () => "https://fixture.invalid", () => branch, fetch, { setAuthorizationProof() {} }, () => {}, () => {});
   const sender = {}, frame = {}, event = { sender, senderFrame: frame };
   const list = vi.fn(async (): Promise<Record<string, unknown>> => ({ available: true, items: [] }));
@@ -55,11 +55,14 @@ function fixture() {
   const authState = () => { const person = session.identity(); return { ready: true, user: person ? { staffId: person.authorId } : null, isAdmin: person?.source === "pos" && person?.level === "admin", authUserId: person?.authorId, logout: async () => session.clear() }; };
   const navigate = vi.fn(({ to }: { to: string }) => { pathname = to; });
   const databaseListeners = new Set<(value: object) => void>();
-  let sqlConnected = true;
+  const activityListeners = new Set<(value: object | null) => void>();
+  const syncListeners = new Set<(value: { paused: boolean }) => void>();
+  let sqlConnected = true, paused = false;
   const databaseService = new DatabaseService({ secureConfig: { enabled: () => true, profile: () => ({ database: "owned-startup-fixture" }) },
-    manager: { isConnected: () => sqlConnected }, publish: (value: object) => { for (const listener of databaseListeners) listener(value); } });
+    manager: { isConnected: () => sqlConnected }, publish: (value: object) => { for (const listener of databaseListeners) listener(value); },
+    startupPaused: () => paused, publishStartupActivity: (value: object | null) => { for (const listener of activityListeners) listener(value); } });
   databaseService.validated = true;
-  databaseService.transition("enabled_bootstrapping", { code: "ELOCAL_PENDING_UNVERIFIED", error: "Retained shifts need review" });
+  databaseService.transition("enabled_bootstrapping", { code: "ELOCAL_PENDING_UNVERIFIED", table: "shifts", error: "Retained shifts need review" });
   const modules: Record<string, unknown> = {
     react, "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "fragment" },
     "@tanstack/react-router": { useLocation: ({ select }: { select: (value: { pathname: string }) => unknown }) => select({ pathname }), useNavigate: () => navigate, createFileRoute: () => (options: object) => options },
@@ -80,7 +83,8 @@ function fixture() {
   };
   const retryStartup = vi.fn(async () => databaseService.snapshot());
   const legacyRecovery = Object.fromEntries(Object.entries(CHANNELS).map(([name, channel]) => [name, (value: unknown) => handlers.get(channel)(event, value)]));
-  const load = (path: string) => { const compiled = ts.transpileModule(readFileSync(path, "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, module = { exports: {} }; runInNewContext(compiled, { module, exports: module.exports, require: (name: string) => { if (!(name in modules)) throw Error("Unexpected UI dependency " + name); return modules[name]; }, crypto: globalThis.crypto, navigator: { onLine: true }, window: { sqlAdmin: { adminStatus: async () => session.status() }, sessionStorage: { getItem: () => null, removeItem() {} }, pos: { database: { getState: async () => databaseService.snapshot(), retryStartup, subscribe: (listener: (value: object) => void) => { databaseListeners.add(listener); return () => databaseListeners.delete(listener); } }, sync: { legacyRecovery } }, addEventListener() {}, removeEventListener() {} } }); return module.exports as Record<string, (props: Record<string, unknown>) => Element>; };
+  const load = (path: string) => { const compiled = ts.transpileModule(readFileSync(path, "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, module = { exports: {} }; runInNewContext(compiled, { module, exports: module.exports, require: (name: string) => { if (!(name in modules)) throw Error("Unexpected UI dependency " + name); return modules[name]; }, crypto: globalThis.crypto, navigator: { onLine: true }, window: { sqlAdmin: { adminStatus: async () => session.status() }, sessionStorage: { getItem: () => null, removeItem() {} }, pos: { database: { getState: async () => initialState ?? databaseService.snapshot(), retryStartup, subscribe: (listener: (value: object) => void) => { databaseListeners.add(listener); return () => databaseListeners.delete(listener); }, onStartupActivity: (listener: (value: object | null) => void) => { activityListeners.add(listener); return () => activityListeners.delete(listener); } }, sync: { legacyRecovery, subscribe: (listener: (value: { paused: boolean }) => void) => { syncListeners.add(listener); return () => syncListeners.delete(listener); } } }, addEventListener() {}, removeEventListener() {} } }); return module.exports as Record<string, (props: Record<string, unknown>) => Element>; };
+  modules["@/lib/desktop-startup-progress"] = load("src/lib/desktop-startup-progress.ts");
   modules["@/lib/desktop-storage-route"] = load("src/lib/desktop-storage-route.ts");
   modules["./LegacyShiftRecoveryReview"] = load("src/platforms/windows/components/LegacyShiftRecoveryReview.tsx");
   modules["./HeldBillRecoveryReview"] = load("src/platforms/windows/components/HeldBillRecoveryReview.tsx");
@@ -98,10 +102,12 @@ function fixture() {
   };
   const render = async () => { let result = ""; for (let attempt = 0; attempt < 5; attempt++) { buttons.clear(); result = renderNode(jsx(Boot, { children: jsx(Route.component, {}) })); for (const effect of effects.splice(0)) effect(); await Promise.resolve(); await Promise.resolve(); } return result; };
   return { render, navigate, retry: () => buttons.get("Retry local database")!(), retryStartup, snapshot: () => databaseService.snapshot(),
-    click: (label: string) => buttons.get(label)!(), list, preview, approve, acceptCloud,
-    database: (value: { validated?: boolean; connected?: boolean; state?: string; detail?: object }) => {
+    click: (label: string) => buttons.get(label)!(), canClick: (label: string) => buttons.has(label), list, preview, approve, acceptCloud,
+    beginActivity: () => databaseService.beginStartupActivity(),
+    database: (value: { validated?: boolean; connected?: boolean; state?: string; detail?: object; paused?: boolean }) => {
       if (value.validated !== undefined) databaseService.validated = value.validated;
       if (value.connected !== undefined) sqlConnected = value.connected;
+      if (value.paused !== undefined) { paused = value.paused; for (const listener of syncListeners) listener({ paused }); }
       databaseService.transition(value.state ?? databaseService.state, value.detail ?? databaseService.detail);
     },
     route: (value: string) => { pathname = value; }, login: () => handlers.get("auth:cashier-login")(event, { username: "fixture.admin", pin: "0000" }),
@@ -110,6 +116,70 @@ function fixture() {
 afterEach(() => { session.clear(); session.clearRecovery(); });
 
 describe("held startup review with actual native POS identity admission", () => {
+  it.each([
+    { code: "ERECONCILE", table: "sale_items" },
+    { code: "ERECONCILE", table: "shifts" },
+    { code: "ELOCAL_PENDING_UNVERIFIED", table: "products" },
+    { code: "ELOCAL_PENDING_UNVERIFIED", table: "change_history" },
+    { code: "ELOCAL_PENDING_UNVERIFIED" },
+    { code: "ELOCAL_PENDING_UNVERIFIED", table: "https://private.invalid?token=PRIVATE" },
+    { code: "EREQUEST", table: "shifts" },
+  ])("keeps a generic/non-shift failure visible without presenting financial review: %j", async detail => {
+    const f = fixture(); f.database({ detail: { ...detail, error: "Original verification failure" } });
+    await f.login(); const html = await f.render();
+    expect(html).toContain("Original verification failure"); expect(html).toContain("Local store data needs verification");
+    expect(html).not.toContain("Review saved shifts"); expect(html).not.toContain("Review saved closings");
+    expect(html).not.toContain("ordinary-pos-login"); expect(f.navigate).not.toHaveBeenCalled();
+    expect(f.list).not.toHaveBeenCalled(); expect(f.preview).not.toHaveBeenCalled(); expect(f.canClick("Retry local database")).toBe(true);
+  });
+  it.each([
+    { code: "ELOCAL_CT_PENDING", table: "shift_cash_counts" },
+    { code: "ESYNC_APPLY_CONFLICT", table: "shift_reconciliations" },
+  ])("preserves review for a native shift-specific hold: %j", async detail => {
+    const f = fixture(); f.database({ detail: { ...detail, error: "Retained shift facts need review" } });
+    await f.login(); const html = await f.render();
+    expect(html).toContain("Saved local work needs review"); expect(html).toContain("Review saved closings");
+    expect(f.navigate).not.toHaveBeenCalled();
+  });
+  it("presents normal bootstrap as progress and cancels stale financial verification while a retry runs", async () => {
+    const f = fixture(); await f.login(); let resolve!: (value: { ok: boolean }) => void;
+    f.deferVerification(new Promise(accept => { resolve = accept; })); await f.render();
+    const activity = f.beginActivity(); activity.report({ phase: "downloading", table: "products" });
+    let html = await f.render();
+    expect(html).toContain("Preparing local database"); expect(html).not.toContain("Review saved shifts");
+    expect(html).not.toContain("Local database is unavailable"); expect(f.canClick("Retry local database")).toBe(false);
+    resolve({ ok: true }); html = await f.render(); expect(html).not.toContain("Review saved closings");
+    activity.finish(Object.assign(new Error("Retained shifts need review"), { code: "ELOCAL_CT_PENDING" }));
+    html = await f.render(); expect(html).toContain("Review saved closings");
+    expect(f.list).not.toHaveBeenCalled(); expect(f.preview).not.toHaveBeenCalled();
+  });
+  it("keeps a plain bootstrap and an operator pause distinct from a failed connection", async () => {
+    const f = fixture(); f.database({ detail: { phase: "resume" } });
+    let html = await f.render(); expect(html).toContain("Preparing local database");
+    expect(html).not.toContain("Local database is unavailable"); expect(html).not.toContain("Review saved shifts");
+    f.database({ paused: true }); html = await f.render();
+    expect(html).toContain("Local data preparation is paused"); expect(html).not.toContain("Local database is unavailable");
+    expect(f.canClick("Retry local database")).toBe(true); expect(f.list).not.toHaveBeenCalled();
+  });
+  it("ignores a late initial snapshot after a newer native ready event", async () => {
+    let resolve!: (value: object) => void; const f = fixture({ initialState: new Promise(accept => { resolve = accept; }) });
+    const stale = f.snapshot(); const initial = await f.render();
+    expect(initial).toContain("Preparing local database"); expect(initial).not.toContain("Review saved shifts");
+    f.database({ state: "enabled_ready", detail: {} }); resolve(stale); f.route("/database-startup");
+    const html = await f.render(); expect(html).toContain("Local database is ready");
+    expect(html).not.toContain("Review saved shifts"); expect(html).not.toContain("Local database is unavailable");
+    expect(f.navigate).toHaveBeenCalledWith({ to: "/" });
+  });
+  it("does not overlap manual retries or apply their stale failure over a newer ready event", async () => {
+    const f = fixture(); await f.login(); await f.render(); const stale = f.snapshot();
+    let resolve!: (value: object) => void; f.retryStartup.mockImplementation(() => new Promise(accept => { resolve = accept; }));
+    const retry = f.retry; retry(); retry();
+    let html = await f.render(); expect(f.retryStartup).toHaveBeenCalledTimes(1);
+    expect(html).not.toContain("Review saved closings"); expect(f.canClick("Retry local database")).toBe(false);
+    f.database({ state: "enabled_ready", detail: {} }); resolve(stale); f.route("/database-startup");
+    html = await f.render(); expect(html).toContain("Local database is ready"); expect(html).not.toContain("Review saved shifts");
+    expect(f.list).not.toHaveBeenCalled(); expect(f.preview).not.toHaveBeenCalled();
+  });
   it("offers ordinary sign-in on the existing startup route while normal trading remains gated", async () => {
     const f = fixture(); expect(f.snapshot()).toMatchObject({ state: "enabled_bootstrapping", connected: true, tradingReady: true });
     expect(await f.render()).toContain("ordinary-pos-login"); expect(f.navigate).not.toHaveBeenCalled();

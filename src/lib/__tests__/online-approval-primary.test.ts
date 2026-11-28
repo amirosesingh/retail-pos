@@ -47,7 +47,8 @@ describe("online approval primary database", () => {
     const held = source("src/lib/register/use-held-orders.ts");
 
     expect(fn).toContain('rule.mode !== "pin" && rule.mode !== "either"');
-    expect(fn).toContain("canBypassAuthorization(");
+    expect(fn).toContain("checkBusinessAuthorization(who, { ...data, storeId })");
+    expect(source("src/lib/business-authorization.server.ts")).toContain("canBypassAuthorization(");
     expect(gate).toContain("canBypassAuthorization(");
     expect(dialog).toContain('activeMode === "request"');
     expect(fn).toContain("rule.approvalTimeoutMinutes / 60");
@@ -66,7 +67,7 @@ describe("online approval primary database", () => {
     const engine = source("src/lib/sync-engine.ts");
     const centre = source("src/lib/approval-centre.ts");
 
-    expect(route).toContain("subscribeApprovals(load, { allBranches, branchId: me?.branchId || storeId })");
+    expect(route).toContain("subscribeApprovals(load, { allBranches, branchId: me?.branchId || storeId, namedWakeProject })");
     expect(route).toContain("void syncNow(`approval-decision:");
     expect(engine).toMatch(/LIVE_TABLES[\s\S]*"authorization_requests"/);
     expect(centre).toContain("subscribeOwnedPostgresChanges(");

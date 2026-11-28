@@ -8,10 +8,23 @@ const {exactGraph,exactRows,projection,parseExactJson,isExactNumber}=require("./
 const {createHash}=require("node:crypto");
 const {stableUuid}=require("../db/repositories/aggregates.cjs");
 const {prepareFinancialOpening,prepareFinancialHistory,assertFinancialHistoryAcknowledgement}=require("./financial-history-ack.cjs");
+const { cashCheckoutForContext } = require("./cash-checkout-route.cjs");
+const refundRoute = require("./grouped-refund-native.cjs");
+const financialRefund = require("./financial-refund-approval.cjs");
+const { readCashRoute, cashTrackingCoverage, assertLegacyCashWrites } = require("../db/sale-event-outbox.cjs");
+const bookingUpload = require("../db/booking-upload.cjs");
 const SHIFT_GRAPH_TABLES = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
   "shift_notifications", "shift_variance_alerts"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ctVersion = value => { const text=typeof value==='number'&&Number.isSafeInteger(value)?String(value):value;return typeof text === "string" && /^(0|[1-9]\d*)$/.test(text) && BigInt(text) <= 9223372036854775807n ? text : null; };
+const financialPrimary = table => {
+  const primary=table.columns.filter(column=>column.primaryKey);
+  return primary.length===1 && ['id','movement_id'].includes(primary[0].sqlServerColumn) ? primary[0] : null;
+};
+const financialBusinessPendingError = table => Object.assign(
+  new Error("The complete financial transaction is still awaiting acceptance. Saved changes remain pending."),
+  { code: "EFINANCIAL_BUSINESS_PENDING", table },
+);
 
 class ChangeReader {
   constructor(connectionManager, registry = null, {financialBases=null,financialOperations=null,financialCoverageSource=null,reviewedShiftRecovery=null}={}) {
@@ -41,41 +54,112 @@ class ChangeReader {
   async changedIds(value, sinceVersion, limit = 500) {
     const { table, primary } = this.table(value);
     const name = table.sqlServerTable;
-    const request = this.connectionManager.pool.request().input("since", Number(sinceVersion) || 0).input("limit", Math.max(100, Math.min(2000, limit)));
-    const bounds = await this.connectionManager.pool.request().input("object", `dbo.${name}`).query("SELECT CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(@object)) AS min_version, CHANGE_TRACKING_CURRENT_VERSION() AS current_version;");
-    const min = Number(bounds.recordset?.[0]?.min_version ?? 0);
-    if (sinceVersion > 0 && min > Number(sinceVersion)) throw Object.assign(new Error(`Change Tracking history for ${name} has expired; a scoped bootstrap is required.`), { code: "ECHANGEGAP", table: name, minimumVersion: min });
+    const since = ctVersion(sinceVersion ?? 0);
+    if (since === null) throw Object.assign(new Error(`The Change Tracking position for ${name} is invalid.`), {
+      code: "ESYNC_CT_POSITION_INVALID", table: name,
+    });
     const keyColumns = primary.map((column) => `CT.[${column}]`).join(",");
-    const order = primary.map((column) => `CT.[${column}]`).join(",");
-    let result = await request.query(`SELECT TOP (@limit) CT.SYS_CHANGE_VERSION AS version, CT.SYS_CHANGE_OPERATION AS operation, CT.SYS_CHANGE_CONTEXT AS change_context, ${keyColumns}
-      FROM CHANGETABLE(CHANGES dbo.[${name}], @since) CT
-      ORDER BY CT.SYS_CHANGE_VERSION, ${order};`);
-    if ((result.recordset?.length ?? 0) === Math.max(100, Math.min(2000, limit))) {
-      const boundary = Number(result.recordset.at(-1).version);
-      result = await this.connectionManager.pool.request().input("since", Number(sinceVersion) || 0).input("boundary", boundary).query(`SELECT CT.SYS_CHANGE_VERSION AS version, CT.SYS_CHANGE_OPERATION AS operation, CT.SYS_CHANGE_CONTEXT AS change_context, ${keyColumns}
-        FROM CHANGETABLE(CHANGES dbo.[${name}], @since) CT WHERE CT.SYS_CHANGE_VERSION<=@boundary
-        ORDER BY CT.SYS_CHANGE_VERSION, ${order};`);
-    }
-    return (result.recordset ?? []).map((row) => ({ ...row, remote: Boolean(row.change_context), key: Object.fromEntries(primary.map((column) => [column, row[column]])), entityId: this.entityId(primary, row) }));
+    const keyOrder = primary.map((column) => `bounded.[${column}]`).join(",");
+    // Ties are on the commit version alone, so a full page keeps the entire
+    // boundary group without a second scan. Sort its keys outside the limit.
+    const result = await this.connectionManager.pool.request()
+      .input("since", since).input("limit", Math.max(100, Math.min(2000, limit)))
+      .input("object", `dbo.${name}`).query(`
+        DECLARE @from_version bigint=CONVERT(bigint,@since), @table_id int=OBJECT_ID(@object);
+        DECLARE @minimum bigint=CHANGE_TRACKING_MIN_VALID_VERSION(@table_id),
+          @upper bigint=CHANGE_TRACKING_CURRENT_VERSION();
+        IF @minimum IS NOT NULL AND @upper IS NOT NULL AND (@from_version=0 OR @from_version>=@minimum)
+        BEGIN
+          SELECT bounded.* FROM (
+            SELECT TOP (@limit) WITH TIES CT.SYS_CHANGE_VERSION AS version,
+              CT.SYS_CHANGE_OPERATION AS operation, CT.SYS_CHANGE_CONTEXT AS change_context, ${keyColumns}
+            FROM CHANGETABLE(CHANGES dbo.[${name}], @from_version) CT
+            WHERE CT.SYS_CHANGE_VERSION<=@upper
+            ORDER BY CT.SYS_CHANGE_VERSION
+          ) bounded ORDER BY bounded.version, ${keyOrder};
+        END;
+        SELECT CONVERT(varchar(20),@minimum) AS minimum_version,
+          CONVERT(varchar(20),CHANGE_TRACKING_MIN_VALID_VERSION(@table_id)) AS final_minimum_version;`);
+    const sets = result.recordsets ?? [];
+    const bounds = sets.at(-1)?.[0];
+    const minimum = ctVersion(bounds?.minimum_version);
+    const finalMinimum = ctVersion(bounds?.final_minimum_version);
+    // For the initial zero scan, the first observed floor defines the retained
+    // window. For a saved cursor, cleanup is safe only up to that cursor.
+    if (minimum !== null && finalMinimum !== null && (
+      (since !== "0" && BigInt(minimum) > BigInt(since)) ||
+      BigInt(finalMinimum) > BigInt(since === "0" ? minimum : since)
+    )) throw Object.assign(new Error(`Change Tracking history for ${name} has expired; a scoped bootstrap is required.`), {
+      code: "ECHANGEGAP", table: name, minimumVersion: Number(finalMinimum),
+    });
+    if (minimum === null || finalMinimum === null || sets.length !== 2)
+      throw Object.assign(new Error(`Change Tracking is unavailable for ${name}.`), {
+        code: "ESYNC_CT_UNAVAILABLE", table: name,
+      });
+    return sets[0].map((row) => {
+      const cashCheckoutId = cashCheckoutForContext(row.change_context);
+      const refundId = refundRoute.refundContextOperation(row.change_context);
+      return { ...row, remote: Boolean(row.change_context) && !cashCheckoutId && !refundId,
+        ...(cashCheckoutId ? { cashCheckoutId } : {}),
+        ...(refundId ? { refundId } : {}),
+        key: Object.fromEntries(primary.map((column) => [column, row[column]])), entityId: this.entityId(primary, row) };
+    });
+  }
+  readCashRoute(branchId, operationId) { return readCashRoute(this.connectionManager, branchId, operationId); }
+  cashTrackingCoverage(branchId, table, changes) {
+    return cashTrackingCoverage(this.connectionManager, branchId, table, changes);
+  }
+  assertLegacyCashWrites(branchId, keys) { return assertLegacyCashWrites(this.connectionManager, branchId, keys); }
+  readRefundRoute(branchId, operationId) { return refundRoute.readRefundRoute(this.connectionManager, branchId, operationId); }
+  refundTrackingCoverage(branchId, table, changes) { return refundRoute.refundTrackingCoverage(this.connectionManager, branchId, table, changes); }
+  assertLegacyRefundWrites(branchId, keys) { return refundRoute.assertLegacyRefundWrites(this.connectionManager, branchId, keys); }
+  async bookingHandoverTracking(branchId, table, changes) {
+    const covered = new Set();
+    if (!bookingUpload.BOOKING_TABLES.has(table) || !changes.length) return { pending: false, covered };
+    const key = table === "stock_delta_applied" ? "movement_id" : "id";
+    const ids = [...new Set(changes.map(change => recordId(change.key?.[key])).filter(id => UUID.test(id)))];
+    if (!ids.length) return { pending: false, covered };
+    const exactVersion = bookingUpload.COVERED_VERSIONS.has(table);
+    const result = await this.connectionManager.pool.request().input("branch", branchId).input("table", table)
+      .input("ids", JSON.stringify(ids)).query(`
+        SELECT wanted.[value] AS id, j.acknowledged_at, j.operation, j.entity_version, r.operation_type,
+          ${exactVersion ? "live.row_version" : "NULL"} AS current_version
+        FROM dbo.sync_change_journal j
+        INNER JOIN dbo.local_operation_receipts r ON r.operation_id=j.aggregate_id
+          AND r.operation_type IN(N'booking_handover',N'booking_frozen',N'booking_handover_frozen')
+        INNER JOIN OPENJSON(@ids) wanted ON TRY_CONVERT(uniqueidentifier,wanted.[value])=
+          TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id END,'$.${key}'))
+        ${exactVersion ? `LEFT JOIN dbo.[${table}] live ON live.id=TRY_CONVERT(uniqueidentifier,wanted.[value])` : ""}
+        WHERE j.branch_id=@branch AND j.entity_type=@table;`);
+    const rows = result.recordset ?? [];
+    if (rows.some(row => row.acknowledged_at == null)) return { pending: true, covered };
+    const exact = new Set(rows.filter(row => (bookingUpload.TYPES.includes(row.operation_type) ||
+      (table === "booking_payments" && row.operation === "insert")) &&
+      row.current_version != null && Number(row.current_version) === Number(row.entity_version)).map(row => recordId(row.id)));
+    for (const change of changes)
+      if (change.operation !== "D" && exact.has(recordId(change.key?.[key]))) covered.add(change);
+    return { pending: false, covered };
   }
   async rows(value, changes, { branchId = "", exactFinancial = false } = {}) {
     const { table, primary } = this.table(value);
     if (!changes.length) return [];
-    const coverage=this.financialCoverageSource&&this.financialOperations?.enabled===true&&!SHIFT_GRAPH_TABLES.includes(table.cloudTable)&&primary.length===1&&primary[0]==='id';
+    const financialKey=financialPrimary(table);
+    const coverage=this.financialCoverageSource&&this.financialOperations?.enabled===true&&!SHIFT_GRAPH_TABLES.includes(table.cloudTable)&&financialKey;
     if(coverage)return this.financialTransaction(async tx=>{
       const source=this.financialCoverageBinding(branchId,this.financialCoverageSource.identity.terminalId),request=new(this.connectionManager.sql().Request)(tx);
-      const clauses=changes.map((change,index)=>{request.input('coverage'+index,(change.key??change).id);return '@coverage'+index;});
+      const clauses=changes.map((change,index)=>{request.input('coverage'+index,(change.key??change)[financialKey.sqlServerColumn]);return '@coverage'+index;});
       const scope=branchId&&table.scope==='branch'?(table.cloudTable==='products'?branchPredicate(this.registry,table,'source'):rendererReadBranchPredicate(this.registry,table,'source')):null;
       if(scope)request.input('branch',branchId);
-      const result=await request.query(`SELECT source.*,(SELECT ${projection(table)} FOR JSON PATH,INCLUDE_NULL_VALUES,WITHOUT_ARRAY_WRAPPER) __financial_row_json FROM dbo.[${table.sqlServerTable}] source WITH(HOLDLOCK) WHERE source.id IN(${clauses.join(',')})${scope?' AND ('+scope+')':''};`);
-      const rows=(result.recordset??[]).map(value=>{const{__financial_row_json,...physical}=value,exact=JSON.parse(__financial_row_json),wire=this.financialBusinessWire(table,toCloudRow(table,physical),exact,exactFinancial),key=this.financialCoverageKey(table,exact,source);
-        // PushWorker canonicalizes SQL-equivalent branch labels at upload.
-        const branchColumn=table.scope==='branch'&&table.direction!=='pull'?(table.columns.some(c=>c.cloudColumn==='store_id')?'store_id':table.columns.some(c=>c.cloudColumn==='branch_id')?'branch_id':null):null;
-        const sent=branchColumn&&(!String(wire[branchColumn]??'').trim()||recordId(String(wire[branchColumn]).trim())===recordId(branchId))?{...wire,[branchColumn]:recordId(branchId)}:wire;
-        const captureId=table.cloudTable+':'+recordId(wire.id)+':'+createHash('sha256').update(JSON.stringify(sent)).digest('hex'),prior=this.financialCoverageCaptures.get(captureId);
-        this.financialCoverageCaptures.set(captureId,prior&&prior.key.rowHash!==key.rowHash?{ambiguous:true,key}:prior?.ambiguous?prior:{key,ambiguous:false});
+      const result=await request.query(`SELECT source.*,(SELECT ${projection(table)} FOR JSON PATH,INCLUDE_NULL_VALUES,WITHOUT_ARRAY_WRAPPER) __financial_row_json FROM dbo.[${table.sqlServerTable}] source WITH(HOLDLOCK) WHERE source.[${financialKey.sqlServerColumn}] IN(${clauses.join(',')})${scope?' AND ('+scope+')':''};`);
+      // Keep this check in the same serializable capture as the row read. A
+      // refund committed after CT was sampled must not replace an ordinary
+      // row snapshot with its still-unaccepted financial side effects.
+      if(!exactFinancial && await this.financialBusinessPending(table,changes,branchId,source.identity.terminalId,tx))
+        throw financialBusinessPendingError(table.sqlServerTable);
+      const rows=(result.recordset??[]).map(value=>{const{__financial_row_json,...physical}=value,exact=JSON.parse(__financial_row_json),wire=this.financialBusinessWire(table,toCloudRow(table,physical),exact,exactFinancial);
+        this.captureFinancialBusinessRow(table, wire, exact, source, branchId);
         return wire;});
-      if(this.financialCoverageCaptures.size>10000)this.financialCoverageCaptures.clear();source.assertSource();return rows;
+      source.assertSource();return rows;
     });
     const request = this.connectionManager.pool.request();
     const clauses = changes.map((change, index) => {
@@ -132,7 +216,7 @@ class ChangeReader {
       throw error;
     }
   }
-  async ticketCompletionParents(tickets, branchId) {
+  async ticketCompletionParents(tickets, branchId, terminalId = "") {
     const results = [];
     for (const ticket of tickets.filter(row => row.status === "completed")) {
       if (ticket.store_id !== branchId) throw new Error("Draft completion belongs to another branch.");
@@ -140,12 +224,37 @@ class ChangeReader {
       const name = bookingId ? "bookings" : "sales";
       const table = this.tables.get(name);
       if (!table) throw new Error("Draft completion parent is not registered.");
-      const request = this.connectionManager.pool.request().input("branch", branchId).input("reference", bookingId || ticket.bill_no);
-      const result = await request.query(bookingId
-        ? "SELECT * FROM dbo.bookings WHERE store_id=@branch AND CONVERT(nvarchar(36),id)=@reference;"
-        : "SELECT * FROM dbo.sales WHERE store_id=@branch AND bill_number=@reference;");
+      let result, provedPresent = false;
+      if (!bookingId && this.financialOperations?.enabled === true) {
+        // A completed draft can be uploaded independently of its sale. Read
+        // the sale and check its journal ownership in one serializable capture.
+        result = await this.financialTransaction(async tx => {
+          const snapshot = await this.financialQuery(tx,
+            "SELECT * FROM dbo.sales WITH(HOLDLOCK) WHERE store_id=@branch AND bill_number=@reference;",
+            { branch: branchId, reference: ticket.bill_no });
+          const sales = snapshot.recordset ?? [];
+          if (sales.some(row => recordId(row.store_id) !== recordId(branchId)))
+            throw new Error("Draft completion belongs to another branch.");
+          const keys = sales.map(row => ({ key: { id: recordId(row.id) } }));
+          if (keys.length && (!terminalId || await this.financialBusinessPending(table, keys, branchId, terminalId, tx)))
+            throw financialBusinessPendingError(name);
+          if (await this.financialBusinessOwnership(table, keys, branchId, terminalId, tx, false)) {
+            const covered = await this.acceptedFinancialBusinessChanges(table, keys, branchId, terminalId, tx);
+            if (!keys.every(({ key }) => covered.has(key.id))) throw financialBusinessPendingError(name);
+            // The canonical financial lane already published the exact sale.
+            // The ordinary held-ticket lane can use that parent in place.
+            provedPresent = true;
+          }
+          return snapshot;
+        });
+      } else {
+        const request = this.connectionManager.pool.request().input("branch", branchId).input("reference", bookingId || ticket.bill_no);
+        result = await request.query(bookingId
+          ? "SELECT * FROM dbo.bookings WHERE store_id=@branch AND CONVERT(nvarchar(36),id)=@reference;"
+          : "SELECT * FROM dbo.sales WHERE store_id=@branch AND bill_number=@reference;");
+      }
       if (!result.recordset?.length) throw new Error("The completed draft has no saved sale or booking.");
-      results.push({ table: name, rows: result.recordset.map(row => toCloudRow(table, row)) });
+      if (!provedPresent) results.push({ table: name, rows: result.recordset.map(row => toCloudRow(table, row)) });
     }
     return results;
   }
@@ -168,17 +277,66 @@ class ChangeReader {
         ${excluded.length ? `AND aggregate_id NOT IN (${excluded.join(",")})` : ""}
       GROUP BY aggregate_id ORDER BY MIN(change_id)
     )
-    SELECT journal.change_id,journal.entity_type,journal.entity_id,journal.operation,journal.entity_version,journal.aggregate_id
+    SELECT journal.change_id,journal.entity_type,journal.entity_id,journal.operation,journal.entity_version,journal.aggregate_id,receipt.operation_type
       FROM dbo.sync_change_journal journal JOIN selected ON selected.aggregate_id=journal.aggregate_id
+      LEFT JOIN dbo.local_operation_receipts receipt ON receipt.operation_id=journal.aggregate_id
       WHERE journal.acknowledged_at IS NULL ORDER BY selected.first_change,journal.change_id;`);
     const byAggregate = new Map();
     for (const row of result.recordset ?? []) {
       const id = String(row.aggregate_id);
-      if (!byAggregate.has(id)) byAggregate.set(id, []);
+      if (!byAggregate.has(id)) byAggregate.set(id, { aggregateId: id, changes: [], operationType: row.operation_type });
       let key; try { key = JSON.parse(row.entity_id); } catch { key = { id: row.entity_id }; }
-      byAggregate.get(id).push({ ...row, key });
+      const { operation_type, ...change } = row;
+      byAggregate.get(id).changes.push({ ...change, key });
     }
-    return [...byAggregate.entries()].map(([aggregateId, changes]) => ({ aggregateId, changes }));
+    return [...byAggregate.values()];
+  }
+  async bookingUpload(aggregate, branchId, terminalId, financialRequired) {
+    const pool = this.connectionManager.pool;
+    const result = await pool.request().input("operation", aggregate.aggregateId).query(`
+      SELECT payload.payload_json,payload.payload_sha256,LOWER(CONVERT(varchar(36),db.family_guid)) AS family_guid
+      FROM ${bookingUpload.TABLE} AS payload CROSS JOIN sys.database_recovery_status AS db
+      WHERE payload.operation_id=@operation AND db.database_id=DB_ID();`);
+    if (result.recordset?.length !== 1) throw bookingUpload.fail();
+    const snapshot = { ...bookingUpload.readBookingPayload(result.recordset[0], { ...aggregate, branchId, terminalId }), pool };
+    if (!financialRequired) return snapshot;
+    const source = this.financialCoverageBinding(branchId, terminalId);
+    for (const [tableName, rows] of snapshot.rows) {
+      const { table } = this.table(tableName);
+      snapshot.rows.set(tableName, rows.map(({ row, exact }) => {
+        if (typeof exact !== "string") throw bookingUpload.fail();
+        const physical = JSON.parse(exact);
+        const wire = this.financialBusinessWire(table, row, physical, true);
+        if (source && financialPrimary(table)) this.captureFinancialBusinessRow(table, wire, physical, source, branchId);
+        return { row: wire };
+      }));
+    }
+    return snapshot;
+  }
+  async acknowledgeBookingUpload(aggregate, snapshot, branchId) {
+    if (this.connectionManager.pool !== snapshot.pool) throw bookingUpload.fail();
+    const sql = this.connectionManager.sql();
+    const transaction = new sql.Transaction(snapshot.pool);
+    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+    try {
+      const result = await transaction.request().input("operation", aggregate.aggregateId).input("branch", branchId)
+        .input("checksum", snapshot.checksum).input("family", snapshot.family).input("expected", aggregate.changes.length)
+        .query(`
+          SET NOCOUNT ON;
+          IF NOT EXISTS(SELECT 1 FROM sys.database_recovery_status WHERE database_id=DB_ID() AND family_guid=@family)
+            THROW 51041, 'The original booking database changed.', 1;
+          DELETE ${bookingUpload.TABLE} WHERE operation_id=@operation AND payload_sha256=@checksum;
+          IF @@ROWCOUNT<>1 THROW 51041, 'The original booking payload changed.', 1;
+          UPDATE dbo.sync_change_journal SET acknowledged_at=SYSDATETIMEOFFSET(),last_error=NULL
+            WHERE aggregate_id=@operation AND branch_id=@branch AND acknowledged_at IS NULL;
+          IF @@ROWCOUNT<>@expected THROW 51041, 'The original booking journal changed.', 1;
+          SELECT 1 AS acknowledged;`);
+      if (result.recordset?.[0]?.acknowledged !== 1 || this.connectionManager.pool !== snapshot.pool) throw bookingUpload.fail();
+      await transaction.commit();
+    } catch (error) {
+      await transaction.rollback().catch(() => undefined);
+      throw error;
+    }
   }
   async protectedIntent(aggregateId,branchId) {
     const intent=await this.intents.get(aggregateId,branchId);
@@ -198,26 +356,94 @@ class ChangeReader {
     if(!rows.length)return null;const row=rows[0];if(createHash('sha256').update(row.opening_payload_json,'utf8').digest('hex')!==row.opening_payload_hash)throw Object.assign(new Error('The frozen opening changed.'),{code:'EFINANCIAL_HISTORY_INVALID'});
     return prepareFinancialOpening({openingJson:row.opening_payload_json,proof:JSON.parse(row.proof_json)},branchId,terminalId);
   }
-  async financialHistory(branchId,terminalId,limit=100){
+  async financialHistory(branchId,terminalId,limit=100,heldShifts=[]){
     if(this.financialOperations?.enabled!==true)return [];
+    if(!Array.isArray(heldShifts)||heldShifts.length>100||heldShifts.some(shift=>!UUID.test(shift)))
+      throw Object.assign(new Error("The held financial shift scope is invalid."),{code:"EFINANCIAL_HISTORY_INVALID"});
     const rows=await this.financialTransaction(async tx=>(await this.financialQuery(tx,`SELECT TOP (@limit) e.*,f.computed_merged_hash,f.pending_from_hash,CONVERT(nvarchar(30),e.sequence) sequence_text FROM dbo.pos_sync_shift_financial_events e
       LEFT JOIN dbo.pos_sync_shift_financial_refreshes f ON f.branch_id=e.branch_id AND f.shift_id=e.shift_id AND f.terminal_id=e.terminal_id AND f.operation_id=e.operation_id
       JOIN dbo.pos_sync_shift_financial_origins o ON o.branch_id=e.branch_id AND o.shift_id=e.shift_id AND o.terminal_id=e.terminal_id
       WHERE e.branch_id=@branch AND e.terminal_id=@terminal AND
+       NOT EXISTS(SELECT 1 FROM OPENJSON(@heldShifts) h WHERE TRY_CONVERT(uniqueidentifier,h.[value])=e.shift_id) AND
        (JSON_VALUE(e.payload_json,'$.cloudOrigin.serverBasisId') IS NOT NULL OR EXISTS(SELECT 1 FROM dbo.local_operation_receipts r WHERE r.operation_type=N'financial_history_opened' AND r.entity_id=CONVERT(nvarchar(36),o.local_aggregate_id) AND r.note COLLATE Latin1_General_100_BIN2=o.opening_payload_hash COLLATE Latin1_General_100_BIN2+N':'+o.terminal_id))
        AND NOT EXISTS(SELECT 1 FROM dbo.local_operation_receipts r WHERE r.operation_type=N'financial_history_registered' AND r.entity_id=CONVERT(nvarchar(36),e.shift_id)+N':'+CONVERT(nvarchar(36),e.operation_id) AND r.note COLLATE Latin1_General_100_BIN2=e.payload_hash COLLATE Latin1_General_100_BIN2+N':'+e.terminal_id)
-      ORDER BY e.shift_id,e.sequence;`,{branch:branchId,terminal:terminalId,limit:Math.max(1,Math.min(100,Number(limit)||100))})).recordset??[]);
+      ORDER BY e.shift_id,e.sequence;`,{branch:branchId,terminal:terminalId,limit:Math.max(1,Math.min(100,Number(limit)||100)),heldShifts:JSON.stringify(heldShifts)})).recordset??[]);
     const items=[];
     for(const row of rows){const item={kind:row.event_kind,branchId:row.branch_id,terminalId:row.terminal_id,shiftId:String(row.shift_id).toLowerCase(),operationId:String(row.operation_id).toLowerCase(),sequence:row.sequence_text,payloadJson:row.payload_json,payloadHash:row.payload_hash,proof:JSON.parse(row.proof_json)};
+      if(row.action==='REFUND'){
+        const payload=JSON.parse(item.payloadJson);
+        const saved=(await this.financialRefundApprovals(branchId,terminalId,payload.changes.map(change=>change.saleId))).find(value=>JSON.parse(value.operationJson).operationId===item.operationId);
+        if(saved){
+        if(saved.operationJson!==item.payloadJson||JSON.stringify(saved.attestation)!==JSON.stringify(item.proof))throw refundRoute.refundHeld();
+        item.refundApproval=saved.refundApproval;
+        }
+      }
       if(item.kind==='OBSERVE'){item.computedMergedHash=row.computed_merged_hash;item.pendingFromHash=row.pending_from_hash;}
       if(item.kind==='CLOSING')item.intent=await this.protectedIntent(item.operationId,branchId);
       items.push(prepareFinancialHistory(item,branchId,terminalId));
     }return items;
   }
+  async financialRefundApprovals(branchId,terminalId,saleIds){
+    if(this.financialOperations?.enabled!==true||!saleIds.length)return [];
+    if(saleIds.length>2000||saleIds.some(id=>typeof id!=='string'||!UUID.test(id)))throw refundRoute.refundHeld();
+    const rows=await this.financialTransaction(async tx=>{
+      const storage=(await this.financialQuery(tx,"SELECT CASE WHEN COL_LENGTH(N'dbo.local_operation_receipts',N'refund_evidence_json') IS NOT NULL AND COL_LENGTH(N'dbo.local_operation_receipts',N'refund_branch_id') IS NOT NULL THEN 1 ELSE 0 END AS ready;")).recordset?.[0]?.ready;
+      if(storage!==1)return [];
+      return(await this.financialQuery(tx,`SELECT TOP (101) e.operation_id,e.payload_json,e.proof_json,
+      approval.entity_id,approval.refund_branch_id,approval.refund_evidence_json
+      FROM dbo.pos_sync_shift_financial_events e
+      JOIN dbo.local_operation_receipts approval ON approval.operation_id=e.operation_id AND approval.operation_type=N'refund'
+      WHERE e.branch_id=@branch AND e.terminal_id=@terminal AND e.event_kind=N'MUTATION' AND e.action=N'REFUND'
+      AND TRY_CONVERT(uniqueidentifier,approval.entity_id) IN(SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@sales))
+      ORDER BY e.operation_id;`,{branch:branchId,terminal:terminalId,sales:JSON.stringify([...new Set(saleIds)])})).recordset??[];
+    });
+    if(rows.length>100)throw refundRoute.refundHeld();
+    const result=[],seen=new Set();
+    for(const row of rows){
+      const saved=financialRefund.readFinancialRefundApproval(row,branchId,terminalId);
+      if(!saved)continue; // Old unproven history is retained; the server owns its admission.
+      if(seen.has(String(row.operation_id).toLowerCase())||saved.operationJson!==row.payload_json||JSON.stringify(saved.attestation)!==JSON.stringify(JSON.parse(row.proof_json)))throw refundRoute.refundHeld();
+      seen.add(String(row.operation_id).toLowerCase());result.push(saved);
+    }
+    return result;
+  }
   async financialAggregateRequired(aggregateId,branchId,terminalId){
     if(this.financialOperations?.enabled!==true)return false;
     return this.financialTransaction(async tx=>Boolean((await this.financialQuery(tx,`SELECT CASE WHEN EXISTS(SELECT 1 FROM dbo.pos_sync_shift_financial_events WHERE operation_id=@aggregate AND branch_id=@branch AND terminal_id=@terminal)
       OR EXISTS(SELECT 1 FROM dbo.sync_change_journal j JOIN dbo.pos_sync_shift_financial_sale_lineage l ON l.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END,'$.id')) WHERE j.aggregate_id=@aggregate AND j.entity_type=N'sales' AND l.branch_id=@branch) OR EXISTS(SELECT 1 FROM dbo.sync_change_journal j JOIN dbo.pos_sync_shift_financial_observations o ON o.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END,'$.id')) WHERE j.aggregate_id=@aggregate AND j.entity_type=N'sales' AND o.branch_id=@branch AND o.terminal_id=@terminal) THEN 1 ELSE 0 END required;`,{aggregate:aggregateId,branch:branchId,terminal:terminalId})).recordset?.[0]?.required));
+  }
+  async financialBusinessPending(value,changes,branchId,terminalId,transaction=null){
+    return this.financialBusinessOwnership(value,changes,branchId,terminalId,transaction,true);
+  }
+  async financialBusinessOwnership(value,changes,branchId,terminalId,transaction,pendingOnly){
+    if(this.financialOperations?.enabled!==true||!changes.length)return false;
+    const {table}=this.table(value),primary=financialPrimary(table);if(!primary)return false;
+    const ids=[...new Set(changes.map(change=>recordId((change.key??change)[primary.sqlServerColumn])).filter(id=>UUID.test(id)))];
+    if(!ids.length)return false;
+    // A retained sale can outlive the original journal row. Its immutable
+    // lineage or adopted financial observation still owns a raw parent replay.
+    const retainedSaleOwnership = !pendingOnly && table.sqlServerTable === "sales" ? `
+      UNION ALL SELECT TOP(1) CONVERT(bigint,0) FROM dbo.pos_sync_shift_financial_sale_lineage l WITH(HOLDLOCK)
+      JOIN OPENJSON(@ids) wanted ON TRY_CONVERT(uniqueidentifier,wanted.[value])=l.sale_id
+      WHERE l.branch_id=@branch
+      UNION ALL SELECT TOP(1) CONVERT(bigint,0) FROM dbo.pos_sync_shift_financial_observations o WITH(HOLDLOCK)
+      JOIN OPENJSON(@ids) wanted ON TRY_CONVERT(uniqueidentifier,wanted.[value])=o.sale_id
+      WHERE o.branch_id=@branch AND o.terminal_id=@terminal` : "";
+    const read=async tx=>Boolean((await this.financialQuery(tx,`SELECT TOP(1) j.change_id
+      FROM dbo.sync_change_journal j WITH(HOLDLOCK)
+      JOIN OPENJSON(@ids) wanted ON TRY_CONVERT(uniqueidentifier,wanted.[value])=TRY_CONVERT(uniqueidentifier,
+        CASE WHEN ISJSON(j.entity_id)=1 THEN JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id END,'$.${primary.sqlServerColumn}') ELSE j.entity_id END)
+      WHERE j.branch_id=@branch AND j.entity_type=@table ${pendingOnly?"AND j.acknowledged_at IS NULL":""} AND (
+        EXISTS(SELECT 1 FROM dbo.pos_sync_shift_financial_events e WHERE e.operation_id=j.aggregate_id AND e.branch_id=@branch AND e.terminal_id=@terminal)
+        OR EXISTS(SELECT 1 FROM dbo.sync_change_journal owner JOIN dbo.pos_sync_shift_financial_sale_lineage l
+          ON l.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(owner.entity_id)=1 THEN owner.entity_id ELSE N'{}' END,'$.id'))
+          WHERE owner.aggregate_id=j.aggregate_id AND owner.branch_id=@branch AND owner.entity_type=N'sales' AND l.branch_id=@branch)
+        OR EXISTS(SELECT 1 FROM dbo.sync_change_journal owner JOIN dbo.pos_sync_shift_financial_observations o
+          ON o.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(owner.entity_id)=1 THEN owner.entity_id ELSE N'{}' END,'$.id'))
+          WHERE owner.aggregate_id=j.aggregate_id AND owner.branch_id=@branch AND owner.entity_type=N'sales' AND o.branch_id=@branch AND o.terminal_id=@terminal))
+      ${retainedSaleOwnership};`,
+      {branch:branchId,terminal:terminalId,table:table.sqlServerTable,ids:JSON.stringify(ids)})).recordset?.length);
+    return transaction?read(transaction):this.financialTransaction(read);
   }
   async financialHistoryReady(branchId,terminalId,{shiftId=null,aggregateId=null}={}){
     if(this.financialOperations?.enabled!==true)return true;
@@ -289,9 +515,26 @@ class ChangeReader {
     return source;
   }
   financialCoverageKey(table,row,source){
+    const primary=financialPrimary(table),id=recordId(row[primary.sqlServerColumn]);
     const schemaHash=createHash('sha256').update(JSON.stringify(table.columns.map(c=>[c.sqlServerColumn,c.cloudColumn,c.sqlServerType,c.cloudType]))).digest('hex');
     const rowHash=createHash('sha256').update(JSON.stringify(table.columns.map(c=>[c.sqlServerColumn,String(c.cloudType).toLowerCase()==='uuid'?recordId(row[c.sqlServerColumn]):row[c.sqlServerColumn]]))).digest('hex');
-    return{schemaHash,rowHash,id:stableUuid({domain:'retail-pos.financial-business-row-ack.v1',source:source.identity,table:table.cloudTable,id:recordId(row.id),schemaHash,rowHash}),entity:table.cloudTable+':'+recordId(row.id)};
+    return{schemaHash,rowHash,id:stableUuid({domain:'retail-pos.financial-business-row-ack.v1',source:source.identity,table:table.cloudTable,id,schemaHash,rowHash}),entity:table.cloudTable+':'+id};
+  }
+  captureFinancialBusinessRow(table, wire, exact, source, branchId) {
+    const primary = financialPrimary(table);
+    const key = this.financialCoverageKey(table, exact, source);
+    // PushWorker canonicalizes SQL-equivalent branch labels at upload.
+    const columns = new Set(table.columns.map(column => column.cloudColumn));
+    const branchColumn = table.scope === "branch" && table.direction !== "pull"
+      ? ["store_id", "branch_id"].find(column => columns.has(column)) : null;
+    const suppliedBranch = branchColumn && String(wire[branchColumn] ?? "").trim();
+    const sent = branchColumn && (!suppliedBranch || recordId(suppliedBranch) === recordId(branchId))
+      ? { ...wire, [branchColumn]: recordId(branchId) } : wire;
+    const captureId = table.cloudTable + ":" + recordId(wire[primary.cloudColumn]) + ":" +
+      createHash("sha256").update(JSON.stringify(sent)).digest("hex");
+    const prior = this.financialCoverageCaptures.get(captureId);
+    if (this.financialCoverageCaptures.size > 10000) this.financialCoverageCaptures.clear();
+    this.financialCoverageCaptures.set(captureId, { key, ambiguous: Boolean(prior?.ambiguous || prior && prior.key.rowHash !== key.rowHash) });
   }
   financialBusinessWire(table,ordinary,physical,enabled){
     if(!enabled)return ordinary;
@@ -314,10 +557,11 @@ class ChangeReader {
     return result;
   }
   async financialCoverageRows(tx,table,ids,branchId){
+    const primary=financialPrimary(table);
     const request=new(this.connectionManager.sql().Request)(tx).input('branch',branchId);
     const keys=ids.map((id,index)=>{request.input('coverage'+index,id);return '@coverage'+index;});
     const scope=table.scope==='branch'?rendererReadBranchPredicate(this.registry,table,'source'):null;
-    return(await request.query(`SELECT ${projection(table)} FROM dbo.[${table.sqlServerTable}] source WITH(UPDLOCK,HOLDLOCK) WHERE source.id IN(${keys.join(',')})${scope?' AND ('+scope+')':''};`)).recordset??[];
+    return(await request.query(`SELECT ${projection(table)} FROM dbo.[${table.sqlServerTable}] source WITH(UPDLOCK,HOLDLOCK) WHERE source.[${primary.sqlServerColumn}] IN(${keys.join(',')})${scope?' AND ('+scope+')':''};`)).recordset??[];
   }
   async financialCoverageReceipts(tx,keys,lock=false){
     const request=new(this.connectionManager.sql().Request)(tx),ids=keys.map((key,index)=>{request.input('receipt'+index,key.id);return '@receipt'+index;});
@@ -327,8 +571,10 @@ class ChangeReader {
   prepareFinancialBusinessCoverage({operations,batchId,branchId,terminalId}){
     const source=this.financialCoverageBinding(branchId,terminalId);if(!source)return null;
     const keys=[];
-    for(const operation of operations){if(operation.deletePhase||SHIFT_GRAPH_TABLES.includes(operation.table))continue;for(const row of operation.rows??[]){
-      const captureId=operation.table+':'+recordId(row.id)+':'+createHash('sha256').update(JSON.stringify(row)).digest('hex'),capture=this.financialCoverageCaptures.get(captureId);
+    for(const operation of operations){if(operation.deletePhase||SHIFT_GRAPH_TABLES.includes(operation.table))continue;
+      const table=this.registry.tables.find(table=>table.cloudTable===operation.table),primary=table&&financialPrimary(table);if(!primary)continue;
+      for(const row of operation.rows??[]){
+      const captureId=operation.table+':'+recordId(row[primary.cloudColumn])+':'+createHash('sha256').update(JSON.stringify(row)).digest('hex'),capture=this.financialCoverageCaptures.get(captureId);
       this.financialCoverageCaptures.delete(captureId);if(capture&&!capture.ambiguous)keys.push(capture.key);
     }}
     const token=Object.freeze({});this.financialCoverageTokens.set(token,{source,batchId:recordId(batchId),branchId,terminalId,keys,payloadHash:createHash('sha256').update(JSON.stringify(operations)).digest('hex')});return token;
@@ -351,17 +597,19 @@ class ChangeReader {
       evidence.source.assertSource();
     });this.financialCoverageTokens.delete(token);
   }
-  async acceptedFinancialBusinessChanges(value,changes,branchId,terminalId){
+  async acceptedFinancialBusinessChanges(value,changes,branchId,terminalId,transaction=null){
     const source=this.financialCoverageBinding(branchId,terminalId),covered=new Set();if(!source||SHIFT_GRAPH_TABLES.includes(value.cloudTable))return covered;
-    const {table,primary}=this.table(value);if(primary.length!==1||primary[0]!=='id')return covered;
-    const ids=changes.filter(change=>change.operation!=='D'&&UUID.test(recordId(change.key?.id))).map(change=>recordId(change.key.id));if(!ids.length)return covered;
-    await this.financialTransaction(async tx=>{for(let start=0;start<ids.length;start+=100){
+    const {table}=this.table(value),primary=financialPrimary(table);if(!primary)return covered;
+    const ids=changes.filter(change=>change.operation!=='D'&&UUID.test(recordId(change.key?.[primary.sqlServerColumn]))).map(change=>recordId(change.key[primary.sqlServerColumn]));if(!ids.length)return covered;
+    const read=async tx=>{for(let start=0;start<ids.length;start+=100){
       const rows=await this.financialCoverageRows(tx,table,ids.slice(start,start+100),branchId),keys=rows.map(row=>this.financialCoverageKey(table,row,source));if(!keys.length)continue;
       const receipts=await this.financialCoverageReceipts(tx,keys);
       for(let index=0;index<keys.length;index++){const key=keys[index],prior=receipts.get(key.id);
-        if(prior?.operation_type==='financial_business_row_accepted'&&prior.entity_id===key.entity&&String(prior.note).startsWith(key.rowHash+':'+key.schemaHash+':')&&UUID.test(String(prior.note).slice(130)))covered.add(recordId(rows[index].id));
+        if(prior?.operation_type==='financial_business_row_accepted'&&prior.entity_id===key.entity&&String(prior.note).startsWith(key.rowHash+':'+key.schemaHash+':')&&UUID.test(String(prior.note).slice(130)))covered.add(recordId(rows[index][primary.sqlServerColumn]));
       }
-    }source.assertSource();});return covered;
+    }source.assertSource();};
+    if(transaction)await read(transaction);else await this.financialTransaction(read);
+    return covered;
   }
   async acknowledgeProtectedIntent(intent,proof) {
     const sql=this.connectionManager.sql(),transaction=new sql.Transaction(this.connectionManager.pool);
@@ -379,8 +627,14 @@ class ChangeReader {
   async acknowledgeAggregate(aggregateId) {
     await this.connectionManager.pool.request().input("aggregate", aggregateId).query("UPDATE dbo.sync_change_journal SET acknowledged_at=SYSDATETIMEOFFSET(),last_error=NULL WHERE aggregate_id=@aggregate AND acknowledged_at IS NULL;");
   }
-  async failAggregate(aggregateId, error) {
-    await this.connectionManager.pool.request().input("aggregate", aggregateId).input("error", String(error?.message ?? error).slice(0, 1000)).query("UPDATE dbo.sync_change_journal SET retry_count=retry_count+1,last_error=@error WHERE aggregate_id=@aggregate AND acknowledged_at IS NULL;");
+  async failAggregate(aggregateId, error, branchId = null) {
+    await this.connectionManager.pool.request()
+      .input("aggregate", aggregateId)
+      .input("error", String(error?.message ?? error).slice(0, 1000))
+      .input("branch", branchId)
+      .query(`UPDATE dbo.sync_change_journal SET retry_count=retry_count+1,last_error=@error
+        WHERE aggregate_id=@aggregate AND acknowledged_at IS NULL
+          AND (@branch IS NULL OR branch_id COLLATE Latin1_General_100_BIN2=@branch);`);
   }
   async pendingSummary(branchId) {
     const result = await this.connectionManager.pool.request().input("branch", branchId).query(`SELECT

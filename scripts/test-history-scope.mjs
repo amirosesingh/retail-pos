@@ -10,7 +10,7 @@ const read = file => readFile(new URL("../" + file, import.meta.url), "utf8");
 const metadata = JSON.parse(await read("src/lib/__tests__/fixtures/history-scope-live-metadata.json"));
 const registry = JSON.parse(await read("database/sqlserver/schema-registry.json"));
 const migration = await read("supabase/migrations/" + MIGRATION);
-const transportMigration = await read("supabase/migrations/" + transport.MIGRATION);
+const transportMigration = (await read("supabase/migrations/" + transport.MIGRATION)).replaceAll("\r\n", "\n");
 const native = process.argv.includes("--native");
 assert(process.argv.slice(2).every(value => ["--native", "--postgrest"].includes(value)));
 const nativeBaseSource = native ? (await read("scripts/test-seven-shift-summary-native.fixture.mjs")).replaceAll("\r\n", "\n") : null;
@@ -258,6 +258,9 @@ try {
   });
   await check("fresh canonical component executes the reviewed 70-table/pre-count wrapper variants and replays", async () => {
     const { historyScopeCanonicalBlock, scopedHistoryTransportCanonicalBlock, withScopedHistoryTransportContract } = require("./history-scope-canonical.cjs");
+    const block = historyScopeCanonicalBlock(migration);
+    const canonicalInputs = JSON.parse(block.match(/ expected constant jsonb := \$history_scope_data\$([^\r\n]*?)\$history_scope_data\$::jsonb;/)[1]);
+    await apply(canonicalInputs.find(item => item.signature === "pos_sync_bootstrap_scoped(text,text,text,text,text,integer,integer)").definition);
     const oldCapture = JSON.parse(await read("src/lib/__tests__/fixtures/history-count-contract-live-metadata.json"));
     await apply(oldCapture.functions.find(item => item.signature === "pos_sync_counts(text,text,text,integer)").definition);
     const delegate = metadata.functions.find(item => item.signature === "pos_sync_counts_scoped(text,text,text,integer)");
@@ -266,14 +269,14 @@ try {
     assert.equal(old.split(needle).length, 2);
     await apply(old.replace(needle, 'x WHERE true UNION ALL SELECT \'change_history\'::text table_name,count(*)::bigint row_count FROM public."change_history" x WHERE true;\nEND $function$'));
     await db.exec("REVOKE EXECUTE ON FUNCTION public.change_history_immutable() FROM PUBLIC;");
-    const before = await state(), block = historyScopeCanonicalBlock(migration);
+    const before = await state();
     await db.exec(block);
     assert.equal(await count(), "2");
     assert.equal((await idx(2)).history_scope, "branch");
     assert.deepEqual((await state()).history, before.history);
     const verified = await state(); await db.exec(block); assert.deepEqual(await state(), verified);
     for (const target of [...staged.targets].reverse()) await db.exec("DROP FUNCTION public."+target.signature+";");
-    const beforeStage=await state(),stageBlock=scopedHistoryTransportCanonicalBlock(transportMigration,migration);
+    const beforeStage=await state(),stageBlock=scopedHistoryTransportCanonicalBlock(transportMigration,block);
     await assert.rejects(db.exec(transportMigration), /HISTORY_TRANSPORT_SOURCE_CHANGED/);
     assert.deepEqual(await state(),beforeStage);
     await db.exec(stageBlock);

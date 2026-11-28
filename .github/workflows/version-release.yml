@@ -110,7 +110,7 @@ jobs:
       # Android, GitHub Releases and the R2 manifests all identify the exact
       # same source commit and version.
       - name: Start platform release builds
-        if: steps.ready.outputs.release == 'true'
+        if: steps.ready.outputs.release == 'true' && vars.RETAIL_PRODUCTION_WEB_FIRST != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

@@ -13,6 +13,11 @@ async function main(){
  try{
   control("create",instance,"-s");owned=true;server=control("info",instance).match(/np:\\\\\.\\pipe\\LOCALDB#[A-Fa-f0-9]+\\tsql\\query/)?.[0];assert(server);
   master=await connect("master");await master.request().batch(`CREATE DATABASE [${database}];ALTER DATABASE [${database}] SET CHANGE_TRACKING=ON(CHANGE_RETENTION=2 DAYS,AUTO_CLEANUP=ON);`);created=true;pool=await connect(database);
+  await pool.request().batch(`CREATE TABLE dbo.sync_checkpoints (
+    organization_id nvarchar(128) NOT NULL, branch_id nvarchar(128) NOT NULL,
+    entity_type nvarchar(128) NOT NULL, direction nvarchar(10) NOT NULL,
+    committed_cursor nvarchar(400) NULL,
+    PRIMARY KEY (organization_id, branch_id, entity_type, direction));`);
   await pool.request().batch("CREATE TABLE dbo.fixture(id uniqueidentifier NOT NULL PRIMARY KEY,label nvarchar(64) NULL,note nvarchar(max) NULL,amount decimal(18,4) NULL,stamp datetimeoffset(7) NULL,flag bit NULL,row_version int NOT NULL,owner_store_id nvarchar(128) NULL,stock_by_store nvarchar(max) NULL);ALTER TABLE dbo.fixture ENABLE CHANGE_TRACKING;CREATE TABLE dbo.trigger_stats(statement_count int NOT NULL,changed_rows int NOT NULL);INSERT dbo.trigger_stats VALUES(0,0);");
   await pool.request().batch("CREATE TRIGGER dbo.fixture_update ON dbo.fixture AFTER UPDATE AS BEGIN SET NOCOUNT ON;UPDATE dbo.trigger_stats SET statement_count=statement_count+1,changed_rows=changed_rows+(SELECT COUNT(*) FROM inserted);END;");
   const types={id:"uniqueidentifier",label:"nvarchar(64)",note:"nvarchar(max)",amount:"decimal(18,4)",stamp:"datetimeoffset(7)",flag:"bit",row_version:"int",owner_store_id:"nvarchar(128)",stock_by_store:"nvarchar(max)"};

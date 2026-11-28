@@ -1,0 +1,132 @@
+{
+  "format": 1,
+  "sourceRevision": "918516e0f8528f23221f52c5958e34a3ce217d7d",
+  "purpose": "Retail POS Beta first stocktake schema preparation only",
+  "supabase": {
+    "project": "irjkmhgrjgcaoixcixut",
+    "systemId": "7703759698107299042",
+    "migrationName": "retail_pos_beta_stock_report_stocktake_v1",
+    "transactionOwner": "Supabase Management API migration transaction",
+    "preparedSourceVersions": [
+      "20261105113916",
+      "20261105172030",
+      "20261105232647",
+      "20261106035442",
+      "20261106042742",
+      "20261106065813",
+      "20261106073851"
+    ],
+    "sources": [
+      {
+        "file": "supabase/migrations/20261105113916_stock_history_effective_ledger.sql",
+        "sourceSha256": "a04d51e3202227b7df280814045f39702282c5cd842810eb21266dd8414a095e",
+        "bodySha256": "138dc1ea4e0b6f7a324bb7a991642d9b75a7b1c16aac0984605aa3778c8e4b55",
+        "outerTransactionRemoved": true
+      },
+      {
+        "file": "supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql",
+        "sourceSha256": "d42f5925c7ac24b157432ee64594d4df690037671a49cdedf291545a3ffc32e6",
+        "bodySha256": "9ccbd7e8a02d69bcc9cad44838b626c4c0925c3c0681ac1eef632ecf04483d07",
+        "outerTransactionRemoved": true
+      },
+      {
+        "file": "supabase/migrations/20261105232647_stock_history_author_claim_admission.sql",
+        "sourceSha256": "38968cac2cc1c75421bcd317caffed3517907f15fdd767c2c82e472c7704b9a0",
+        "bodySha256": "d378f487974001f8102a2a81e39c0518662e88b1f9ad2e3d98ae8c2608ec84c9",
+        "outerTransactionRemoved": true
+      },
+      {
+        "file": "supabase/migrations/20261106035442_stock_history_original_source_receipts.sql",
+        "sourceSha256": "93e2187131154635ad21306cd462bfa50007c9eb181fbd24148322a6c823530b",
+        "bodySha256": "06ecdd1daf1d029333cd63cb707c8c32e0f5c0fb820ca261b8e13b4cc8216e1a",
+        "outerTransactionRemoved": true
+      },
+      {
+        "file": "supabase/migrations/20261106042742_stock_history_verified_source_membership.sql",
+        "sourceSha256": "88a475bf951d15d1528c9c3dfc00ea3398cf0b15f34a49efa0093286d6b6ded1",
+        "bodySha256": "c00568f24634680d4e6bcaf84a27ac84f303d2ef4d950f5f5dd385713b7501cb",
+        "outerTransactionRemoved": true
+      },
+      {
+        "file": "supabase/migrations/20261106065813_stock_history_selected_time_period_reader.sql",
+        "sourceSha256": "91b94c241cdec73a71b9342e0fe550c8a09c53a182d9731f72a7a05418519146",
+        "bodySha256": "8574636f80d38004bb55f96207178b7127687f2e51c6ecdce552dab22d231bf0",
+        "outerTransactionRemoved": true
+      },
+      {
+        "file": "supabase/migrations/20261106073851_stock_history_coverage_frontiers.sql",
+        "sourceSha256": "2c569f945607ae45f21f0d4db431555ce4d07bc146218d0f57c0750b5fede494",
+        "bodySha256": "3af49740d32c8b99b1b48d9e70d0ed21b8624fe51c29a016249bfd43705a5296",
+        "outerTransactionRemoved": true
+      },
+      {
+        "file": "scripts/preparation/stock-history-recorded-openings.sql",
+        "sourceSha256": "60b44dbc1d44faa76617d5d17422b80d7a49479d443ffeae2138203fec978ac5",
+        "bodySha256": "60b44dbc1d44faa76617d5d17422b80d7a49479d443ffeae2138203fec978ac5",
+        "outerTransactionRemoved": false
+      },
+      {
+        "file": "scripts/preparation/stock-history-physical-stocktakes.sql",
+        "sourceSha256": "61d8a6c64f9b05de3f411d67daa58bcda93bdae57b4375a5f8577411617ecf36",
+        "bodySha256": "61d8a6c64f9b05de3f411d67daa58bcda93bdae57b4375a5f8577411617ecf36",
+        "outerTransactionRemoved": false
+      },
+      {
+        "file": "scripts/preparation/stock-history-stocktake-cutover.sql",
+        "sourceSha256": "f887c66df96de8c85ff0615b4d9f4d77ec59fc63f5d29a0e5c02a313f6d656f2",
+        "bodySha256": "f887c66df96de8c85ff0615b4d9f4d77ec59fc63f5d29a0e5c02a313f6d656f2",
+        "outerTransactionRemoved": false
+      },
+      {
+        "file": "scripts/preparation/stock-history-replica-export.sql",
+        "sourceSha256": "1cd29b69acfc37918b13b21368925498f468c71d23520be526973ff44539003e",
+        "bodySha256": "dc583b622506ba254cdadce7a1479327ea237ab57c8e80e697792ec4092776cf",
+        "outerTransactionRemoved": true
+      }
+    ]
+  },
+  "sqlServer": {
+    "databaseNames": [
+      "POS_Stock401_Beta_Till_A",
+      "POS_Stock401_Beta_Till_B"
+    ],
+    "sessionGuidKey": "pos_stock401_database_guid",
+    "transactionOwner": "prepared batch",
+    "sources": [
+      {
+        "file": "database/sqlserver/prepared/031_stock_history_effective_ledger.sql",
+        "sourceSha256": "f371e4a6f3e31b64d7827b597635198edf522f7b1b83b0d135715a832f01ff65",
+        "bodySha256": "f371e4a6f3e31b64d7827b597635198edf522f7b1b83b0d135715a832f01ff65",
+        "outerTransactionRemoved": false
+      },
+      {
+        "file": "database/sqlserver/prepared/stock-history-stocktake-fence.sql",
+        "sourceSha256": "bfd3ea9bf934fff6db3340e2f1fb6fe9c05587be7556e47faf8927eacb29872a",
+        "bodySha256": "bfd3ea9bf934fff6db3340e2f1fb6fe9c05587be7556e47faf8927eacb29872a",
+        "outerTransactionRemoved": false
+      }
+    ]
+  },
+  "artifacts": {
+    "preflight": {
+      "file": ".tmp/stock401-beta-approval/stock-report-beta-preflight.readonly.sql",
+      "sha256": "3c930a8fa66dd4f1c75954e10384504a52b1fe962776ac6d65d4b4cc48d2c20d",
+      "bytes": 1040
+    },
+    "hosted": {
+      "file": ".tmp/stock401-beta-approval/stock-report-beta-stocktake.supabase.sql",
+      "sha256": "b17c3965470b28bdc5ee2efe889266d52187e76741d80a3577c282a7b8921c9d",
+      "bytes": 217962
+    },
+    "postflight": {
+      "file": ".tmp/stock401-beta-approval/stock-report-beta-postflight.readonly.sql",
+      "sha256": "ded9281085cb095a923933413e901ddeb374a68b1d98b2104f4e861245546870",
+      "bytes": 957
+    },
+    "native": {
+      "file": ".tmp/stock401-beta-approval/stock-report-beta-stocktake.sqlserver.sql",
+      "sha256": "6c12a32211d6ef14ef335c87bf07e746afeae396ba702383caf53331fdef532b",
+      "bytes": 45645
+    }
+  }
+}

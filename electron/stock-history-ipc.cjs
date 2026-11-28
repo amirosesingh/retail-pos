@@ -1,0 +1,170 @@
+const { createHash } = require('node:crypto');
+const { StockHistoryStore } = require('./db/stock-history.cjs');
+const { identifier, fail } = require('./db/stock-history-contract.cjs');
+const { activityRequest, readStockActivity } = require('./db/stock-activity.cjs');
+const { activityBalancesRequest, readStockActivityBalances } = require('./db/stock-activity-balances.cjs');
+const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+const reportKeys = new Set(['cutoff','timeZone','branchId','after','sourceRevision','limit','export','closedShiftId','periodStart']);
+const movementKeys = new Set(['cutoff','timeZone','branchId','after','sourceRevision','limit','productId','closedShiftId','periodStart']);
+const permissions = value => {
+  if (typeof value === 'string') { try { value = JSON.parse(value); } catch { fail('PERMISSION_DENIED'); } }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('PERMISSION_DENIED');
+  return value;
+};
+function safeRequest(value, movements) {
+  const keys = movements ? movementKeys : reportKeys;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !keys.has(key)) ||
+      Buffer.byteLength(JSON.stringify(value), 'utf8') > 4096 || (value.export != null && typeof value.export !== 'boolean')) fail();
+  return { ...value };
+}
+/** Dedicated read admission; no SQL text, ledger writes or renderer-selected identity. */
+function createStockHistoryReader({manager,session,terminal,branch,isPosSender,context=()=>[],managementHistoryAdmission}, mode=false) {
+  const activity = mode === 'activity' ? { parse: activityRequest, read: readStockActivity } :
+    mode === 'activity-balances' ? { parse: activityBalancesRequest, read: readStockActivityBalances } : null;
+  return async (event,raw) => {
+    try {
+      if (!isPosSender(event) || !session.hasPosAuthority()) fail('PERMISSION_DENIED');
+      const request = activity ? activity.parse(raw) : safeRequest(raw,mode === true), pool = manager.pool, epoch = session.epoch();
+      const actor = session.identity(), registered = terminal();
+      if (registered?.deviceUse === 'management') {
+        const branchId = identifier(request.branchId);
+        const admission = await managementHistoryAdmission?.(event, {
+          branchId, exporting: request.export === true,
+          ...(request.closedShiftId ? { requiredPermission: 'can_shift_closing_history_view' } : {}),
+        });
+        if (!pool || manager.pool !== pool || admission?.branchId !== branchId) fail('PERMISSION_DENIED');
+        const page = await readPage(pool, request, {
+          ...admission,
+          authorizeRead: async exporting => ({
+            ...await admission.authorizeRead(exporting), requiresReplicaProof: true,
+          }),
+        });
+        admission.assertCurrent(); session.touch();
+        return {ok:true,page};
+      }
+      const registeredBranch = branch();
+      if (!pool || !actor || actor.source !== 'pos' || !UUID.test(actor.authorId ?? '') || !registered?.tokenId ||
+          !registeredBranch) fail('PERMISSION_DENIED');
+      const branchId = identifier(registeredBranch), authorId = identifier(actor.authorId,true);
+      const binding = () => JSON.stringify([terminal(),context()]);
+      const original = binding();
+      const contextKey = createHash('sha256').update(JSON.stringify([epoch,authorId,branchId,original])).digest('hex');
+      const assertCurrent = () => {
+        if (manager.pool !== pool || session.epoch() !== epoch || !session.hasPosAuthority() || binding() !== original ||
+            identifier(branch()) !== branchId) fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+      };
+      const authorizeRead = async (exporting) => {
+        assertCurrent();
+        const result = await pool.request().input('stock_actor',authorId).query(`
+          SELECT id,user_id,role,role_slug,permissions,is_active,store_id FROM dbo.app_users
+          WHERE id=TRY_CONVERT(uniqueidentifier,@stock_actor);`);
+        assertCurrent();
+        const person = result.recordset?.[0];
+        if (!person || person.is_active !== true || identifier(String(person.id),true) !== authorId ||
+            String(person.user_id).toLowerCase() !== String(actor.canonicalSubject ?? actor.subject).toLowerCase() ||
+            (person.store_id != null && identifier(String(person.store_id)) !== branchId)) fail('PERMISSION_DENIED');
+        const owner = String(person.role ?? '').toLowerCase() === 'admin' || String(person.role_slug ?? '').toLowerCase() === 'admin';
+        const access = owner ? {} : permissions(person.permissions);
+        const canViewInventory = owner || (access.can_view_inventory === true && access['page:inventory'] !== false);
+        const canExportReports = owner || (access.can_export_reports === true && access['page:reports'] !== false);
+        const canViewShiftHistory = owner || (access.can_shift_closing_history_view === true && access['page:shifts'] !== false);
+        if (!canViewInventory || (exporting && !canExportReports)) fail('PERMISSION_DENIED');
+        let projectOrigin = null;
+        try { projectOrigin = new URL(context()[1]).origin; } catch { /* An unbound profile cannot read recorded replicas. */ }
+        return {contextKey,branchId,canViewInventory,canExportReports,canViewShiftHistory,
+          projectOrigin,terminalId:identifier(registered.tokenId)};
+      };
+      const page = await readPage(pool, request, {branchId, assertCurrent, authorizeRead});
+      assertCurrent(); session.touch();
+      return {ok:true,page};
+    } catch (error) {
+      const code = typeof error?.code === 'string' && /^(?:ESTOCK_HISTORY_|PERMISSION_DENIED$|SYNC_BRANCH_FORBIDDEN$)/.test(error.code) ? error.code : 'ESTOCK_HISTORY_READ';
+      return {ok:false,code,error:code === 'PERMISSION_DENIED' ? 'Your current account or terminal cannot read this stock report.' :
+        code === 'SYNC_BRANCH_FORBIDDEN' ? 'Choose a location authorized for this account and terminal.' :
+        code === 'ESTOCK_HISTORY_MANAGEMENT_SQL' ? 'The Management local SQL Server database is not ready.' :
+        code === 'ESTOCK_HISTORY_MANAGEMENT_SCOPE' ? 'Connect and synchronize this Management terminal to verify its location access.' :
+        code === 'ESTOCK_HISTORY_MANAGEMENT_INCOMPLETE' ? 'This location has not completed its local inventory download.' :
+        code === 'ESTOCK_HISTORY_SOURCE_CHANGED' ? 'Stock history changed. Refresh the report before continuing.' :
+        code === 'ESTOCK_HISTORY_MOVEMENT_CURSOR_INVALID' ? 'The movement page is no longer available. Open the report again.' :
+        code === 'ESTOCK_HISTORY_CONTEXT_CHANGED' ? 'The signed-in account, terminal or database changed. Open the report again.' :
+        code === 'ESTOCK_HISTORY_SHIFT_UNAVAILABLE' ? 'The selected shift is not closed or is outside this location.' :
+        'The local stock-history report could not be verified. Existing stock has not been changed.'};
+    }
+  };
+
+  async function readPage(pool, request, {branchId, assertCurrent, authorizeRead}) {
+    if (activity) {
+      if (request.branchId !== branchId) fail('SYNC_BRANCH_FORBIDDEN');
+      assertCurrent();
+      const before = await authorizeRead(false);
+      if (!before?.canViewInventory || before.branchId !== branchId) fail('PERMISSION_DENIED');
+      const page = await activity.read(pool, request);
+      const after = await authorizeRead(false);
+      if (!after?.canViewInventory || after.branchId !== branchId || after.contextKey !== before.contextKey) {
+        fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+      }
+      return page;
+    }
+    const store = new StockHistoryStore(manager,{assertCurrent,authorizeRead});
+    return mode === true ? store.readMovements(request) : store.readPage(request);
+  }
+}
+function registerStockHistoryRead(options) {
+  const handler = createStockHistoryReader(options);
+  options.ipcMain.handle('business:stock-history',handler);
+  options.ipcMain.handle('business:stock-history-movements',createStockHistoryReader(options,true));
+  options.ipcMain.handle('business:stock-activity',createStockHistoryReader(options,'activity'));
+  options.ipcMain.handle('business:stock-activity-balances',createStockHistoryReader(options,'activity-balances'));
+  return handler;
+}
+function registerStocktakeControl({ ipcMain, session, isPosSender, coordinator, run }) {
+  ipcMain.handle("business:stocktake-control", async (event, input) => {
+    let stage, contextReason;
+    const tillProof = input?.action === "enroll" || input?.action === "approve-financial";
+    const trace = tillProof ? (kind, value) => {
+      if (kind === "stage" && ["admission", "snapshot-initial", "original-key", "challenge", "snapshot-after-challenge",
+        "sign", "snapshot-after-sign", "confirm-frontier", "enroll-relay", "approve-financial-relay"].includes(value)) stage = value;
+      if (kind === "context" && ["lease", "sender", "session", "session-epoch", "writer-pool", "branch", "author",
+        "runtime-unavailable", "terminal-binding", "project-origin", "source-fingerprint", "sql-identity"].includes(value))
+        contextReason ??= value;
+    } : undefined;
+    try {
+      trace?.("stage", "admission");
+      if (!isPosSender(event) || !session.hasPosAuthority() || !session.hasLevel("admin")) fail("PERMISSION_DENIED");
+      const { action, stocktakeId, phase, fenceGeneration } = input ?? {};
+      const expected = tillProof ? ["action"] : ["action", "stocktakeId"];
+      if (action === "prove") expected.push("phase");
+      if (action === "release") expected.push("fenceGeneration");
+      if (!input || !(tillProof || ["arm", "prove", "release"].includes(action)) || Object.keys(input).length !== expected.length ||
+          expected.some(key => !Object.hasOwn(input, key)) ||
+          (!tillProof && (typeof stocktakeId !== "string" || !UUID.test(stocktakeId))) ||
+          (action === "prove" && phase !== "arm" && phase !== "confirm") ||
+          (action === "release" && (typeof fenceGeneration !== "string" || !UUID.test(fenceGeneration)))) fail("ESTOCK_STOCKTAKE_INVALID");
+      const epoch = session.epoch();
+      const assertLease = () => {
+        const reason = !coordinator.ownsExclusive() || coordinator.paused ? "lease"
+          : session.epoch() !== epoch ? "session-epoch"
+          : !session.hasPosAuthority() || !session.hasLevel("admin") ? "session"
+          : !isPosSender(event) ? "sender" : null;
+        if (reason) trace?.("context", reason);
+        return reason === null;
+      };
+      const result = await coordinator.withExclusive(() => {
+        if (!assertLease()) fail("ESTOCK_HISTORY_CONTEXT_CHANGED");
+        return run(action, {
+          assertLease, ...(tillProof ? { trace } : { stocktakeId: identifier(stocktakeId, true) }),
+          ...(phase ? { phase } : {}),
+          ...(fenceGeneration ? { fenceGeneration: identifier(fenceGeneration, true) } : {}),
+        });
+      });
+      return { ok: true, result };
+    } catch (error) {
+      const code = typeof error?.code === "string" && /^(ESTOCK_[A-Z_]+|STOCK_CUTOVER_[A-Z_]+|PERMISSION_DENIED)$/.test(error.code)
+        ? error.code : "ESTOCK_STOCKTAKE_UNAVAILABLE";
+      const message = input?.action === "approve-financial" ? "This terminal’s financial approval could not be verified."
+        : input?.action === "enroll" ? "This terminal’s stocktake enrollment could not be verified." : "The stocktake pause could not be verified.";
+      return { ok: false, code, ...(stage ? { stage } : {}), ...(contextReason ? { contextReason } : {}), error: message };
+    }
+  });
+}
+module.exports = {createStockHistoryReader,registerStockHistoryRead,registerStocktakeControl};

@@ -23,8 +23,8 @@ async function rest(path: string, init: RequestInit & { prefer?: string } = {}) 
   return serviceRest(path, init);
 }
 
-async function readRows(path: string): Promise<Row[]> {
-  const res = await rest(path);
+async function readRows(path: string, signal?: AbortSignal): Promise<Row[]> {
+  const res = signal ? await rest(path, { signal }) : await rest(path);
   if (!res.ok) throw new Error((await res.text()).slice(0, 300) || "Read failed");
   return (await res.json()) as Row[];
 }
@@ -32,11 +32,11 @@ async function readRows(path: string): Promise<Row[]> {
 // ------------------------------------------------------------------ rules
 
 /** Global rows plus the branch's own rows. */
-export async function loadRuleRows(storeId: string): Promise<AuthorizationRule[]> {
+export async function loadRuleRows(storeId: string, signal?: AbortSignal): Promise<AuthorizationRule[]> {
   const scope = storeId
     ? `or=(scope_id.eq.,scope_id.eq.${encodeURIComponent(storeId)})`
     : `scope_id=eq.`;
-  const rows = await readRows(`authorization_actions?select=*&${scope}`);
+  const rows = await readRows(`authorization_actions?select=*&${scope}`, signal);
   return rows.map(normalizeRule);
 }
 

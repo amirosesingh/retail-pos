@@ -2,6 +2,10 @@ const bcrypt = require("bcryptjs");
 const MAX_PIN_ATTEMPTS = 5;
 const PIN_WINDOW_MINUTES = 5;
 const PIN_LOCK_MINUTES = 15;
+const ACTIVE_CASHIER_FOR_STAFF = `SELECT TOP (1) candidate.pin_hash,candidate.store_id
+        FROM dbo.cashiers candidate
+        WHERE LOWER(candidate.username)=LOWER(a.user_id) AND candidate.is_active=1
+        ORDER BY candidate.updated_at DESC,candidate.id DESC`;
 
 function permissions(value) {
   if (value && typeof value === "object") return value;
@@ -79,12 +83,7 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose, options =
       CONVERT(nvarchar(128),a.id) id,a.user_id username,a.full_name,a.store_id,
       a.role,a.role_slug,a.permissions,a.is_active,${hashColumn} pin_hash
       FROM dbo.app_users a
-      OUTER APPLY (
-        SELECT TOP (1) candidate.pin_hash
-        FROM dbo.cashiers candidate
-        WHERE LOWER(candidate.username)=LOWER(a.user_id) AND candidate.is_active=1
-        ORDER BY candidate.updated_at DESC,candidate.id DESC
-      ) c
+      OUTER APPLY (${ACTIVE_CASHIER_FOR_STAFF}) c
       WHERE (LOWER(a.user_id)=@username OR LOWER(a.login_username)=@username OR LOWER(a.email)=@username OR LOWER(CONVERT(nvarchar(128),a.id))=@username)
         AND (a.store_id IS NULL OR a.store_id=@branch)
       ORDER BY CASE WHEN a.store_id=@branch THEN 0 ELSE 1 END,a.updated_at DESC,a.id DESC;`);
@@ -161,4 +160,4 @@ const verifySyncedStaffPin = (pool, username, pin, branchId) =>
 const verifySyncedApprovalPin = (pool, username, pin, branchId, options) =>
   verifySyncedPin(pool, username, pin, branchId, "approval", options);
 
-module.exports = { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin };
+module.exports = { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin, ACTIVE_CASHIER_FOR_STAFF };

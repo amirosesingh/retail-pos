@@ -68,6 +68,15 @@ describe("activation record", () => {
     expect(await isRegistered()).toBe("not-registered");
   });
 
+  it("keeps the current receipt when an old verification loses its registration context while signing", async () => {
+    await writeActivationRecord({ tokenId: "current-terminal" });
+    let current = true;
+    const old = writeActivationRecord({ tokenId: "old-terminal", isCurrent: () => current });
+    current = false;
+    await expect(old).rejects.toThrow("registration changed");
+    expect((await readActivationRecord())?.tokenId).toBe("current-terminal");
+  });
+
 });
 
 describe("emergency access branches", () => {

@@ -20,7 +20,13 @@ vi.mock("react", () => ({
     f.pending.push(() => { old?.cleanup?.(); f.effects[index] = { deps, cleanup: fn() || undefined }; });
   },
 }));
-vi.mock("../connection-profile", () => ({ hydrateConnectionProfile: () => f.hydrate() }));
+vi.mock("../connection-profile", () => ({
+  hydrateConnectionProfile: () => f.hydrate(),
+  isRegistrationRestoreError: (error: unknown) => (error as { code?: string })?.code === "EREGISTRATION_RESTORE",
+  registrationRestoreMessage: (code: unknown) => code === "EACTIVATION_RECOVERY_BINDING"
+    ? "The saved registration could not be matched to this device's previous terminal binding. The saved setup has been kept."
+    : "The saved terminal registration could not be restored. The saved setup has been kept. Retry registration recovery.",
+}));
 vi.mock("@/core/activation/terminal-tokens", () => ({
   readTerminalConfig: () => f.config,
   subscribeTerminalConfig: (callback: () => void) => { f.terminalChanged = callback; return () => { f.terminalChanged = null; }; },
@@ -75,10 +81,23 @@ describe("recovery reads saved native configuration before deciding setup status
     render().retry(); render();
     await vi.waitFor(() => expect(render()).toMatchObject({ loading: false, error: false, config: saved, cloud: true }));
   });
+  it("shows readable connection settings while registration remains failed and retries on a saved settings hint", async () => {
+    f.hydrate.mockRejectedValueOnce(Object.assign(new Error("Private proof detail"), { code: "EREGISTRATION_RESTORE", registrationCode: "EACTIVATION_RECOVERY_BINDING" }));
+    render();
+    await vi.waitFor(() => expect(render()).toMatchObject({ loading: false, error: true, connectionReady: true, registrationReady: false, config: null, cloud: true }));
+    expect(render().registrationCode).toBe("EACTIVATION_RECOVERY_BINDING");
+    expect(render().registrationMessage).toContain("previous terminal binding");
+    expect(render().registrationMessage).not.toContain("Private proof");
+    f.cloudChanged?.();
+    await vi.waitFor(() => expect(render()).toMatchObject({ loading: false, error: false, connectionReady: true, registrationReady: true, config: saved }));
+    expect(render().registrationMessage).toBeNull();
+    expect(f.hydrate).toHaveBeenCalledTimes(2);
+  });
   it("does not translate unreadable cloud settings into missing credentials", async () => {
     f.cloud.mockRejectedValueOnce(new Error("Vault unavailable"));
     render();
     await vi.waitFor(() => expect(render()).toMatchObject({ loading: false, error: true, cloud: null }));
+    expect(render().registrationMessage).toBeNull();
     render().retry(); render();
     await vi.waitFor(() => expect(render().cloud).toBe(true));
   });

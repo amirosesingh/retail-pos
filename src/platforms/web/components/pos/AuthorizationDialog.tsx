@@ -34,7 +34,7 @@ import {
   approvalReference,
   canAuthorizeAmount,
 } from "@/lib/authorization";
-import { authorizeOfflineDiscount, hasNativeOfflineDiscountCapability, verifyLocalApprovalPin } from "@/core/local-db/local-staff";
+import { authorizeNativeRefund, hasNativeRefundCapability, isNativeRefundGrant, authorizeOfflineDiscount, hasNativeOfflineDiscountCapability, verifyLocalApprovalPin } from "@/core/local-db/local-staff";
 import { normalizeSnapshot, snapshotFingerprint, type TicketSnapshot } from "@/lib/ticket-snapshot";
 import { syncNow } from "@/lib/sync-engine";
 import { approvalIdentity } from "@/lib/approval-identity";
@@ -63,6 +63,7 @@ export type AuthorizationPrompt = {
   requesterDirectLimit?: number | null;
   valueUnit?: "percent" | "currency" | "quantity" | "number";
   heldOrderId?: string | null;
+  refundRecoveryOperationId?: string;
   allowedRoles?: string[];
   allowedUserIds?: string[];
   authorityLimits?: Record<string, number>;
@@ -106,8 +107,28 @@ export function AuthorizationDialog({
   const session = useAuthOptional();
   const me = session?.user ?? null;
 
+  async function authorizeLocalRefund(): Promise<"approved" | "central" | "denied"> {
+    if (!prompt || !hasNativeRefundCapability()) { toast.error("Update the desktop app before approving this refund locally."); return "denied"; }
+    if (nativeRequest.current?.prompt !== prompt) nativeRequest.current = { prompt, id: newId() };
+    const identity = approvalIdentity(tokenOnly, authorizerId, prompt.selfAuthorizer?.id);
+    const result = await authorizeNativeRefund({ saleId: String(prompt.payload?.sale_id ?? ""), branchId: prompt.storeId ?? "",
+      requestedAmount: prompt.requestedAmount ?? Number.NaN, requestId: nativeRequest.current.id, username: identity.authorizerId ?? "",
+      credential: pin, selfAuthorization: identity.selfAuthorization, reason: note.trim(),
+      ...(prompt.refundRecoveryOperationId ? { recoveryOperationId: prompt.refundRecoveryOperationId } : {}) });
+    if (currentPrompt.current !== prompt) return "denied";
+    if (result.code === "EONLINE_REQUIRED") return "central";
+    if (!result.ok || !isNativeRefundGrant(result.grantToken) || !result.authorizer) { toast.error(result.error ?? "The local refund approval was not confirmed."); return "denied"; }
+    onFinish({ kind: "approved", grantToken: result.grantToken, by: result.authorizer.name, authorizer: result.authorizer, offline: true });
+    return "approved";
+  }
+
   async function authorizeLocalPin() {
     if (!prompt) return false;
+    if (prompt.actionKey === "refund") {
+      const result = await authorizeLocalRefund();
+      if (result === "central") toast.error("This refund requires a connection to head office.");
+      return result === "approved";
+    }
     const identity = approvalIdentity(tokenOnly, authorizerId, prompt.selfAuthorizer?.id);
     const expectedId = identity.authorizerId;
     if (prompt.actionKey === "discount_over_limit" && prompt.payload?.["discount_scope"] === "ticket" && hasNativeOfflineDiscountCapability()) {
@@ -275,6 +296,11 @@ export function AuthorizationDialog({
     submitting.current = true;
     setBusy(true);
     try {
+      if (prompt.actionKey === "refund" && hasNativeRefundCapability()) {
+        const local = await authorizeLocalRefund();
+        if (local !== "central") return;
+        if (typeof navigator !== "undefined" && !navigator.onLine) { toast.error("This refund requires a connection to head office."); return; }
+      }
       if (typeof navigator !== "undefined" && !navigator.onLine) {
         await authorizeLocalPin();
         return;

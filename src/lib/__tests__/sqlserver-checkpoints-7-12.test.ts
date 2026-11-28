@@ -435,6 +435,31 @@ describe("SQL Server checkpoints 7 through 12", () => {
       .toBe("SYNC_BRANCH_FORBIDDEN (table: purchase_orders)");
   });
 
+  it.each([false, true])("preserves a fenced product page through verified handback (%s)", async (pending) => {
+    const held = Object.assign(new Error("The product still belongs to grouped stock."), {
+      code: "ESYNC_GROUPED_STOCK_PARENT_FENCED", table: "products",
+    });
+    const handback = vi.fn().mockImplementation(async () => {
+      if (pending) throw Object.assign(new Error("An exact receipt is pending."), { code: "ELOCAL_UPLOAD_PENDING" });
+    });
+    const pull = vi.fn().mockRejectedValueOnce(held).mockResolvedValueOnce({ merged: 1 });
+    const { SyncCoordinator } = await import("../../../electron/sync/coordinator.cjs");
+    const coordinator = new SyncCoordinator({
+      pushWorker: { reader: {}, run: vi.fn() },
+      pullWorker: { run: pull, returnGroupedSettingsHandoff: handback },
+      groupedSettingsPilotMode: "handback",
+      groupedSettingsPilot: { branchId: "B1", terminalId: "10000000-0000-0000-0000-000000000000",
+        databaseGuid: "20000000-0000-0000-0000-000000000000", backendOrigin: "https://relay.invalid",
+        projectOrigin: "https://project.invalid", projection: "settings_cash_v1", recovery: "paged_stock_v1", extended: true },
+    });
+    const result = await coordinator.runNow({ branchId: "B1", pullOnly: true });
+    expect(handback).toHaveBeenCalledOnce();
+    expect(pull).toHaveBeenCalledTimes(pending ? 1 : 2);
+    expect(result).toMatchObject(pending
+      ? { ok: false, code: held.code, groupedSettingsPilot: { status: "DEFERRED" } }
+      : { ok: true, merged: 1, groupedSettingsPilot: { status: "HANDED_BACK" } });
+  });
+
   it("runs a distinct final catch-up pass and refuses unacknowledged rows", async () => {
     const pendingSummary = vi.fn()
       .mockResolvedValueOnce({ pending: 0, failed: 0 })

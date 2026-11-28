@@ -43,7 +43,7 @@ END $$;
 CREATE FUNCTION fin62_history_preparation.fact(value jsonb) RETURNS jsonb LANGUAGE plpgsql IMMUTABLE STRICT SET search_path=pg_catalog AS $$
 DECLARE result jsonb;
 BEGIN
- IF jsonb_typeof(value)<>'object' OR (SELECT array_agg(key ORDER BY key) FROM jsonb_object_keys(value) key) IS DISTINCT FROM
+ IF jsonb_typeof(value)<>'object' OR (SELECT array_agg(key ORDER BY key COLLATE "C") FROM jsonb_object_keys(value) key) IS DISTINCT FROM
   ARRAY['branchId','discountAmount','id','isRefunded','paymentType','paymentsJson','rowVersion','shiftId','totalAmount']::text[] OR
   EXISTS(SELECT 1 FROM unnest(ARRAY['totalAmount','paymentType','paymentsJson','discountAmount','rowVersion']) field WHERE jsonb_typeof(value->field) NOT IN('string','null')) THEN RAISE EXCEPTION 'FIN62_OPERATION_FACT_INVALID';END IF;
  result:=fin62_cloud_preparation.financial_fact(value);

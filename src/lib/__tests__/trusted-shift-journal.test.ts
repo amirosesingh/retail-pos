@@ -130,7 +130,20 @@ function fixture(options: { branch?: string; terminal?: string | null } = {}) {
     }
   }
   const sql = { Transaction, Request, UniqueIdentifier: "uuid", ISOLATION_LEVEL: { SERIALIZABLE: 4 } };
-  const connectionManager = { sql: () => sql, pool: {get image(){return state;}} };
+  const connectionManager = { sql: () => sql, pool: {
+    get image(){return state;},
+    request() {
+      return {
+        input() { return this; },
+        async query(text: string) {
+          if (!text.includes("OBJECT_ID(N'dbo.pos_sync_sale_outbox_v1'") &&
+              !text.includes("COL_LENGTH(N'dbo.local_operation_receipts',N'refund_evidence_json')"))
+            throw new Error("Unexpected read outside the fixture transaction");
+          return { recordset: [] };
+        },
+      };
+    },
+  } };
   const repository = new OperationsRepository(connectionManager, registry);
   const writer = new ShiftSyncJournal(repository);
   const apply=writer.apply.bind(writer);

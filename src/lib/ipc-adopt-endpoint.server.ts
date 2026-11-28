@@ -45,6 +45,7 @@ export async function handleIpcAdopt(request: Request): Promise<Response> {
     if (!authority) {
       return denied(403);
     }
+    let settingsCaller = caller;
     // A username-only session remains sufficient for existing POS use.
     // If this handoff also carries the same person's independently proven
     // Auth token, expose its stable id for author-key preparation only.
@@ -54,13 +55,21 @@ export async function handleIpcAdopt(request: Request): Promise<Response> {
           terminalToken: caller.terminalId ?? proof.terminalToken, deviceBindingProof: proof.deviceBindingProof }, { strictAvailability: true });
         if (stableCaller.authUserId) {
           const stableAuthority = await databaseAuthority({ authUserId: stableCaller.authUserId }, { strictAvailability: true });
-          if (stableAuthority?.authorId && stableAuthority.subject === authority.subject) authority.authorId = stableAuthority.authorId;
+          if (stableAuthority?.authorId && stableAuthority.subject === authority.subject) {
+            authority.authorId = stableAuthority.authorId;
+            if (caller.kind === "staff" && stableAuthority.branchId === authority.branchId &&
+                stableCaller.terminal?.id === caller.terminal?.id) settingsCaller = stableCaller;
+          }
         }
       } catch { /* Stable author setup waits; ordinary verified POS adoption remains usable. */ }
     }
     return Response.json({
       ok: true,
       ...authority,
+      ...(settingsCaller.kind === "staff" && settingsCaller.authUserId && settingsCaller.email &&
+          !settingsCaller.email.trim().toLowerCase().endsWith("@pos.local") && caller.terminal?.mode === "operations" &&
+          caller.terminal.platform === "pc" && caller.terminal.branchId === scope.storeId && !scope.stale
+        ? { settingsPersonId: settingsCaller.authUserId } : {}),
       // A cashier session or terminal token may carry the verified
       // branch even when a global administrator has no store_id.
       branchId: scope.storeId,

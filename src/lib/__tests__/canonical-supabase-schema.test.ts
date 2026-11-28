@@ -9,7 +9,7 @@ const read = (path: string) => readFileSync(resolve(root, path), "utf8").replace
 function sqlFiles(directory = root): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(directory)) {
-    if ([".git", "node_modules", ".output", ".wrangler"].includes(entry)) continue;
+    if ([".git", "node_modules", ".output", ".wrangler", ".tmp"].includes(entry)) continue;
     const absolute = resolve(directory, entry);
     if (statSync(absolute).isDirectory()) files.push(...sqlFiles(absolute));
     else if (entry.endsWith(".sql")) files.push(relative(root, absolute).replaceAll("\\", "/"));
@@ -18,6 +18,16 @@ function sqlFiles(directory = root): string[] {
 }
 
 describe("canonical Supabase SQL", () => {
+  it("retains the exact locale-independent optional financial fact upgrade", () => {
+    const schema=read("supabase/schema.sql");
+    const block=schema.split("-- FINANCIAL_FACT_KEY_ORDER_BEGIN\n")[1]?.split("\n-- FINANCIAL_FACT_KEY_ORDER_END")[0];
+    expect(block).toBe(read("supabase/migrations/20261118060529_deterministic_financial_fact_key_order.sql").trim());
+    expect(schema.indexOf("-- FINANCIAL_FACT_KEY_ORDER_BEGIN")).toBeGreaterThan(schema.indexOf("-- NATIVE_REFUND_FINANCIAL_RECEIPT_END"));
+  });
+  it("installs the exact read-only financial refund receipt probe in fresh and upgraded schemas", () => {
+    const block = read("supabase/schema.sql").split("-- NATIVE_REFUND_FINANCIAL_RECEIPT_BEGIN\n")[1]?.split("\n-- NATIVE_REFUND_FINANCIAL_RECEIPT_END")[0];
+    expect(block).toBe(read("supabase/migrations/20261117233612_native_refund_exact_financial_receipt_probe.sql").trim());
+  });
   it("retains the additive graph-read admission after all original shift authority contracts", () => {
     const schema = read("supabase/schema.sql");
     const begin = "-- SHIFT_GRAPH_READ_SCOPE_BEGIN", end = "-- SHIFT_GRAPH_READ_SCOPE_END";
@@ -259,21 +269,46 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261105063613_admin_attested_legacy_shift_recovery.sql",
       "supabase/migrations/20261105090000_shift_financial_known_history.sql",
       "supabase/migrations/20261105090100_branch_shift_sharing.sql",
+      "supabase/migrations/20261105113916_stock_history_effective_ledger.sql",
       "supabase/migrations/20261105140417_isolate_refund_guard_table_fields.sql",
       "supabase/migrations/20261105170645_bounded_shop_hourly_report.sql",
+      "supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql",
+      "supabase/migrations/20261105232647_stock_history_author_claim_admission.sql",
       "supabase/migrations/20261106015347_guard_existing_product_owner_during_native_sync.sql",
       "supabase/migrations/20261106020500_complete_change_history_sync_count.sql",
+      "supabase/migrations/20261106035442_stock_history_original_source_receipts.sql",
       "supabase/migrations/20261106042139_automatic_history_index_recovery.sql",
+      "supabase/migrations/20261106042742_stock_history_verified_source_membership.sql",
+      "supabase/migrations/20261106065813_stock_history_selected_time_period_reader.sql",
+      "supabase/migrations/20261106073851_stock_history_coverage_frontiers.sql",
       "supabase/migrations/20261107021328_isolate_branch_history_sync.sql",
       "supabase/migrations/20261107024729_bounded_held_status_reconciliation.sql",
       "supabase/migrations/20261107060000_reviewed_held_sale_graph.sql",
       "supabase/migrations/20261107094311_add_scoped_history_transport.sql",
+      "supabase/migrations/20261117052540_sale_item_parent_sync_scope.sql",
+      "supabase/migrations/20261117233612_native_refund_exact_financial_receipt_probe.sql",
+      "supabase/migrations/20261118060529_deterministic_financial_fact_key_order.sql",
+      "supabase/migrations/20261120082442_batched_scoped_feed.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
       "supabase/sql/trigger_sync_upgrade.sql",
       "supabase/sql/verify_purchase_order_uuid_sync.sql",
     ]);
+  });
+  it("keeps unfinished stock-history preparation outside the canonical installer", () => {
+    expect(read("supabase/migrations/20261105113916_stock_history_effective_ledger.sql"))
+      .toContain("STOCK401 DRAFT preparation only");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE TABLE IF NOT EXISTS public.stock_history_heads");
+    expect(read("supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql"))
+      .toContain("STOCK401 DRAFT preparation only");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE TABLE private.stock_history_accepted_effects");
+    expect(read("supabase/migrations/20261105232647_stock_history_author_claim_admission.sql")).toContain("STOCK401 DRAFT");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE FUNCTION public.pos_stock_history_accept_claims");
+    expect(read("supabase/migrations/20261106035442_stock_history_original_source_receipts.sql")).toContain("STOCK401 DRAFT preparation only");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE TABLE private.stock_history_original_sources");
+    expect(read("supabase/migrations/20261106042742_stock_history_verified_source_membership.sql")).toContain("STOCK401 DRAFT preparation only");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE TABLE private.stock_history_source_claim_verifications");
   });
 
   it('retains the reviewed shift-sharing upgrade exactly in canonical SQL', () => {
@@ -287,6 +322,14 @@ describe("canonical Supabase SQL", () => {
     const block = schema.split("-- PROTECTED_FEED_PAGE_BEGIN\n")[1]?.split("\n-- PROTECTED_FEED_PAGE_END")[0];
     expect(block).toBe(read("supabase/migrations/20261104040251_protected_byte_bounded_feed_download.sql").trim());
     expect(schema.split("-- PROTECTED_FEED_PAGE_BEGIN")).toHaveLength(2);
+  });
+
+  it("includes the exact additive scoped feed batch migration once", () => {
+    const schema = read("supabase/schema.sql");
+    const sections = schema.split("-- BATCHED_SCOPED_FEED_BEGIN\n");
+    expect(sections).toHaveLength(2);
+    const block = sections[1]?.split("\n-- BATCHED_SCOPED_FEED_END")[0];
+    expect(block).toBe(read("supabase/migrations/20261120082442_batched_scoped_feed.sql").trim());
   });
 
   it("syncs offline member profile details without exposing the Auth identity", () => {

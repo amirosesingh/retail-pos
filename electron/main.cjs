@@ -5,7 +5,7 @@ const os = require("node:os");
 const net = require("node:net");
 const { randomUUID, createHash } = require("node:crypto");
 const { spawn } = require("node:child_process");
-const { app, BrowserWindow, ipcMain, screen, dialog, session, shell, safeStorage, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, screen, dialog, session, shell, safeStorage, Menu, net: electronNet } = require("electron");
 
 require("./window-rendering.cjs").configureWindowRendering(app);
 
@@ -38,6 +38,7 @@ const { PushWorker } = require("./sync/push-worker.cjs");
 const { PullWorker } = require("./sync/pull-worker.cjs");
 const { ConflictRepository } = require("./sync/conflicts.cjs");
 const { SyncCoordinator } = require("./sync/coordinator.cjs");
+const { installedGroupedSettingsPilot } = require("./sync/grouped-store-settings.cjs");
 const { CloudClient } = require("./sync/cloud-client.cjs");
 const { HeldStatusRecovery } = require("./sync/held-status-recovery.cjs");
 const closeWriteBarrier = new (require("./sync/write-barrier.cjs").WriteBarrier)();
@@ -55,13 +56,24 @@ const { discoverLocalSqlServers } = require("./db/local-server-discovery.cjs");
 const ipcPrivilege = require("./ipc-privilege.cjs");
 const adminSession = require("./admin-session.cjs");
 let sessionAdoptionRevision = 0;
+let offlineStaffLoginWitness = null;
 const { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin } = require("./synced-staff-login.cjs");
 
-const databaseConfig = createSecureConfig({ app, safeStorage, configStore });
 const databaseManager = new ConnectionManager();
+const terminalOnlineRecovery = require("./terminal-online-recovery.cjs").createTerminalOnlineRecovery({
+  app, safeStorage, configStore, terminalStore, cloudCredentials,
+  activationBoundary: require("./verified-activation.cjs"),
+});
+const currentLocalAdmission = require("./current-local-admission.cjs").createCurrentLocalAdmission({
+  app, safeStorage, onlineRecovery: terminalOnlineRecovery, terminalStore,
+  activationBoundary: require("./verified-activation.cjs"),
+});
+const databaseConfig = createSecureConfig({ app, safeStorage, configStore, recoveryLocal: currentLocalAdmission });
 const databaseService = new DatabaseService({
   secureConfig: databaseConfig,
   manager: databaseManager,
+  localRecoveryPending: () => currentLocalAdmission.pending(),
+  recoveryLocal: currentLocalAdmission,
   migrate: (profile) => applyMigrations(databaseManager, profile),
   prepareRecoveryMetadata: prepareShiftRecoveryMetadata,
   log: diagnostics.logConnection,
@@ -84,12 +96,35 @@ const shiftAuthority = new (require("./shift-authority.cjs").ShiftAuthorAuthorit
   terminal:()=>terminalStore.read(),project:()=>cloudCredentials.read({strict:true})?.url,
   branch:()=>localBranchId(),isManagementDevice:()=>isManagementDevice(),backendUrl:()=>authorizationServerUrl(),
 });
+const { installedStockHistoryEnrollment, createStockHistoryRuntime } = require("./stock-history-runtime.cjs");
+const stockHistory = createStockHistoryRuntime({
+  enrollment: installedStockHistoryEnrollment(process.env),
+  manager: databaseManager, cloud: syncCloud, keys: shiftAuthorKeys, session: adminSession,
+  terminal:()=>terminalStore.read(), branch:localBranchId, project:()=>cloudCredentials.read({strict:true})?.url,
+  stocktakeBackend: {
+    drain: options => syncCoordinator.runFinal(options),
+    enroll: request => syncCloud.enrollStocktake(request),
+    approveFinancial: request => syncCloud.approveStocktakeFinancial(request),
+    loadLease: ({ branchId, terminalId, databaseId, stocktakeId }, purpose) =>
+      syncCloud.loadStocktakeLease({ branchId, terminalId, databaseId, stocktakeId, purpose }),
+    loadRelease: ({ branchId, terminalId, databaseId, stocktakeId }) =>
+      syncCloud.loadStocktakeRelease({ branchId, terminalId, databaseId, stocktakeId }),
+  },
+  ready:()=>{
+    const state=databaseService.snapshot();
+    return process.platform==="win32" && app.hasSingleInstanceLock() && !safeMode &&
+      (!quitting || closeWriteBarrier.sealed) && !jobManager.running && !localDataPreparePromise &&
+      state.enabled && state.configured && state.connected && state.tradingReady && !isManagementDevice();
+  },
+});
 const changeReader = new ChangeReader(databaseManager, syncRegistry, {reviewedShiftRecovery:{
   prepare:graph=>legacyShiftRecovery?.prepareCoverage(graph),
   verify:(tx,token,graph,branch)=>legacyShiftRecovery.verifyCoverage(tx,token,graph,branch),
 }});
 const conflictRepository = new ConflictRepository(databaseManager);
-const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof) });
+const uploadCashCheckout = wire => cashCheckoutRuntime.upload(wire);
+const uploadGroupedRefund = wire => groupedRefundRuntime.upload(wire);
+const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof),uploadCashCheckout,uploadGroupedRefund,stockHistory:stockHistory.uploader });
 let legacyShiftRecovery;
 const legacyRecoveryRuntime = require("./sync/legacy-shift-recovery-runtime.cjs").createLegacyShiftRecoveryRuntime({
   reader:changeReader,recovery:()=>legacyShiftRecovery,enabled:supportsLegacyShiftRecovery,activeBranch:localBranchId,
@@ -100,11 +135,60 @@ const legacyRecoveryRuntime = require("./sync/legacy-shift-recovery-runtime.cjs"
     return ()=>{if(databaseManager.pool!==pool||identity()!==expected)throw Object.assign(new Error("The configured sync source changed. Saved work remains pending."),{code:"SYNC_BRANCH_FORBIDDEN",table:"shifts"});};
   },
 });
+const groupedSettingsPilot = installedGroupedSettingsPilot(process.env);
+const pullWorker = new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange });
 const syncCoordinator = new SyncCoordinator({
-  pushWorker: {reader:legacyRecoveryRuntime.reader,run:options=>legacyRecoveryRuntime.run(options,value=>shiftFinancialRuntime.runPush(value))},
-  pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
+  pushWorker: {reader:legacyRecoveryRuntime.reader,cloud:syncCloud,stockHistory:stockHistory.uploader,
+    run:options=>legacyRecoveryRuntime.run(options,value=>shiftFinancialRuntime.runPush(value))},
+  pullWorker,
   recoverHeldStatuses:recoverLocalHeldStatuses,
+  groupedSettingsPilot: groupedSettingsPilot?.enrollment,
+  groupedSettingsPilotMode: groupedSettingsPilot?.mode,
+  uploadStoreSettingsEdit: () => storeSettingsEdits.upload(),
+  observeStockFrontier: options => stockHistory.observe(options),
+  downloadStockHistory: options => stockHistory.download(options),
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",legacyRecoveryRuntime.status(state)); },
+});
+const { cashSenderEnrollment, createCashCheckoutRuntime } = require("./sync/cash-checkout-runtime.cjs");
+const configuredCashSender = cashSenderEnrollment(process.env);
+const cashCheckoutRuntime = createCashCheckoutRuntime({
+  configured: configuredCashSender, cloud: syncCloud, connectionManager: databaseManager,
+  registry: syncRegistry, coordinator: syncCoordinator, authority: shiftAuthority,
+  handoff: proof => pullWorker.cashSenderHandoff(proof, groupedSettingsPilot),
+  ready: () => {
+    const state = databaseService.snapshot();
+    return process.platform === "win32" && app.hasSingleInstanceLock() && !safeMode &&
+      (!quitting || closeWriteBarrier.sealed) && !jobManager.running && !localDataPreparePromise &&
+      state.enabled && state.configured && state.connected && state.tradingReady;
+  },
+});
+const storeSettingsEdits = require("./sync/store-settings-edit-runtime.cjs").createStoreSettingsEditRuntime({
+  pilot: groupedSettingsPilot,
+  installationGeneration: process.env.POS_GROUPED_SETTINGS_EDIT_INSTALLATION_GENERATION,
+  coordinator: syncCoordinator, cloud: syncCloud, connectionManager: databaseManager, registry: syncRegistry,
+  ready: () => {
+    const state = databaseService.snapshot();
+    return process.platform === "win32" && app.hasSingleInstanceLock() && !safeMode && !quitting &&
+      !closeWriteBarrier.sealed && !jobManager.running && !localDataPreparePromise &&
+      state.enabled && state.configured && state.connected && state.tradingReady;
+  },
+  actor: () => {
+    const current = adminSession.identity();
+    if (current?.source !== "pos" || !current.settingsPersonId ||
+        !(adminSession.hasLevel("admin") || adminSession.hasPermission("can_access_pos_settings"))) return null;
+    return { personId: current.settingsPersonId, branchId: recordId(current.branchId), epoch: adminSession.epoch() };
+  },
+});
+const refreshPinApprovalActivity = require("./sync/approval-activity-wake.cjs").createApprovalActivityWake({
+  coordinator: syncCoordinator, manager: databaseManager, registry: syncRegistry, reader: changeReader,
+  publish: publishBusinessChange, runApply: work => closeWriteBarrier.run(work),
+  capture: capturePinApprovalActivity,
+});
+const { createOfflineStaffRefresh, matchesHostedStaffSession } = require("./sync/offline-staff-refresh.cjs");
+const refreshOfflineStaff = createOfflineStaffRefresh({
+  cloud: syncCloud, manager: databaseManager, coordinator: syncCoordinator, registry: syncRegistry,
+  reader: changeReader, runApply: work => closeWriteBarrier.run(() =>
+    !jobManager.running && !localDataPreparePromise ? work() : false),
 });
 // Main-private ownership evidence for retaining, not executing, an interrupted
 // history-only v1 job. No renderer flag or job timestamp can supply this proof.
@@ -123,27 +207,48 @@ async function ownsHistoryRecoveryExecution({jobId,source,requestParent=null}={}
   }catch{return false;}
 }
 const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader,publish:publishBusinessChange,historyExecutionProof:ownsHistoryRecoveryExecution,recoverHeldStatuses:recoverLocalHeldStatuses });
-const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({ cloud:syncCloud, databaseService, connectionManager:databaseManager, lifecycle:localDataLifecycle, jobs:jobRepository, coordinator:syncCoordinator });
+function managementStockReplicaReady() {
+  const state = databaseService.snapshot();
+  return process.platform === "win32" && app.hasSingleInstanceLock() && !safeMode && !quitting &&
+    !syncCoordinator.paused && state.enabled && state.configured && state.connected && state.tradingReady &&
+    !state.localRecoveryPending;
+}
+const managementInventorySource = require("./sync/management-inventory-source.cjs").createManagementInventorySource({
+  manager: databaseManager, cloud: syncCloud, registry: syncRegistry, ready: managementStockReplicaReady,
+});
+const downloadManagementStockHistory = require("./sync/management-stock-history.cjs").createManagementStockHistory({
+  manager: databaseManager, cloud: syncCloud, ready: managementStockReplicaReady,
+});
+const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({
+  cloud: syncCloud, databaseService, connectionManager: databaseManager, lifecycle: localDataLifecycle,
+  jobs: jobRepository, coordinator: syncCoordinator,
+  verifyCurrentInventory: () => managementInventorySource.verifyNext(),
+  downloadStockHistory: () => downloadManagementStockHistory(work =>
+    syncCoordinator.withExclusive(() => work(() => syncCoordinator.ownsExclusive() && !syncCoordinator.paused))),
+});
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
-const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
+const operationsRepository = new OperationsRepository(databaseManager, syncRegistry, { stockHistory:stockHistory.capture });
 const heldStatusRecovery = new HeldStatusRecovery({manager:databaseManager,registry:syncRegistry,cloud:syncCloud,publish:publishBusinessChange});
 const shiftSyncJournal = new ShiftSyncJournal(operationsRepository,{authorRequired:true});
 // Main-private FIN62 seam. No renderer/IPC configuration and no activation.
 const shiftFinancialDraftProvider = null;
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
-const receiptRepository = new ReceiptRepository(databaseManager, syncCloud);
+const receiptRepository = new ReceiptRepository(databaseManager, syncCloud, { stockHistory:stockHistory.capture });
+const groupedRefundRuntime = require("./sync/grouped-refund-runtime.cjs").createGroupedRefundRuntime({
+  configured: configuredCashSender, cash: cashCheckoutRuntime, cloud: syncCloud, coordinator: syncCoordinator, connectionManager: databaseManager,
+  authority: shiftAuthority, legacyRepository: () => receiptRepository,
+});
 const shiftFinancialRuntime = new (require('./db/shift-financial-runtime.cjs').ShiftFinancialRuntime)({
   manager:databaseManager,cloud:syncCloud,terminal:()=>terminalStore.read(),authority:shiftAuthority,
   vault:require('./security/financial-capability-vault.cjs').createFinancialCapabilityVault({safeStorage,directory:()=>app.getPath('userData')}),
-  operationsRepository,registry:syncRegistry,checkpoints:syncCheckpoints,
+  operationsRepository,registry:syncRegistry,checkpoints:syncCheckpoints,uploadCashCheckout,uploadGroupedRefund,stockHistory:stockHistory.uploader,
   legacy:{aggregate:aggregateRepository,receipts:receiptRepository,journal:shiftSyncJournal,push:legacyPushWorker},
 });
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
 const { OfflineApprovalService, OfflineApprovalStore } = require("./offline-approval-service.cjs");
-const offlineApprovalService = new OfflineApprovalService({
-  captureScope: () => {
+function captureOfflineApprovalScope(permission = "can_process_sale") {
     const identity = adminSession.identity(), terminal = terminalStore.read();
-    if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_process_sale") || !identity?.authorId || isManagementDevice() || !databaseManager.pool || !databaseService.snapshot().tradingReady || !terminal?.tokenId || !localBranchId())
+    if (!adminSession.hasPosAuthority() || !adminSession.hasPermission(permission) || !identity?.authorId || isManagementDevice() || !databaseManager.pool || !databaseService.snapshot().tradingReady || !terminal?.tokenId || !localBranchId())
       throw Object.assign(new Error("Sign in on the registered branch terminal before approving a bill."), { code: "EPRIVILEGE" });
     adminSession.touch();
     const pool = databaseManager.pool, epoch = adminSession.epoch();
@@ -151,7 +256,19 @@ const offlineApprovalService = new OfflineApprovalService({
     const expected = stamp();
     const assertCurrent = () => { if (databaseManager.pool !== pool || stamp() !== expected) throw Object.assign(new Error("The signed-in operator or terminal changed. Request approval again."), { code: "EAPPROVAL_CONTEXT" }); };
     return { branchId: localBranchId(), terminalId: recordId(terminal.tokenId), requester: identity.canonicalSubject ?? identity.subject, requesterId: recordId(identity.authorId), epoch, assertCurrent };
-  },
+}
+const offlineApprovalService = new OfflineApprovalService({
+  captureScope: () => captureOfflineApprovalScope(),
+  verify: (username, pin, scope) => verifySyncedApprovalPin(databaseManager.pool, username, pin, scope.branchId,
+    { verifyTotp: approvalTokenVerifier.verify, identifyTotp: approvalTokenVerifier.identify, prepareTotp: approvalTokenVerifier.prepare }),
+  store: new OfflineApprovalStore(databaseManager, operationsRepository),
+});
+const refundApprovalService = new (require("./refund-approval-service.cjs").RefundApprovalService)({
+  captureScope: () => captureOfflineApprovalScope("can_process_refund"),
+  allowPin: () => true,
+  captureSource: captureRefundApprovalSource,
+  readPending: (scope, saleId, operationId, tx) => require("./sync/refund-recovery-native.cjs").readPendingOriginal(databaseManager, scope, saleId, operationId, tx),
+  verifyHosted: require("./refund-hosted-authority.cjs").createHostedRefundVerifier({ backend: () => authorizationServerUrl(), terminal: () => terminalStore.read() }),
   verify: (username, pin, scope) => verifySyncedApprovalPin(databaseManager.pool, username, pin, scope.branchId,
     { verifyTotp: approvalTokenVerifier.verify, identifyTotp: approvalTokenVerifier.identify, prepareTotp: approvalTokenVerifier.prepare }),
   store: new OfflineApprovalStore(databaseManager, operationsRepository),
@@ -304,6 +421,15 @@ function supportsLegacyShiftRecovery(){
   return Boolean(databaseManager.pool && binding?.mode==="operations" && binding.platform==="pc" && !isManagementDevice());
 }
 const activationBoundary = require("./verified-activation.cjs");
+const terminalRepair = require("./terminal-repair.cjs").createTerminalRepair({
+  terminalStore,activationBoundary,adminSession,databaseManager,databaseConfig,cloudCredentials,configStore,
+  withExclusive:work=>syncCoordinator.withExclusive(work),canCheck:()=>!quitting&&!closeWriteBarrier.sealed,
+  onlineRecovery:terminalOnlineRecovery,
+  assertNoCurrentLocalAdmission:()=>currentLocalAdmission.assertNoCurrentAdmission(),
+  onlineBusy:()=>closeWriteBarrier.active.size>1||recoveryMetadataGate.control.size>1||jobManager.running||Boolean(localDataPreparePromise)||
+    ["enabled_connecting","enabled_validating","enabled_bootstrapping"].includes(databaseService.snapshot().state),
+  onOnlineHold:()=>databaseService.holdLocalRecovery(),
+});
 function localBranchId(){
   if(isManagementDevice())return null;
   const terminal=terminalStore.read()??{};
@@ -312,12 +438,76 @@ function localBranchId(){
 }
 function rememberVerifiedBranch(){ /* Account scope never assigns a physical terminal. */ }
 function authorizedLocalBranch(){return activationBoundary.authorizedBranch(terminalStore.read(),adminSession.branchId());}
+function captureOfflineStaffReplica(cashier, backendUrl, proof, level) {
+  const ready = () => {
+    const state = databaseService.snapshot();
+    return process.platform === "win32" && !safeMode && !quitting && !closeWriteBarrier.sealed &&
+      state.enabled && state.configured && state.connected && state.tradingReady;
+  };
+  if (!ready()) return null;
+  const source = syncCloud.requestContext(false);
+  const registration = activationBoundary.binding(source.terminal);
+  const branchId = registration?.branchId;
+  const id = recordId(cashier.id);
+  const expected = { ...proof, id, username: cashier.username, level, branchId, permissions: cashier.permissions };
+  // Renderer re-adoption can reverify the same hosted session while startup
+  // settles. Require the same two proofs and the exact current POS authority.
+  const sameSession = () => matchesHostedStaffSession(adminSession.identity(), syncCloud.requestContext(true).personProof, expected);
+  if (registration?.mode !== "operations" || registration.platform !== "pc" || !branchId ||
+      !/^[a-f0-9]{64}$/i.test(source.terminal.deviceBindingProof ?? "") ||
+      branchId !== recordId(cashier.store_id) || branchId !== recordId(source.project?.branchId) ||
+      !id || !sameSession() || !source.pool || !source.profile || source.base !== backendUrl ||
+      !/^https:\/\//i.test(source.base) || !/^https:\/\//i.test(source.project?.projectOrigin ?? "") ||
+      typeof cashier.username !== "string" || !cashier.username) return null;
+  const expiresAt = Date.now() + 45_000;
+  offlineStaffLoginWitness = expected;
+  return Object.freeze({ pool: source.pool, branchId, id, username: cashier.username,
+    role: cashier.role, roleSlug: cashier.role_slug, permissions: cashier.permissions,
+    assertCurrent() {
+      if (!ready() || Date.now() >= expiresAt || offlineStaffLoginWitness !== expected || !sameSession())
+        throw Object.assign(new Error("The hosted sign-in for offline staff refresh changed."), { code: "EOFFLINE_STAFF_CONTEXT" });
+      syncCloud.assertRequestContext(source, false);
+    },
+    release() { if (offlineStaffLoginWitness === expected) offlineStaffLoginWitness = null; },
+  });
+}
+function capturePinApprovalActivity() {
+  const ready = () => {
+    const state = databaseService.snapshot();
+    return process.platform === "win32" && app.hasSingleInstanceLock() && adminSession.hasPosAuthority() &&
+      !safeMode && !quitting && !closeWriteBarrier.sealed && !syncCoordinator.paused &&
+      state.enabled && state.configured && state.connected && state.tradingReady;
+  };
+  try {
+    if (!ready()) return null;
+    const source = syncCloud.requestContext(true);
+    const registration = activationBoundary.binding(source.terminal);
+    const branchId = registration?.branchId;
+    const projectUrl = source.project?.projectOrigin?.replace(/\/+$/, "");
+    const { sessionToken, accessToken } = source.personProof;
+    const deviceBindingProof = source.terminal.deviceBindingProof;
+    if (registration?.platform !== "pc" || registration.mode !== "operations" || !branchId ||
+        recordId(adminSession.branchId()) !== branchId || recordId(source.project?.branchId) !== branchId ||
+        !source.pool || !source.profile || !/^https:\/\//i.test(source.base) || !/^https:\/\//i.test(projectUrl ?? "") ||
+        !sessionToken || accessToken || !/^[a-f0-9]{64}$/i.test(deviceBindingProof ?? "")) return null;
+    const epoch = adminSession.epoch();
+    return { key: `${epoch}:${source.fingerprint}`, pool: source.pool, branchId, projectUrl, sessionToken,
+      backendUrl: source.base, terminalToken: registration.id, deviceBindingProof,
+      assertCurrent() {
+        if (!ready() || adminSession.epoch() !== epoch) throw new Error("The signed-in approval reader changed.");
+        syncCloud.assertRequestContext(source, true);
+      },
+    };
+  } catch { return null; }
+}
 async function assertSafeRegistrationChange(config){
-  const previous=terminalStore.lastBinding();
-  if(!previous||activationBoundary.sameBinding(activationBoundary.binding(previous),activationBoundary.binding(config)))return;
-  if(!adminSession.hasLevel("admin")&&!adminSession.recoveryActive())throw new Error("An administrator must authorize terminal reassignment.");
-  if(!databaseManager.isConnected())throw new Error("Connect the local database before changing terminal registration so pending transactions can be checked.");
-  const branch=activationBoundary.binding(previous)?.branchId;
+  const retained=terminalStore.lastBinding({strict:true});
+  const previous=activationBoundary.binding(retained);
+  if(!previous&&(retained||terminalStore.wasProvisioned?.()))throw Object.assign(new Error("The previous terminal binding could not be read safely. Your saved setup has been kept."),{code:"EACTIVATION_STORE"});
+  if(!previous||activationBoundary.sameBinding(previous,activationBoundary.binding(config)))return;
+  if(!adminSession.hasLevel("admin")&&!adminSession.recoveryActive())throw Object.assign(new Error("An administrator must authorize terminal reassignment."),{code:"EPRIVILEGE"});
+  if(!databaseManager.isConnected())throw Object.assign(new Error("Connect the local database before changing terminal registration so pending transactions can be checked."),{code:"EACTIVATION_REPAIR_DATABASE"});
+  const branch=previous.branchId;
   // Management can have pending work from several branches in the same SQL
   // store. Inspect all unacknowledged work rather than treating null as a
   // branch or preventing a legitimate replacement activation forever.
@@ -325,14 +515,26 @@ async function assertSafeRegistrationChange(config){
     pending:Number((await databaseManager.pool.request().query("SELECT COUNT_BIG(*) pending FROM dbo.sync_change_journal WHERE acknowledged_at IS NULL;")).recordset?.[0]?.pending??0),failed:0,
   };
   const conflicts=await conflictRepository.unresolved();
-  if(summary.pending||summary.failed||conflicts?.length)throw new Error("Synchronize or review pending transactions before changing terminal registration.");
+  if(summary.pending||summary.failed||conflicts?.length)throw Object.assign(new Error("Synchronize or review pending transactions before changing terminal registration."),{code:"EACTIVATION_REPAIR_PENDING"});
+  if(branch && previous.id) await syncCoordinator.withExclusive(async () => {
+    const pool = databaseManager.pool;
+    const { assertStoreSettingsEditReassignmentClear } = require("./db/store-settings-edit-outbox.cjs");
+    try {
+      await assertStoreSettingsEditReassignmentClear(pool, { branchId: branch, terminalId: previous.id });
+      if (pool !== databaseManager.pool) throw new Error("The local database changed.");
+    } catch (error) {
+      if (error?.code === "ESETTINGS_EDIT_PENDING")
+        throw Object.assign(new Error("Synchronize or review the pending store settings edit before changing terminal registration."), { code: error.code });
+      throw new Error("Store settings upload status could not be verified. Retry with the same local database connected.");
+    }
+  });
 }
 function recordRegistrationChange(previous,config){
   const before=activationBoundary.binding(previous),after=activationBoundary.binding(config);
   if(!before||activationBoundary.sameBinding(before,after))return;
   diagnostics.logConnection("activation.reassignment.succeeded",{category:"activation",stage:"reassignment",actor:adminSession.identity()?.subject??null,previousMode:before.mode,previousBranch:before.branchId,mode:after.mode,branch:after.branchId});
 }
-async function verifiedTerminalMirror(config){
+async function verifiedTerminalMirror(config,{strictProject=false}={}){
   const existing=terminalStore.read();
   activationBoundary.assertUnchanged(existing,config);
   if(existing&&(existing.deviceBindingProof||!config.deviceBindingProof))return {...existing};
@@ -341,6 +543,11 @@ async function verifiedTerminalMirror(config){
   const response=await fetch(`${backend}/api/public/terminal-pairing`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({tokenId:config.tokenId,proofHash:config.deviceBindingProof}),signal:AbortSignal.timeout(8000)});
   const result=await response.json();
   if(!response.ok||!result.approved)throw new Error("The terminal registration could not be verified.");
+  if(strictProject){
+    const project=String(cloudCredentials.read({strict:true})?.url??"").trim().replace(/\/+$/,"");
+    if(!["used","active"].includes(result.status)||String(result.supabaseUrl??"").trim().replace(/\/+$/,"")!==project||String(config?.supabaseUrl??"").trim().replace(/\/+$/,"")!==project)
+      throw new Error("The online database could not verify this replacement registration. Check the saved connection and retry.");
+  }
   return activationBoundary.canonicalConfig(config,result.terminal,existing);
 }
 function stampVerifiedBranchOperations(operations,branchId,aggregateKind=null){
@@ -395,6 +602,7 @@ async function observedDatabaseOperation(category, stage, work) {
     const result = await work();
     if (result?.ok === false) diagnostics.logConnection(`${category}.${stage}.failed`, {
       category, stage, code: result.code ?? "EDATABASE", message: result.error ?? result.message ?? "The database operation did not complete.",
+      ...diagnostics.sqlErrorDiagnostic?.(result),
     });
     else if (result?.historyPending === true || result?.historyHoldOnly === true)
       diagnostics.logConnection(`${category}.${stage}.pending`, { category, stage, state: "history_recovery" });
@@ -403,12 +611,14 @@ async function observedDatabaseOperation(category, stage, work) {
   } catch (error) {
     diagnostics.logConnection(`${category}.${stage}.failed`, {
       category, stage, code: error?.code ?? "EDATABASE", message: error?.message ?? String(error),
+      ...diagnostics.sqlErrorDiagnostic?.(error),
     });
     throw error;
   }
 }
 let localDataPreparePromise=null;
 function prepareLocalData({force=false}={}){
+  if(databaseService.snapshot().localRecoveryPending)return Promise.resolve(databaseService.holdLocalRecovery());
   if(isManagementDevice())return managementReplica.run();
   // Startup, the automatic ECHANGEGAP recovery path, and a manual database
   // action can request preparation together. Share one lifecycle run so a
@@ -430,10 +640,22 @@ function prepareLocalData({force=false}={}){
       // A healthy SQL connection is not proof of a complete local snapshot.
       // Preserve offline access only if this run already qualified that cache;
       // first/incomplete bootstrap failures keep the gate without disconnecting SQL.
-      const detail={phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences};
+      const registeredTables=syncRegistry.tables.map(table=>table.cloudTable);
+      const failureDiagnostic=diagnostics.bootstrapDiagnostic(error,registeredTables);
+      let sourceTable;
+      try{sourceTable=Object.getOwnPropertyDescriptor(error,"table")?.value;}catch{/* Diagnostic fields do not replace the failure. */}
+      const table=registeredTables.includes(sourceTable)?sourceTable:failureDiagnostic.table;
+      const retryableConnection = Boolean(failureDiagnostic.transportStage && !failureDiagnostic.httpStatus &&
+        (failureDiagnostic.transportCode || error?.code === "ETIMEDOUT" ||
+         (failureDiagnostic.transportStage === "fetch" && failureDiagnostic.transportErrorName === "TypeError")));
+      const detail={phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",
+        error:retryableConnection
+          ? "Retail could not reach the central service to finish verifying store data. Verification will retry when the connection returns."
+          : String(error?.message??error),
+        differences:error?.differences,...(retryableConnection?{retryableConnection:true,retryForce:force}:{}),...(table?{table}:{})};
       if(localDataLifecycle.preserveCachedReady?.())databaseService.markReady(detail);
       else databaseService.transition("enabled_bootstrapping",detail);
-      diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.bootstrapDiagnostic(error,syncRegistry.tables.map(table=>table.cloudTable)) });
+      diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.sqlErrorDiagnostic?.(error), ...failureDiagnostic });
       throw error;
     }finally{activity.finish(preparationError);}
   })().finally(()=>{localDataPreparePromise=null;});
@@ -495,6 +717,10 @@ function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS,{historyContinuation=fals
   automaticSyncScheduler.schedule(delay);
 }
 async function runAutomaticSync() {
+  if(databaseService.snapshot().localRecoveryPending){
+    if(databaseService.canRestoreAdmitted())await recoverLocalDatabase({prepare:false}).catch(error=>recordFault("database.current-local-reconnect",error));
+    scheduleAutomaticSync(AUTO_SYNC_RETRY_MS);return;
+  }
   if(isManagementDevice()){
     const decision=historyCadence.decision(),revision=historyCadence.beginCore();
     if(decision==='wait'){scheduleAutomaticSync(historyCadence.nextDelay(),{historyContinuation:true});return;}
@@ -521,6 +747,24 @@ async function runAutomaticSync() {
   // terminal identity. Revocation clears the vault before this can run again.
   if (!terminalStore.read()?.tokenId || !databaseManager.isConnected() || !localBranchId() || jobManager.running || localDataPreparePromise || syncCoordinator.paused) {
     scheduleAutomaticSync();
+    return;
+  }
+  if (databaseState.state === "enabled_bootstrapping" && databaseState.detail?.retryableConnection === true) {
+    let retryDelay = AUTO_SYNC_RETRY_MS;
+    const branchId = localBranchId(), terminalId = terminalStore.read()?.tokenId, pool = databaseManager.pool;
+    try {
+      const centralReady = (await syncCloud.health({ timeoutMs: 5000 })).ready;
+      const latest = databaseService.snapshot();
+      if (centralReady && !quitting && !syncCoordinator.paused && databaseManager.pool === pool &&
+          localBranchId() === branchId && terminalStore.read()?.tokenId === terminalId &&
+          latest.state === "enabled_bootstrapping" && latest.detail?.retryableConnection === true) {
+        await prepareLocalData({force:latest.detail.retryForce === true});
+        retryDelay = 250;
+      }
+    } catch {
+      // The lifecycle keeps and reports the original verification failure.
+    }
+    scheduleAutomaticSync(retryDelay);
     return;
   }
   // A pre-install busy lease may retry only while startup data is still gated.
@@ -555,12 +799,13 @@ async function runAutomaticSync() {
     diagnostics.logConnection("synchronization.automatic.recovering", { category:"synchronization", stage:"automatic", state:"recovering", ...diagnostics.bootstrapDiagnostic(result,syncRegistry.tables.map(table=>table.cloudTable)) });
     try {
       result = await prepareLocalData({ force: true });
+      failure = result;
     } catch (error) {
       failure = error;
-      result = { ok: false, code:error?.code??"EBOOTSTRAP", error: String(error?.message ?? error) };
+      result = { ok: false, code:error?.code??"EBOOTSTRAP", error: String(error?.message ?? error), ...diagnostics.sqlErrorDiagnostic?.(error) };
     }
   }
-  if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed.", ...diagnostics.bootstrapDiagnostic(failure,syncRegistry.tables.map(table=>table.cloudTable)) });
+  if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed.", ...diagnostics.sqlErrorDiagnostic?.([result,failure]), ...diagnostics.bootstrapDiagnostic(failure,syncRegistry.tables.map(table=>table.cloudTable)) });
   const scopedReaderUnavailable = result.historyPending === true && result.code === "EHISTORY_POLICY_UNAVAILABLE";
   const coreComplete = result.ok && !scopedReaderUnavailable;
   historyCadence.finishCore(coreRevision,{ok:coreComplete,nextMs:coreComplete?Math.max(250,AUTO_SYNC_OK_MS-(Date.now()-lastActivityFlush)):AUTO_SYNC_RETRY_MS});
@@ -583,7 +828,11 @@ async function runAutomaticSync() {
       .then(differences=>{const unresolved=differences.filter(row=>!MEMBERSHIP_TABLES.has(row.table)&&!(row.table==='change_history'&&localDataLifecycle.historyPending(localBranchId())));if(unresolved.length)throw reconciliationError(unresolved);})
       .catch((error) => recordFault("sync.verify-counts", error));
   }
-  scheduleAutomaticSync(automaticSyncQueued ? 250 : historyCadence.nextDelay(),{historyContinuation:true});
+  if (result.groupedSettingsPilot?.status === "MORE") {
+    scheduleAutomaticSync(250);
+  } else {
+    scheduleAutomaticSync(automaticSyncQueued ? 250 : historyCadence.nextDelay(), { historyContinuation: true });
+  }
 }
 function stopAutomaticSync() {
   automaticSyncScheduler.stop();
@@ -618,6 +867,7 @@ async function flushSyncBeforeShutdown({ allowSignedOutExit = false } = {}) {
       progress: reportCloseProgress,
       run: async () => {
         const settled = await settleWithin(() => require('./sync/shutdown-sync.cjs').runShutdownSync({
+          networkOnline: () => electronNet.isOnline(),
           health: () => syncCloud.health({ timeoutMs: 8000 }),
           pendingSummary: () => legacyRecoveryRuntime.reader.pendingSummary(branchId),
           run: () => syncCoordinator.runFinal({branchId,batchSize:500}),
@@ -697,19 +947,38 @@ async function restoreShiftCloseGuard() {
   if (result.recordset?.length) pendingShiftCloseSync.add("recovered-shift-close");
 }
 
-async function showMandatorySyncFailure(result) {
+let closeFailureDialog = null;
+function showMandatorySyncFailure(result) {
+  if (closeFailureDialog) return closeFailureDialog;
+  closeFailureDialog = showCloseFailure(result).finally(() => { closeFailureDialog = null; });
+  return closeFailureDialog;
+}
+
+async function showCloseFailure(result) {
   const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  const savingLocally = ["renderer", "local-writes", "local-storage"].includes(result?.stage);
+  const mayDefer = result?.stage === "synchronization" && databaseService.snapshot().tradingReady === true;
   const response = await dialog.showMessageBox(win, {
     type: "error",
-    title: "Synchronization incomplete",
-    message: "Synchronization must finish before the application can close.",
+    title: savingLocally ? "Local changes still need saving" : "Synchronization incomplete",
+    message: savingLocally ? "Retail could not finish saving local changes before closing." : "Retail could not confirm that synchronization finished.",
     detail: String(result?.error ?? "Retry after checking the synchronization status."),
-    buttons: win ? ["Retry sync and close", "Keep application open"] : ["Keep application open"],
+    buttons: win ? [savingLocally ? "Retry closing" : "Retry sync and close", "Keep application open",
+      ...(mayDefer ? ["Close and sync later"] : [])] : ["Keep application open"],
     defaultId: 0,
     cancelId: win ? 1 : 0,
     noLink: true,
   });
   if (win && response.response === 0) setImmediate(() => { if (!win.isDestroyed()) win.close(); });
+  if (win && mayDefer && response.response === 2 && !win.isDestroyed()) {
+    const prepared = await prepareApplicationClose(false, true);
+    if (!prepared.ok) {
+      setImmediate(() => { if (!win.isDestroyed()) void showMandatorySyncFailure(prepared); });
+      return;
+    }
+    allowMainWindowClose = true;
+    win.close();
+  }
 }
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
@@ -766,7 +1035,7 @@ function recordFault(scope, error) {
     severity: fatal ? "fatal" : "recoverable",
     ...(error?.stage ? { stage: String(error.stage).slice(0, 80) } : {}),
     ...(error?.table ? { table: String(error.table).slice(0, 80) } : {}),
-    ...(error?.sqlNumber != null ? { sqlNumber: Number(error.sqlNumber) } : {}),
+    ...diagnostics.sqlErrorDiagnostic?.(error),
     ...(error?.sqlDetail ? { sqlDetail: String(error.sqlDetail).slice(0, 500) } : {}),
     stack: String(error?.stack ?? "")
       .split("\n")
@@ -822,6 +1091,7 @@ const pendingShiftCloseSync = new Set();
 let mandatoryShiftSyncRun = null;
 let allowMainWindowClose = false;
 let closePreparation = null;
+let startupDatabaseRestore = null;
 let installUpdateAfterSync = null;
 
 function flushRendererBeforeClose(forUpdate = false) {
@@ -840,7 +1110,40 @@ function flushRendererBeforeClose(forUpdate = false) {
   });
 }
 
-function prepareApplicationClose(forUpdate = false) {
+async function verifyLocalStorageForExit(requireConnected = false) {
+  const state = databaseService.snapshot();
+  if (requireConnected && state.tradingReady !== true)
+    throw new Error("Reconnect the saved local database before closing with pending sync.");
+  if (!state.enabled || !state.configured || state.localRecoveryPending) {
+    if (requireConnected) throw new Error("Reconnect the saved local database before closing with pending sync.");
+    return;
+  }
+  const pool = databaseManager.pool;
+  const savedProfile = databaseConfig.profile();
+  const profile = JSON.stringify(savedProfile);
+  const target = value => JSON.stringify([
+    value?.host, value?.instanceName, value?.port, value?.database, value?.authMode,
+    value?.authMode === "sql" ? value.username : "",
+  ]);
+  const expectedTarget = target(savedProfile);
+  const assertCurrent = () => {
+    if (!pool || !databaseManager.isConnected() || databaseManager.pool !== pool ||
+        JSON.stringify(databaseConfig.profile()) !== profile || target(databaseManager.profile) !== expectedTarget)
+      throw new Error("Reconnect the saved local database so local work can be verified.");
+  };
+  await syncCoordinator.withExclusive(async () => {
+    assertCurrent();
+    const result = await pool.request().input("database", savedProfile.database).query(`
+      SELECT CASE WHEN DB_ID()=DB_ID(@database) THEN 1 ELSE 0 END AS matches_profile;
+      SELECT TOP (1) 1 AS journal_readable FROM dbo.sync_change_journal;
+    `);
+    assertCurrent();
+    if (result.recordset?.[0]?.matches_profile !== 1)
+      throw new Error("The connected local database changed. Reopen Retail before installing.");
+  });
+}
+
+function prepareApplicationClose(forUpdate = false, syncLater = false) {
   if(closePreparation)return closePreparation;
   closePreparation=(async()=>{
     let closeStage="renderer";
@@ -849,20 +1152,44 @@ function prepareApplicationClose(forUpdate = false) {
     try {
       if (forUpdate && closeWriteBarrier.active.size) throw new Error("Please finish the current transaction before updating.");
       await flushRendererBeforeClose(forUpdate);
-      // Even an unregistered window must pass the renderer safety check.
-      if(isManagementDevice() || (!databaseService.snapshot().configured && !pendingShiftCloseSync.size))return {ok:true,skipped:true};
       closeStage="local-writes";
       const drained=await settleWithin(() => closeWriteBarrier.sealAndDrain(), SHUTDOWN_SYNC_TIMEOUT_MS);
       if(!drained.ok)throw new Error("Local writes are still finishing. Keep the application open and retry closing.");
+      const restoring = startupDatabaseRestore;
+      if (restoring) {
+        closeStage = "local-storage";
+        reportCloseProgress({ active: true, message: "Finishing the local database check…" });
+        const settled = await settleWithin(() => restoring);
+        if (!settled.ok) throw new Error("The local database check is still finishing. Try closing when it completes.");
+      }
+      if (forUpdate || syncLater) {
+        closeStage = "local-storage";
+        reportCloseProgress({ active: true, message: "Checking saved local data…" });
+        const checked = await settleWithin(() => verifyLocalStorageForExit(syncLater), SHUTDOWN_SYNC_TIMEOUT_MS);
+        if (checked.timedOut) throw new Error("Local database work is still finishing. Try again when it finishes.");
+        if (!checked.ok) throw new Error(checked.error?.message ?? "The saved local database could not be read. Retry installation after checking the local connection.");
+        // Local verification leaves cloud acknowledgements and pending shift
+        // closures for the next authorized synchronization.
+        return { ok: true, locallySaved: true, synchronized: false, syncDeferred: true };
+      }
+      // Once accepted writes are durable, a signed-out quit needs neither a
+      // working database connection nor an upload. Leave the saved journal
+      // and any unconfirmed shift close for the next authorized sync.
+      if (!forUpdate && !adminSession.hasPosAuthority())
+        return { ok: true, synchronized: false, authenticationRequired: true };
+      const databaseState=databaseService.snapshot();
+      if(databaseState.localRecoveryPending)return {ok:true,synchronized:false,syncDeferred:true,localRecoveryPending:true};
+      if(databaseState.enabled === false)return {ok:true,synchronized:false,syncDeferred:true};
+      if(isManagementDevice() || (!databaseState.configured && !pendingShiftCloseSync.size))return {ok:true,skipped:true};
       closeStage="synchronization";
       const result=await flushSyncBeforeShutdown({ allowSignedOutExit: !forUpdate && !pendingShiftCloseSync.size });
       if(!result?.ok)throw new Error(result?.error??"Pending data has not been acknowledged by the cloud.");
-      pendingShiftCloseSync.clear();
+      if (result.synchronized !== false) pendingShiftCloseSync.clear();
       return result;
     } catch(error) {
       diagnostics.logConnection("shutdown.prepare.failed",{category:"application",stage:closeStage,code:error?.code??"ECLOSE",message:String(error?.message??error)});
       closeWriteBarrier.reopen();
-      return {ok:false,error:String(error?.message??error)};
+      return {ok:false,stage:closeStage,error:String(error?.message??error)};
     } finally { reportCloseProgress({ active: false }); if(mainWindow&&!mainWindow.isDestroyed())mainWindow.setEnabled(true); }
   })();
   closePreparation.then(result=>{if(!result.ok)closePreparation=null;},()=>{closePreparation=null;});
@@ -1022,40 +1349,82 @@ async function startAppServer(preferredPort = null) {
 }
 
 let cloudServerRestartTimer = null;
+let cloudServerRestarting = false;
+let cloudServerRestartPending = false;
+
+function canReloadCloudWindow(win) {
+  return !quitting && !safeMode && !win.isDestroyed() && !win.webContents.isDestroyed();
+}
+
+async function reloadCloudWindow(win, route) {
+  if (!canReloadCloudWindow(win)) return;
+  try {
+    await load(win, route);
+  } catch {
+    if (!canReloadCloudWindow(win)) return;
+    // Saving can move the renderer from setup to activation while the local
+    // server is being replaced. If the old route fails, let the normal entry
+    // screen choose where to resume using the newly saved profile.
+    let entry = route;
+    if (win === mainWindow) {
+      const database = databaseService.snapshot();
+      entry = database.enabled && database.configured && !database.tradingReady
+        ? "/database-startup"
+        : "/";
+    }
+    await new Promise(resolve => setTimeout(resolve, 250));
+    if (!canReloadCloudWindow(win)) return;
+    try {
+      await load(win, entry);
+    } catch (retryError) {
+      if (!canReloadCloudWindow(win)) return;
+      if (win === mainWindow) throw retryError;
+      recordFault("app-server.cloud-config-companion-reload", retryError);
+    }
+  }
+}
+
 function scheduleCloudServerRestart() {
   // Vite is owned by the developer, not by this Electron process. Native
   // requests read the vault directly and the renderer applies its saved
   // override; only our packaged server needs a new environment after a save.
-  if (DEV_URL) return;
+  if (DEV_URL || quitting || safeMode) return;
+  if (cloudServerRestarting) {
+    cloudServerRestartPending = true;
+    return;
+  }
   if (cloudServerRestartTimer) clearTimeout(cloudServerRestartTimer);
   cloudServerRestartTimer = setTimeout(async () => {
     cloudServerRestartTimer = null;
     if (quitting || safeMode) return;
-    const currentOrigin = baseUrl ? new URL(baseUrl).origin : "";
-    const windows = BrowserWindow.getAllWindows().filter((win) => {
-      if (win.isDestroyed() || win.webContents.isDestroyed()) return false;
-      try {
-        return new URL(win.webContents.getURL()).origin === currentOrigin;
-      } catch {
-        return false;
-      }
-    });
-    const routes = windows.map((win) => {
-      try {
-        const current = new URL(win.webContents.getURL());
-        return `${current.pathname}${current.search}${current.hash}`;
-      } catch {
-        return "/";
-      }
-    });
+    cloudServerRestarting = true;
     try {
+      const currentOrigin = baseUrl ? new URL(baseUrl).origin : "";
+      const targets = [];
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!canReloadCloudWindow(win)) continue;
+        let current;
+        try { current = new URL(win.webContents.getURL()); }
+        catch { continue; }
+        if (current.origin === currentOrigin)
+          targets.push({ win, route: `${current.pathname}${current.search}${current.hash}` });
+      }
       const previousPort = baseUrl ? Number(new URL(baseUrl).port) : null;
       await stopAppServer();
+      if (quitting || safeMode) return;
       baseUrl = await startAppServer(previousPort);
-      await Promise.all(windows.map((win, index) => load(win, routes[index])));
+      await Promise.all(targets.map(({ win, route }) => reloadCloudWindow(win, route)));
     } catch (error) {
-      recordFault("app-server.cloud-config-restart", error);
-      enterSafeMode("The local app server could not apply the saved cloud connection");
+      if (!quitting && !safeMode) {
+        recordFault("app-server.cloud-config-restart", error);
+        enterSafeMode("The local app server could not apply the saved cloud connection");
+      }
+    } finally {
+      cloudServerRestarting = false;
+      if (cloudServerRestartPending) {
+        cloudServerRestartPending = false;
+        scheduleCloudServerRestart();
+      }
     }
   }, 1_000);
 }
@@ -1184,10 +1553,6 @@ function createWindows(initialRoute = "/") {
     if (allowMainWindowClose || shutdownFlushComplete) return;
     event.preventDefault();
     const closingWindow = mainWindow;
-    if (updater.status().status === "ready") {
-      void installUpdateAfterSync(false).then(result => { if (!result.ok) return showMandatorySyncFailure(result); });
-      return;
-    }
     void prepareApplicationClose().then(async (result) => {
       if (!result.ok) {
         await showMandatorySyncFailure(result);
@@ -1918,6 +2283,34 @@ function captureLocalOperationIdentity(){
   return Object.freeze({assertCurrent,financialCapture(action){assertCurrent();return shiftAuthority.captureFinancial(action);}});
 }
 
+async function captureRefundApprovalSource({input,scope,recovery}) {
+  return syncCoordinator.withExclusive(async () => {
+    const capture=captureLocalOperationIdentity();capture.assertCurrent();scope.assertCurrent();
+    const financial=await shiftFinancialRuntime.forRefund(scope.branchId,input.saleId,capture);
+    capture.assertCurrent();scope.assertCurrent();
+    let source,anchorKind,check;
+    if(financial.source&&financial.author&&financial.expectedShiftId){
+      financial.assertCurrent();source=financial.source;anchorKind="financial";check=financial.assertCurrent;
+    }else if(financial.repository===receiptRepository){
+      const active=await cashCheckoutRuntime.admit(!recovery);
+      if(!active)return null;
+      const authorCapture=capture.financialCapture("REFUND");
+      source={projectOrigin:authorCapture.binding.projectOrigin,...active.scope};anchorKind="grouped";
+      // The lease ends before HTTPS. Keep identity/profile checks, then the
+      // real transaction admits and compares this exact source again.
+      check=()=>{authorCapture.assertCurrent();syncCloud.assertRequestContext(active.source,false);};
+    }else return null;
+    await require("./sync/grouped-refund-native.cjs").assertRefundStorageReady(databaseManager.pool);
+    if(recovery){
+      const original={projectOrigin:recovery.attestation.projectOrigin,...recovery.source};
+      if(recovery.route!==anchorKind||Object.keys(source).length!==Object.keys(original).length||
+        Object.entries(source).some(([key,value])=>original[key]!==value))throw Object.assign(new Error("The original refund belongs to a different local source. Keep it pending for review."),{code:"EAPPROVAL_CONTEXT"});
+    }
+    const assertCurrent=()=>{capture.assertCurrent();scope.assertCurrent();check();};assertCurrent();
+    return {scope:source,anchorKind,assertCurrent};
+  });
+}
+
 function enrollCurrentShiftAuthor(proof) {
   // Enrollment grants no POS authority. Its unavailability cannot fail login.
   void shiftAuthority.enrollOnline(proof).catch(()=>undefined);
@@ -1928,10 +2321,16 @@ function registerIpc() {
     isFirstRun: () => !terminalStore.wasProvisioned(),
     writeBarrier: {run:work=>recoveryMetadataGate.run(()=>closeWriteBarrier.run(work))},
     isManagementDevice,
+    isLocalRecoveryPending:()=>databaseService.snapshot().localRecoveryPending===true,
+    canConfigureLocalRecovery:()=>databaseService.canConfigureRecovery(),
+    isRetainedLocalRecoveryPending:()=>currentLocalAdmission.pending(),
   });
   recoveryMetadataGate.install(ipcMain);
   ipcMain.handle("admin:status", () => adminSession.status());
-  ipcMain.handle("admin:lock", () => { sessionAdoptionRevision++; adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status(); });
+  ipcMain.handle("admin:lock", () => {
+    sessionAdoptionRevision++; offlineStaffLoginWitness = null;
+    adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status();
+  });
   ipcMain.handle("admin:recovery-unlock", async (_event, username, pin) => guard.guarded(async () => {
     const user = guard.text(username, { name: "username", max: 160 });
     const secret = guard.text(pin, { name: "password or PIN", max: 128 });
@@ -2069,6 +2468,9 @@ function registerIpc() {
     const response=await fetch(`${authorizationUrl}/api/v1/pos/ipc-adopt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(proof),signal:AbortSignal.timeout(8_000)});
     const result=await response.json().catch(()=>null);
     if(!response.ok||result?.ok!==true){
+      if ((response.status === 401 || response.status === 403) && offlineStaffLoginWitness && current() &&
+          proof.sessionToken === offlineStaffLoginWitness.sessionToken && proof.cashierToken === offlineStaffLoginWitness.cashierToken)
+        offlineStaffLoginWitness = null;
       if(response.status===401||response.status===403)return failed("EAUTH_DENIED",response.status);
       if(response.status===426||result?.code==="EBACKEND_UPGRADE_REQUIRED")return failed("EBACKEND_UPGRADE_REQUIRED",426);
       if(result?.code==="EAUTH_DENIED"&&response.status<500)return failed("EAUTH_DENIED",403);
@@ -2097,10 +2499,14 @@ function registerIpc() {
       recordRegistrationChange(previous,terminal);
     }
     adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId);
-    adminSession.bindVerifiedAuthor(result.authorId,result.subject);
+    adminSession.bindVerifiedAuthor(result.authorId,result.subject,result.settingsPersonId);
     syncCloud.setAuthorizationProof(proof);
+    if (offlineStaffLoginWitness && !matchesHostedStaffSession(adminSession.identity(), proof, offlineStaffLoginWitness))
+      offlineStaffLoginWitness = null;
     enrollCurrentShiftAuthor(proof);
-    rememberVerifiedBranch(result.branchId);return{ok:true,level:result.level};
+    rememberVerifiedBranch(result.branchId);
+    if (result.settingsPersonId && groupedSettingsPilot?.mode === "run") scheduleAutomaticSync(250);
+    return {ok:true,level:result.level};
     }catch(error){
       if(error?.name==="BadArg")throw error;
       if(error?.code==="EBACKEND_UPGRADE_REQUIRED")return failed("EBACKEND_UPGRADE_REQUIRED",426);
@@ -2120,6 +2526,7 @@ function registerIpc() {
     });
     const result = await response.json().catch(() => ({ ok: false, error: "Authorization failed." }));
     if (!response.ok || !result.ok) return { ok: false, error: result.error ?? "Authorization failed." };
+    offlineStaffLoginWitness = null;
     adminSession.grant(result.level, result.subject, result.permissions, "manual", result.branchId);
     return { ok: true, level: result.level };
   }));
@@ -2148,6 +2555,8 @@ function registerIpc() {
     try{
       const preflight=await observedDatabaseOperation("migration","preflight",() => databaseService.health());
       if(!preflight.ok){databaseService.migrationFailed(preflight);return{...preflight,state:databaseService.snapshot()};}
+      try{await databaseService.verifyRecoveryPool(databaseConfig.credentials());}
+      catch(error){const failure=databaseService.recoveryError(error);databaseService.migrationFailed(failure);return{...failure,state:databaseService.snapshot()};}
       const migrated=await observedDatabaseOperation("migration","apply",() => applyMigrations(databaseManager));
       if(!migrated.ok){databaseService.migrationFailed(migrated);return{...migrated,state:databaseService.snapshot()};}
       const state=await databaseService.revalidateConnected();
@@ -2233,6 +2642,39 @@ function registerIpc() {
       return { ok: false, code: error?.code ?? "ESQLSERVER_WRITE", error: error?.message ?? "The authorization rule could not be saved locally." };
     }
   }));
+  ipcMain.handle("business:queue-store-settings-edit", (event, value) => guard.guarded(async () => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame)
+      return { ok: false, code: "ESETTINGS_EDIT_UNAVAILABLE", error: "Offline save is unavailable on this till." };
+    const input = guard.plainObject(value, { name: "settings edit" });
+    const keys = ["operationId", "branchId", "expectedVersion", "patch"];
+    if (Object.keys(input).length !== keys.length || keys.some(key => !Object.hasOwn(input, key)))
+      throw new guard.BadArg("The settings edit has unsupported fields.");
+    const patch = guard.plainObject(input.patch, { name: "settings changes" });
+    if (Object.keys(patch).some(key => !["block_shift_close_on_hold", "max_drawer_cash_limit"].includes(key)))
+      throw new guard.BadArg("This setting requires the central connection.");
+    const result = await storeSettingsEdits.capture({
+      operationId: guard.uuid(input.operationId, { name: "operation id" }),
+      branchId: guard.text(input.branchId, { name: "store", max: 128 }),
+      expectedVersion: input.expectedVersion,
+      patch,
+    });
+    if (result.ok) scheduleAutomaticSync(250);
+    return result;
+  }));
+  ipcMain.handle("business:review-store-settings-edit", (event, value) => guard.guarded(async () => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame)
+      return { ok: false, code: "ESETTINGS_REVIEW_UNAVAILABLE", error: "Store settings review is unavailable on this till." };
+    const input = guard.plainObject(value, { name: "settings review" });
+    const branchId = guard.text(input.branchId, { name: "store", max: 128 });
+    if (input.action === "preview" && Object.keys(input).length === 2) return storeSettingsEdits.review({ branchId });
+    if (input.action !== "keep-central" || Object.keys(input).length !== 4 ||
+        typeof input.decisionSha256 !== "string" || !/^[a-f0-9]{64}$/.test(input.decisionSha256))
+      throw new guard.BadArg("Confirm the verified store settings comparison.");
+    const result = await storeSettingsEdits.review({ branchId,
+      operationId: guard.uuid(input.operationId, { name: "operation id" }), decisionSha256: input.decisionSha256 });
+    if (result.ok) scheduleAutomaticSync(250);
+    return result;
+  }));
   ipcMain.handle("business:commit-aggregate", (_e, value) => guard.guarded(async() => {
     const aggregate=guard.aggregate(value);
     try {
@@ -2265,7 +2707,9 @@ function registerIpc() {
       const requestCapture=typeof shiftFinancialRuntime!=='undefined'&&operations.some(operation=>['sales','shifts'].includes(operation.table))?captureLocalOperationIdentity():null;
       const repository=typeof shiftFinancialRuntime==='undefined'?aggregateRepository:await shiftFinancialRuntime.forAggregate(trustedAggregate);
       requestCapture?.assertCurrent();
-      const result=await repository.commit(aggregate.kind,trustedAggregate);
+      const result = typeof cashCheckoutRuntime !== "undefined" && repository === aggregateRepository
+        ? await cashCheckoutRuntime.commit(repository, aggregate.kind, trustedAggregate, requestCapture?.assertCurrent)
+        : await repository.commit(aggregate.kind, trustedAggregate);
       publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null,tables:[...new Set(operations.map(op=>op.table))],changes:operations.flatMap(op=>(op.rows??[op.match??{}]).map(row=>({table:op.table,entityId:op.table==="product_barcodes"?row.product_id:row.id??null})))});
       scheduleLocalChanges(operations);
       return result;
@@ -2279,6 +2723,37 @@ function registerIpc() {
     const snapshot = await operationsRepository.snapshot(authorizedLocalBranch(), terminalStore.read()?.tokenId ?? null, { salesOnly: options?.salesOnly === true, onProgress: (progress) => { if (!_e.sender.isDestroyed()) _e.sender.send("business:read-progress", progress); } });
     return require("./read-snapshot-policy.cjs").filterSnapshot({ ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) }, adminSession);
   }));
+  const isStockReportSender=event=>event.sender===mainWindow?.webContents&&event.senderFrame===event.sender.mainFrame;
+  const {createManagementInventoryAdmission,createManagementInventoryReader}=require("./management-inventory-ipc.cjs");
+  const managementHistoryAdmission=createManagementInventoryAdmission({manager:databaseManager,databaseService,
+    session:adminSession,terminal:()=>terminalStore.read(),cloud:syncCloud,isPosSender:isStockReportSender});
+  ipcMain.handle("business:management-inventory",createManagementInventoryReader(managementHistoryAdmission,adminSession,syncRegistry,managementInventorySource));
+  require("./stock-history-ipc.cjs").registerStockHistoryRead({
+    ipcMain, manager:databaseManager, session:adminSession, terminal:()=>terminalStore.read(),
+    branch:()=>authorizedLocalBranch(), context:()=>[authorizationServerUrl(),cloudCredentials.read()?.url],
+    isPosSender:isStockReportSender,managementHistoryAdmission,
+  });
+  require("./stock-history-ipc.cjs").registerStocktakeControl({
+    ipcMain, session: adminSession, coordinator: syncCoordinator, run: stockHistory.stocktake,
+    isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
+  });
+  const nativeProductMerge = require("./product-merge-ipc.cjs");
+  nativeProductMerge.registerProductMerge({
+    ipcMain, isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
+    runWrite: work => closeWriteBarrier.run(work), publish: publishBusinessChange,
+    runtime: nativeProductMerge.createProductMergeRuntime({
+      enrollment: /^\d+\.\d+\.\d+-beta\.\d+$/.test(app.getVersion()) || (!app.isPackaged && process.env.POS_RELEASE_CHANNEL === 'beta')
+        ? nativeProductMerge.installedProductMergeEnrollment(process.env) : null,
+      manager: databaseManager, session: adminSession, cloud: syncCloud, coordinator: syncCoordinator,
+      ready: () => databaseService.snapshot().tradingReady && !isManagementDevice() && !safeMode && !quitting &&
+        !jobManager.running && !localDataPreparePromise,
+    }),
+  });
+  require("./stock-arrival-ipc.cjs").registerStockArrivalCapability({
+    ipcMain,manager:databaseManager,session:adminSession,terminal:()=>terminalStore.read(),branch:()=>authorizedLocalBranch(),
+    context:()=>[authorizationServerUrl(),cloudCredentials.read()?.url],captureReady:stockHistory.captureReady,
+    isPosSender:event=>event.sender===mainWindow?.webContents&&event.senderFrame===event.sender.mainFrame,
+  });
   ipcMain.handle("business:management-report", (_e, options) => guard.guarded(async () => {
     try {
       const safe = guard.options(options, { name: "management report", max: 10 });
@@ -2360,9 +2835,56 @@ function registerIpc() {
     const requestCapture=typeof shiftFinancialRuntime!=='undefined'?captureLocalOperationIdentity():null;
     const financial=typeof shiftFinancialRuntime==='undefined'?{repository:receiptRepository,author:null}:await shiftFinancialRuntime.forRefund(branch,saleId,requestCapture);
     requestCapture?.assertCurrent();
-    const result=await financial.repository.refund({saleId,refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null},financial.terminalId?{author:financial.author,terminalId:financial.terminalId,expectedShiftId:financial.expectedShiftId}:null);
+    const args = { saleId, refundId: guard.text(input.refundId,{name:"refund id",max:128}),
+      branchId: guard.text(branch,{name:"branch",max:128}), reason: input.reason ? guard.text(input.reason,{name:"reason",max:400}) : null };
+    const context = financial.terminalId ? { author: financial.author, terminalId: financial.terminalId,
+      expectedShiftId: financial.expectedShiftId, source: financial.source } : null;
+    const grant = input.grantToken ? guard.text(input.grantToken,{name:"refund authorization",max:4096}) : null;
+    const admission = refundApprovalService.admission(grant, args);
+    const result = typeof groupedRefundRuntime === "undefined"
+      ? await financial.repository.refund(args, context, null, admission)
+      : await groupedRefundRuntime.commit(financial.repository, args, context, requestCapture, admission.hostedGrantToken, admission);
+    if (result?.ok) admission?.complete();
     publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result;
   }));
+  ipcMain.handle("receipts:refund-approval-status",(event,value)=>guard.guarded(async()=>{
+    if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)return{ok:false,code:"EPRIVILEGE",error:"Saved refund status is limited to this POS window."};
+    const input=guard.options(value,{name:"saved refund status",max:2});
+    const scope=captureOfflineApprovalScope("can_process_refund");
+    if(input.branchId&&recordId(String(input.branchId))!==recordId(scope.branchId))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The saved refund must belong to this branch."};
+    const saleId=guard.uuid(input.saleId,{name:"sale id"});
+    const recovery=require("./sync/refund-recovery-native.cjs");
+    return recovery.publicPendingStatus(await recovery.readPendingOriginal(databaseManager,scope,saleId));
+  }));
+  ipcMain.handle("receipts:recover-refund-approval",(event,value)=>guard.guarded(async()=>{
+    if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)return{ok:false,code:"EPRIVILEGE",error:"Saved refund approval is limited to this POS window."};
+    const input=guard.options(value,{name:"saved refund approval",max:4});
+    const scope=captureOfflineApprovalScope("can_process_refund");
+    if(input.branchId&&recordId(String(input.branchId))!==recordId(scope.branchId))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The saved refund must belong to this branch."};
+    const saleId=guard.uuid(input.saleId,{name:"sale id"}),operationId=guard.uuid(input.operationId,{name:"refund operation"});
+    const grantToken=guard.text(input.grantToken,{name:"refund authorization",max:4096});
+    return syncCoordinator.withExclusive(async()=>{
+      const recovery=require("./sync/refund-recovery-native.cjs");
+      const pending=await recovery.readPendingOriginal(databaseManager,scope,saleId,operationId);
+      if(!pending)throw require("./sync/refund-command.cjs").refundHeld();
+      const admission=refundApprovalService.admission(grantToken,{saleId,refundId:pending.refundId,branchId:scope.branchId});
+      const author=await shiftAuthority.prepare(shiftAuthority.captureFinancial("REFUND"));
+      scope.assertCurrent();author.assertCurrent();
+      const result=await recovery.attachPendingApproval(databaseManager,{scope,saleId,operationId,admission,author});
+      scheduleAutomaticSync(250);return result;
+    });
+  }));
+  const transferCentralHandoff = require("./transfer-central-handoff.cjs").createTransferCentralHandoff({
+    captureScope: permission => captureOfflineApprovalScope(permission),
+    readTransfer: async id => (await databaseManager.pool.request().input("id", id).query("SELECT id,from_store_id,to_store_id,row_version FROM dbo.stock_transfers WHERE id=TRY_CONVERT(uniqueidentifier,@id);")).recordset?.[0],
+    uploadPending: branchId => syncCoordinator.runFinal({ branchId, batchSize: 500 }),
+  });
+  ipcMain.handle("transfers:prepare-central", (event, value) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) return { ok: false, code: "EPRIVILEGE", error: "Transfer handoff is limited to this POS window." };
+    return closeWriteBarrier.run(() => transferCentralHandoff(value)).catch(error => ({ ok: false,
+      code: ["TRANSFER_UPLOAD_PENDING", "STORE_FORBIDDEN", "TRANSFER_REQUEST_INVALID", "EPRIVILEGE"].includes(error?.code) ? error.code : "TRANSFER_UPLOAD_PENDING",
+      error: "The saved transfer and its dependencies could not be confirmed centrally. Keep the draft and synchronize before continuing." }));
+  });
   ipcMain.handle("jobs:get-active", async () => databaseManager.isConnected() ? jobRepository.active() : null);
   ipcMain.handle("jobs:get-history", async (_e, limit) => databaseManager.isConnected() ? jobRepository.history(Number(limit)||50) : []);
   ipcMain.handle("sync:get-status", async () => legacyRecoveryRuntime.status(await syncCoordinator.refresh(localBranchId())));
@@ -2395,7 +2917,7 @@ function registerIpc() {
     const branchId=localBranchId();
     if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});
     return observedDatabaseOperation("synchronization","manual",async()=>{
-      const result=await syncCoordinator.runNow({...input,branchId});
+      const result=await syncCoordinator.runNow({...input,branchId,retryReviewHolds:true});
       if(result.code!=="ECHANGEGAP"){
         if(result.ok&&localDataLifecycle.historyPending(branchId))return {...result,historyPending:true,syncReady:false};
         return result;
@@ -2411,8 +2933,26 @@ function registerIpc() {
     if(!databaseManager.isConnected()||!localBranchId())return{ok:false,skipped:true};
     return syncCoordinator.runNow({branchId:localBranchId(),batchSize:500,includeActivity:false});
   });
+  ipcMain.handle("approval:refresh-activity", event => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame)
+      return { ok: false, skipped: true };
+    return refreshPinApprovalActivity();
+  });
   ipcMain.handle("sync:pause", () => syncCoordinator.pause());
   ipcMain.handle("sync:resume", () => syncCoordinator.resume());
+  require("./sync/recovery-evidence.cjs").installRecoveryEvidenceIpc({
+    ipcMain, manager: databaseManager, session: adminSession,
+    isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
+    canCheck: () => {
+      const state = databaseService.snapshot();
+      return !quitting && state.enabled && state.connected && !state.localRecoveryPending;
+    },
+    readScope: () => {
+      const terminal = activationBoundary.binding(terminalStore.read());
+      if (terminal?.platform !== "pc" || terminal.mode !== "operations") return null;
+      return { branchId: authorizedLocalBranch(), terminalId: terminal.id, fingerprint: syncCloud.requestContext().fingerprint };
+    },
+  });
   ipcMain.handle("sync:get-failures", async () => ({ databaseErrors:diagnostics.databaseErrors(100), failures:databaseManager.isConnected()?await jobRepository.failures():[], businessBatches:databaseManager.isConnected()?await changeReader.failedAggregates(localBranchId()):[], conflictRows:databaseManager.isConnected()?await conflictRepository.unresolved():[], conflicts:databaseManager.isConnected()?await conflictRepository.count():0 }));
   ipcMain.handle("sync:reconcile", (_e, options) => guard.guarded(async()=>{try{const input=guard.options(options,{name:"reconciliation options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("A branch is required for reconciliation."),{code:"EBRANCH"});const historyDays=Number(databaseConfig.profile()?.retentionDays)||90;if(input.deep===true){const report=await localDataLifecycle.verify(branchId,historyDays,Array.isArray(input.tables)?input.tables:[]);return{ok:true,verified:report.verified,differences:report.tables.filter(table=>!table.verified),verification:report.tables,lastVerifiedAt:report.verifiedAt};}const differences=input.repair===true?await localDataLifecycle.repair(branchId,historyDays,Array.isArray(input.tables)?input.tables:[]):await localDataLifecycle.reconcile(branchId,historyDays);const historyPending=localDataLifecycle.historyPending(branchId);return{ok:true,matched:differences.length===0&&!historyPending,differences,...(historyPending?{historyPending}:{}),verification:syncCoordinator.snapshot().tables,lastComparedAt:syncCoordinator.snapshot().lastComparedAt};}catch(error){return{ok:false,code:error?.code??"ERECONCILE",error:String(error?.message??error)};}}));
   ipcMain.handle("telemetry:presence", (_e, value) => guard.guarded(() => {
@@ -2448,6 +2988,7 @@ function registerIpc() {
         const staff = result.staff;
         const role = staff.role || staff.role_slug;
         const level = role === "admin" ? "admin" : ["manager", "supervisor"].includes(role) ? "supervisor" : "staff";
+        offlineStaffLoginWitness = null;
         adminSession.grant(level, staff.username, staff.permissions ?? {}, "pos", staff.store_id ?? localBranchId());
         // verifySyncedStaffPin selects a.user_id, independent of the login alias.
         adminSession.bindVerifiedAuthor(staff.id,staff.username);
@@ -2498,6 +3039,16 @@ function registerIpc() {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }
   });
+  ipcMain.handle("approval:authorize-refund", require("./offline-approval-service.cjs").createOfflineApprovalHandler({
+    isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
+    authorize: async value => {
+      try { const result = await closeWriteBarrier.run(() => refundApprovalService.authorize(value)); scheduleLocalChanges([{ table: "authorization_log" }]); return result; }
+      catch (error) {
+        const known = new Set(["EONLINE_REQUIRED", "EAPPROVAL_REQUIRED", "EAPPROVAL_EXPIRED", "EAPPROVAL_CONTEXT", "EAPPROVAL_POLICY", "EAPPROVAL_DENIED", "EAPPROVAL_CREDENTIAL", "EPRIVILEGE", "SYNC_BRANCH_FORBIDDEN", "EREFUND_AMOUNT", "EALREADY", "EIDEMPOTENCY"]);
+        return { ok: false, code: known.has(error?.code) ? error.code : "EAPPROVAL_UNAVAILABLE", error: known.has(error?.code) ? error.message : "The local refund authorization could not be verified. No refund was saved." };
+      }
+    },
+  }));
   ipcMain.handle("approval:authorize-offline-discount", require("./offline-approval-service.cjs").createOfflineApprovalHandler({
     isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
     authorize: value => guard.guarded(async () => {
@@ -2514,6 +3065,7 @@ function registerIpc() {
   }));
   ipcMain.handle("auth:cashier-login", (_e, value) => guard.guarded(async () => {
     const current=captureSessionAdoption();
+    offlineStaffLoginWitness = null;
     const input = guard.options(value, { name: "cashier sign in", max: 2 });
     const username = guard.text(input.username, { name: "username", max: 120 });
     const pin = guard.text(input.pin, { name: "PIN or passcode", max: 32 });
@@ -2566,6 +3118,29 @@ function registerIpc() {
       syncCloud.setAuthorizationProof(proof);
       enrollCurrentShiftAuthor(proof);
       rememberVerifiedBranch(branchId);
+      // The ordinary feed may be waiting for an unrelated pending transaction.
+      // Reuse its scoped app_users projection for this freshly verified staff row.
+      if (!response.redirected && response.url === `${authorizationUrl}/api/public/cashier-login`) {
+        void (async () => {
+          const scope = captureOfflineStaffReplica(cashier, authorizationUrl, proof, level);
+          if (!scope) return false;
+          try {
+            if (localDataPreparePromise) await localDataPreparePromise.catch(() => undefined);
+            return await refreshOfflineStaff(scope, pin);
+          } finally { scope.release(); }
+        })()
+          .then(refreshed => {
+            if (refreshed) diagnostics.logConnection("staff.offline-replica-refresh.succeeded",
+              { category: "synchronization", table: "app_users", stage: "refresh" });
+          })
+          .catch(error => diagnostics.logConnection("staff.offline-replica-refresh.failed", {
+            category: "synchronization", table: "app_users", stage: "refresh",
+            code: typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{1,59}$/.test(error.code)
+              ? error.code : "EOFFLINE_STAFF_REFRESH",
+            ...diagnostics.bootstrapDiagnostic(error, ["app_users"]),
+            ...diagnostics.sqlErrorDiagnostic(error), message: "The offline staff row could not be refreshed.",
+          }));
+      }
     }
     return { ...result, status: response.status };
   }));
@@ -2715,10 +3290,10 @@ function registerIpc() {
   ipcMain.handle("update:download", () => updater.downloadUpdate());
   installUpdateAfterSync = require("./update-install.cjs").createUpdateInstall({
     updater,
-    isBusy: () => closeWriteBarrier.active.size > 0 || Boolean(jobManager.running || localDataPreparePromise) || ["enabled_connecting", "enabled_validating", "enabled_bootstrapping"].includes(databaseService.snapshot().state),
+    isBusy: () => closeWriteBarrier.active.size > 0 || Boolean(closePreparation || jobManager.running || localDataPreparePromise) || ["enabled_connecting", "enabled_validating", "enabled_bootstrapping"].includes(databaseService.snapshot().state),
     prepare: prepareApplicationClose,
     allowQuit: () => {
-      // Sync has completed. Do not intercept electron-updater's quit and
+      // Local saves have completed. Do not intercept electron-updater's quit and
       // replace its installation handoff with the ordinary app.exit path.
       shutdownFlushComplete = true;
       allowMainWindowClose = true;
@@ -2745,16 +3320,26 @@ function registerIpc() {
   ipcMain.handle("net:get-binary", (_e, url) => netHttp.getBinary(String(url)));
 
   ipcMain.handle("terminal:read", () => {
-    try { return { ok: true, config: terminalStore.read({ strict: true }) }; }
+    try {
+      const config=terminalStore.read({strict:true});
+      const previous=config?null:terminalStore.lastBinding({strict:true});
+      return {ok:true,config,...(!config?{recoveryRequired:Boolean(terminalStore.wasProvisioned()||previous)}:{})};
+    }
     catch { return { ok: false, code: "EACTIVATION_STORE", error: "Could not restore the saved terminal registration. Your registration has not been removed. Retry opening the app." }; }
   });
   ipcMain.handle("terminal:write", async (_e, raw) => {
     try {
-      const before=terminalStore.read();
-      const config=await verifiedTerminalMirror(guard.terminalConfig(raw));
-      const after=terminalStore.read();
+      const before=terminalStore.read({strict:true});
+      const config=await verifiedTerminalMirror(guard.terminalConfig(raw),{strictProject:terminalOnlineRecovery.pending()});
+      const after=terminalStore.read({strict:true});
       if(Boolean(before)!==Boolean(after)||(before&&!activationBoundary.sameBinding(activationBoundary.binding(before),activationBoundary.binding(after))))throw new Error("The terminal registration changed during verification.");
-      if(!before)await assertSafeRegistrationChange(config);
+      if(!before){
+        if(!terminalRepair.authorizeOnlineReplacement(config)){
+          await assertSafeRegistrationChange(config);
+          const previous=activationBoundary.binding(terminalStore.lastBinding({strict:true}));
+          if(previous&&!activationBoundary.sameBinding(previous,activationBoundary.binding(config)))await terminalRepair.assertReady();
+        }
+      }
       const activationBackend=String(config?.backendUrl??"").trim().replace(/\/+$/,"");
       const savedBackend=String(configStore.get("backendUrl")??"").trim().replace(/\/+$/,"");
       // The connection page is authoritative. Older activation payloads may
@@ -2762,22 +3347,88 @@ function registerIpc() {
       // http origin; neither may erase a proven HTTPS deployment address.
       const backend=/^https:\/\/.+/i.test(savedBackend)?savedBackend:/^https:\/\/.+/i.test(activationBackend)?activationBackend:"";
       if(backend)configStore.set("backendUrl",backend);
-      const previous=terminalStore.lastBinding();
+      const previous=before??terminalStore.lastBinding({strict:true});
       const saved=terminalStore.write(config?{...config,...(backend?{backendUrl:backend}:{})}:config);
-      if(saved?.ok)recordRegistrationChange(previous,config);
+      if(saved?.ok){terminalRepair.complete();recordRegistrationChange(previous,config);}
       if(saved?.ok&&isManagementDevice()){managementReplica.resetRetry();terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
       else if(saved?.ok&&config&&terminalIdentityPausedSync){terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
       return saved;
     }
     catch (err) { return guard.refuse(err.message); }
   });
-  ipcMain.handle("terminal:clear", () => {
-    // Revocation and explicit unpairing stop cloud movement before erasing the
-    // identity, even when an old administrator session still caches a branch.
-    terminalIdentityPausedSync=true;
-    stopAutomaticSync();
-    syncCoordinator.pause();
-    return terminalStore.write(null);
+  ipcMain.handle("terminal:repair-status", (event) => {
+    if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)
+      return {ok:false,ready:false,code:"EPRIVILEGE",error:"Terminal registration repair is available only from the POS window."};
+    return terminalRepair.status();
+  });
+  ipcMain.handle("terminal:repair-connect-database", (event) => {
+    if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)
+      return {ok:false,ready:false,code:"EPRIVILEGE",error:"Terminal registration repair is available only from the POS window."};
+    return terminalRepair.connect();
+  });
+  ipcMain.handle("terminal:repair-continue-online", (event, evidence) => {
+    if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)
+      return {ok:false,ready:false,code:"EPRIVILEGE",error:"Terminal registration repair is available only from the POS window."};
+    return terminalRepair.continueOnline(evidence);
+  });
+  ipcMain.handle("terminal:restore", (event, raw) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) {
+      diagnostics.logConnection("activation.restore.refused", { category: "activation", stage: "authorize", code: "EPRIVILEGE" });
+      return { ok: false, code: "EPRIVILEGE", error: "Saved terminal registration can be restored only from the POS window." };
+    }
+    return require("./terminal-restore.cjs").restoreTerminalConfig(raw, {
+      terminalStore, cloudCredentials, configStore, fetchImpl: fetch,
+      log: (event, detail) => diagnostics.logConnection(event, detail),
+    });
+  });
+  ipcMain.handle("terminal:clear", (_e, raw) => {
+    const reason = ["revoked", "missing", "unpair"].includes(raw?.reason) ? raw.reason : null;
+    const log = (outcome, code) => diagnostics.logConnection(`activation.clear.${outcome}`, {
+      category: "activation", stage: "clear", ...(reason ? { reason } : {}), ...(code ? { code } : {}),
+    });
+    const changed = () => {
+      log("refused", "EACTIVATION_CONTEXT_CHANGED");
+      return { ok: false, code: "EACTIVATION_CONTEXT_CHANGED", error: "The terminal registration or database connection changed. Retry with the current registration." };
+    };
+    const project = value => {
+      if (typeof value !== "string" || value.length > 2048) return "";
+      try {
+        const url = new URL(value.trim());
+        if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) return "";
+        return url.href.replace(/\/+$/, "");
+      } catch { return ""; }
+    };
+    try {
+      const active = terminalStore.read({ strict: true });
+      if (!active) {
+        log("skipped");
+        return { ok: true };
+      }
+      const registeredProject = project(active.supabaseUrl);
+      if (!raw || Array.isArray(raw) || typeof raw !== "object" || !reason ||
+          typeof raw.tokenId !== "string" || !raw.tokenId.trim() ||
+          recordId(raw.tokenId.trim()) !== recordId(String(active.tokenId ?? "").trim()) ||
+          !registeredProject || project(raw.projectUrl) !== registeredProject) return changed();
+      if (reason !== "unpair" &&
+          (project(raw.verificationProjectUrl) !== registeredProject ||
+           project(cloudCredentials.read({ strict: true })?.url) !== registeredProject)) return changed();
+      // A delayed revocation must never erase a replacement registration or
+      // stop its sync. Check the native identity and connection synchronously,
+      // then pause cloud movement only after the matching store was cleared.
+      const saved = terminalStore.write(null);
+      if (!saved?.ok) {
+        log("failed", "EACTIVATION_STORE");
+        return { ok: false, code: "EACTIVATION_STORE", error: "Could not clear the saved terminal registration. Retry with the current registration." };
+      }
+      terminalIdentityPausedSync=true;
+      stopAutomaticSync();
+      syncCoordinator.pause();
+      log("succeeded");
+      return saved;
+    } catch {
+      log("failed", "EACTIVATION_STORE");
+      return { ok: false, code: "EACTIVATION_STORE", error: "Could not restore the saved terminal registration or database connection. Your registration has not been removed. Retry opening the app." };
+    }
   });
 
   ipcMain.handle("config:read", () => ({ ok: true, config: configStore.readAll(), path: configStore.filePath(), sealed: configStore.encryptionAvailable() }));
@@ -2887,15 +3538,21 @@ app.whenReady().then(async () => {
   });
 
   let restoredDatabase;
+  startupDatabaseRestore = (async () => {
+    const restored = await databaseService.restore();
+    if (!quitting && !safeMode)
+      await restoreShiftCloseGuard().catch((error) => recordFault("shift-close.guard-restore", error));
+    return restored;
+  })();
   try {
-    restoredDatabase = await databaseService.restore();
+    restoredDatabase = await startupDatabaseRestore;
   } catch (error) {
     recordFault("database.startup-restore", error);
     if (!quitting) enterSafeMode("The local database startup check failed unexpectedly");
     return;
-  }
+  } finally { startupDatabaseRestore = null; }
+  if (closePreparation && (await closePreparation).ok) return;
   if (quitting || safeMode) return;
-  await restoreShiftCloseGuard().catch((error) => recordFault("shift-close.guard-restore", error));
   if (restoredDatabase.state === "enabled_bootstrapping")
     void prepareLocalData().catch((error) => recordFault("local-data.prepare", error));
   scheduleAutomaticSync(5_000);
@@ -2907,13 +3564,6 @@ app.on("before-quit", (event) => {
   if (shutdownFlushComplete) return;
   event.preventDefault();
   if (shutdownFlushStarted) return;
-  if (updater.status().status === "ready" && installUpdateAfterSync) {
-    shutdownFlushStarted = true;
-    void installUpdateAfterSync(false).then(async result => {
-      if (!result.ok) { shutdownFlushStarted = false; await showMandatorySyncFailure(result); }
-    });
-    return;
-  }
   shutdownFlushStarted = true;
   quitting = true;
   stopAutomaticSync();
@@ -2925,7 +3575,7 @@ app.on("before-quit", (event) => {
       result = { ok: false, error: String(error?.message ?? error) };
     }
     if (result?.ok === false) {
-      recordFault("shutdown.shift-sync", new Error(result.error ?? "Mandatory shift synchronization failed."));
+      recordFault("shutdown.shift-sync", Object.assign(new Error(result.error ?? "Mandatory shift synchronization failed."), diagnostics.sqlErrorDiagnostic?.(result)));
       quitting = false;
       shutdownFlushStarted = false;
       scheduleAutomaticSync(250);
@@ -2944,6 +3594,7 @@ app.on("before-quit", (event) => {
     if (databaseClose.timedOut) recordFault("shutdown.database-close-timeout", new Error("SQL Server did not close before the shutdown deadline."));
     else if (!databaseClose.ok) recordFault("shutdown.database-close", databaseClose.error);
     shutdownFlushComplete = true;
+    if (!safeMode) health.markClosed();
     // Cleanup above is bounded and every pending write is durable. app.exit is
     // intentional here: native ODBC work that began during startup must not
     // leave a headless Electron process after the operator chose Exit.

@@ -140,6 +140,39 @@ test("plain Change Tracking saves its checkpoint only after a matching reply, in
   assert.equal(progress[0].completed, 1);
 });
 
+test("Change Tracking reads one bounded whole-version page and rejects a moving retention floor", async () => {
+  const page = [
+    { id: "local", version: 9, operation: "I", change_context: null },
+    { id: "remote", version: 9, operation: "U", change_context: Buffer.from("CLOUD") },
+  ];
+  const responses = [
+    [page, [{ minimum_version: "3", final_minimum_version: "3" }]],
+    [page, [{ minimum_version: "3", final_minimum_version: "8" }]],
+    [page, [{ minimum_version: "3", final_minimum_version: "4" }]],
+    [[{ minimum_version: "8", final_minimum_version: "8" }]],
+  ];
+  const calls = [];
+  const reader = new ChangeReader({ pool: { request() {
+    const args = {};
+    return {
+      input(name, value) { args[name] = value; return this; },
+      async query(sql) { calls.push({ sql, args }); return { recordsets: responses.shift() }; },
+    };
+  } } }, { tables: [table] });
+
+  const changes = await reader.changedIds(table, 0, 100);
+  assert.deepEqual(changes.map(change => [change.entityId, change.remote]), [
+    ['{"id":"local"}', false], ['{"id":"remote"}', true],
+  ]);
+  assert.deepEqual(calls[0].args, { since: "0", limit: 100, object: "dbo.audit_logs" });
+  assert.match(calls[0].sql, /TOP \(@limit\) WITH TIES/);
+  assert.match(calls[0].sql, /WHERE CT\.SYS_CHANGE_VERSION<=@upper\s+ORDER BY CT\.SYS_CHANGE_VERSION\s+\) bounded ORDER BY bounded\.version, bounded\.\[id\]/);
+  await assert.rejects(reader.changedIds(table, "7"), { code: "ECHANGEGAP", minimumVersion: 8 });
+  await assert.rejects(reader.changedIds(table, 0), { code: "ECHANGEGAP", minimumVersion: 4 });
+  await assert.rejects(reader.changedIds(table, 7), { code: "ECHANGEGAP", minimumVersion: 8 });
+  assert.equal(calls.length, 4);
+});
+
 test("a full cloud timeout leaves the batch pending for the scheduler without five blocking attempts", async () => {
   const f=pushFixture();let attempts=0;
   f.worker.cloud.pushAggregate=async()=>{attempts++;throw Object.assign(new Error("timed out"),{code:"ETIMEDOUT"});};
@@ -236,6 +269,54 @@ test("completed draft upload carries its saved sale before the draft", async () 
   await worker.pushAggregates("B1",100);
   assert.deepEqual(sent.operations.map(op=>op.table),["sales","held_orders"]);
   assert.equal(pending,false);
+});
+
+test("a completed draft waits for its protected sale in the journal and change tracking", async () => {
+  for (const journal of [true, false]) {
+    const tables = [
+      { ...table, cloudTable: "sales", sqlServerTable: "sales", dependencyOrder: 1 },
+      { ...table, cloudTable: "held_orders", sqlServerTable: "held_orders", dependencyOrder: 4 },
+    ];
+    const stableDraft = { id: "draft", store_id: "B1", bill_no: "BILL-1", status: "completed" };
+    const group = { aggregateId: "draft", changes: [{ entity_type: "held_orders", key: { id: "draft" }, operation: "update" }] };
+    const sends = [];
+    let protectedSalePending = true;
+    let acked = false;
+    let checkpoint = 0;
+    const worker = new PushWorker({ registry: { tables }, reader: {
+      pendingAggregates: async (_branch, _size, deferred) => journal && !acked && !deferred.includes("draft") ? [group] : [],
+      changedIds: async (table, version) => !journal && table.cloudTable === "held_orders" && !version
+        ? [{ operation: "U", version: 5, key: { id: "draft" } }] : [],
+      rows: async () => [stableDraft],
+      ticketCompletionParents: async (tickets, branch, terminal) => {
+        assert.deepEqual(tickets, [stableDraft]);
+        assert.equal(branch, "B1");
+        assert.equal(terminal, "T1");
+        if (protectedSalePending) throw Object.assign(new Error("The original sale is pending"), { code: "EFINANCIAL_BUSINESS_PENDING" });
+        return []; // The receipt proves that the protected parent already exists centrally.
+      },
+      acknowledgeAggregate: async () => { acked = true; },
+      failAggregate: async () => assert.fail("A dependency hold must not fail the journal"),
+    }, checkpoints: {
+      list: async () => [],
+      save: async (_branch, _table, _direction, entry) => { checkpoint = entry.change_tracking_version; },
+    }, cloud: {
+      terminalId: () => "T1",
+      pushAggregate: async batch => { sends.push(batch); return { ok: true, batch_id: batch.batchId }; },
+      pushBatch: async batch => { sends.push(batch); return { ok: true, batch_id: batch.batchId }; },
+    } });
+    await worker.run({ branchId: "B1" });
+    assert.equal(acked, false);
+    assert.equal(checkpoint, 0);
+    assert.deepEqual(sends, []);
+
+    protectedSalePending = false;
+    await worker.run({ branchId: "B1" });
+    assert.equal(acked, journal);
+    assert.equal(checkpoint, journal ? 0 : 5);
+    assert.equal(sends.length, 1);
+    assert.deepEqual(journal ? sends[0].operations.map(operation => operation.table) : [sends[0].table], ["held_orders"]);
+  }
 });
 
 test("completed draft download fetches its missing sale once before applying the draft", async()=>{

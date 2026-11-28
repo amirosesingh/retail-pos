@@ -36,7 +36,7 @@ describe("minimal inventory and native update controls", () => {
     const html = renderToStaticMarkup(h(MinimalUpdatePanel, { updates: mocks.updates as never }));
     expect(html).toContain("Version 1.0.1 is available");
     expect(html).toContain("Installed v1.0.0");
-    expect(html).toContain("Update and restart");
+    expect(html).toContain("Restart and install");
     expect(html).toContain("<details>");
   });
   it("adds layout choices only to opted-in tables", () => {

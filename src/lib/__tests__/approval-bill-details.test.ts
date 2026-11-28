@@ -344,8 +344,10 @@ describe("approval bill details", () => {
     const discard = holds.slice(discardStart, holds.indexOf("\n  return (", discardStart));
 
     expect(server).toContain("status=in.(pending,approved)");
-    expect(functions).toContain('request.status !== "approved"');
-    expect(functions).toContain('error: "That approval is no longer valid"');
+    expect(functions).toContain("checkBusinessAuthorization(who, { ...data, storeId })");
+    const business = readFileSync("src/lib/business-authorization.server.ts", "utf8");
+    expect(business).toContain('request.status !== "approved"');
+    expect(business).toContain('error: "That approval is no longer valid"');
     expect(discard.indexOf("cancelAuthorizationRequest")).toBeLessThan(
       discard.indexOf("removeHeldOrder(order.id)"),
     );

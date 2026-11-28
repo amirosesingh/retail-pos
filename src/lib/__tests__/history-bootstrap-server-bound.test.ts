@@ -70,8 +70,8 @@ async function harness(mode: Mode = "current-operations", count = 53, dbMinimum 
         const text=JSON.stringify(result);return new Response(text,{headers:{'content-type':'application/json','X-POS-History-Reconcile-Version':'2','X-POS-History-Reconcile-Kind':isRows?'rows':'index','X-POS-History-Reconcile-Bytes':String(Buffer.byteLength(text)),'X-POS-History-Reconcile-Rows':String(selected.length)}});
       }
       if (url.includes("/pos_sync_feed_page_v1")) return Response.json({ code: "PGRST202", message: "Could not find the function public.pos_sync_feed_page_v1 in the schema cache" }, { status: 404 });
-      if (url.endsWith("/pos_sync_feed_page_v2")) {
-        rpcInputs.push({ rpc: "pos_sync_feed_page_v2", ...JSON.parse(String(init?.body)) });
+      if (url.endsWith("/pos_sync_feed_page_v3")) {
+        rpcInputs.push({ rpc: "pos_sync_feed_page_v3", ...JSON.parse(String(init?.body)) });
         return new Response("[]", { headers: { "Content-Type": "application/json", "X-POS-Feed-Projection": "1",
           "X-POS-Feed-Bytes": "2", "X-POS-Feed-Rows": "0", "X-POS-Feed-Continue": "0" } });
       }
@@ -198,7 +198,7 @@ it("keeps non-history bootstrap, legacy count and graph arguments while routing 
   await h.cloud.pullBatch({ branchId: branch, cursor: 42, limit: 100 });
   await h.cloud.request({ sqlServerCounts: { organizationId: "default", branchId: branch, historyDays: 90 } });
   await h.cloud.shiftGraph({ branchId: branch, shiftId: terminal });
-  expect(h.rpcInputs.map(input => [input.rpc, input.p_limit])).toEqual([["pos_sync_bootstrap", 500], ["pos_sync_feed_page_v2", undefined], ["pos_sync_counts", undefined], ["pos_sync_shift_graph", undefined]]);
+  expect(h.rpcInputs.map(input => [input.rpc, input.p_limit])).toEqual([["pos_sync_bootstrap", 500], ["pos_sync_feed_page_v3", 50], ["pos_sync_counts", undefined], ["pos_sync_shift_graph", undefined]]);
   expect(h.rpcInputs[1].p_after_cursor).toBe(42);
 });
 
