@@ -529,6 +529,22 @@
   acceptance and release. A documentation approval is not permission for live
   database changes, production promotion or another installer publication.
 
+## Feature correctness and operator notifications
+
+- Verify every affected feature through its normal workflow on each affected
+  platform. Check successful completion, expected validation and permission
+  denials, connectivity interruptions, conflicts, and retry after an uncertain
+  response as applicable. Treat unexpected errors on a supported path as defects.
+- Confirm a shift is open or closed only after its own authoritative save and
+  verification. Retain authorized pending work and show what the operator can do
+  when an opening, closing, upload, or review is still pending.
+- Bind each message to the action, current user and branch, and verified result
+  that produced it. Distinguish success, local save awaiting upload, business
+  conflict, permission denial, retryable failure, and review required. Keep
+  unrelated feature results separate, ignore late results from an earlier
+  context, and coalesce duplicate notices for the same unchanged condition.
+  Preserve the underlying diagnostic in the appropriate log or status view.
+
 ## Terminal activation and staff login lifecycle
 
 - Restore saved connection and registration state before selecting setup,
