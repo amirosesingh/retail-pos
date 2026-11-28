@@ -41,6 +41,7 @@ type HeldOrdersDeps = {
   billNo: string | null;
   storeId: string;
   shiftId: string | null;
+  shiftClosing?: boolean;
   ensureBillNumber: () => Promise<string>;
   cashier: string;
   /** Ticket setters, owned by the register screen. */
@@ -102,6 +103,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   }, []);
   const saveDraft = useCallback(async (background = false) => {
     const current = latestDeps.current;
+    if (background && current.shiftClosing) return;
     const epoch = sessionEpoch();
     if (!current.lines.length || !current.shiftId || (current.billNo && released.current.has(current.billNo))) return;
     if (!current.billNo) {
@@ -131,6 +133,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
         sameBranchId(latest.storeId, storeId) && latest.cashier === cashier;
     };
     await enqueue(async () => {
+      if (background && latestDeps.current.shiftClosing) return;
       if (released.current.has(billNo) || savedDraft.current === signature ||
           (background && refusedDraft.current === draftScope)) return;
       try {
@@ -399,10 +402,10 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   }, [saveDraft]);
 
   useEffect(() => {
-    if (!deps.lines.length || !deps.billNo) return;
+    if (deps.shiftClosing || !deps.lines.length || !deps.billNo) return;
     const timer = setTimeout(() => { void saveDraft(true).catch(error => notifyError(error, "Saving draft bill")); }, 1000);
     return () => clearTimeout(timer);
-  }, [deps.lines, deps.billNo, deps.total, deps.cartDiscount, deps.cartDiscountType, deps.memberId, deps.coupon, deps.exchangeRef, saveDraft]);
+  }, [deps.shiftClosing, deps.lines, deps.billNo, deps.total, deps.cartDiscount, deps.cartDiscountType, deps.memberId, deps.coupon, deps.exchangeRef, saveDraft]);
 
   useEffect(() => registerSessionDraft(async action => {
     const current = latestDeps.current;

@@ -7766,6 +7766,19 @@ cold actual Main/preload device acceptance remain pending before beta completion
 - No columns, grants, triggers, business rows or operator settings may be changed.
   Membership and unfinished stock-report work remain excluded.
 
+## 28 November — register display during confirmed shift closing
+
+Keep the selected shift available to the cash-count dialogue after the provider
+reports a closing lifecycle state. Show Closing in the register while the
+stored `OPEN` row awaits final close, keep the current bill mounted, and pause
+new background draft saves. Keep existing draft records, explicit pre-close
+saves, the authorized close workflow, and legacy rows without lifecycle state.
+Verify active, closing and unknown states, including a transition with a bill
+on screen and a scheduled autosave. Apply the change on Beta.
+The focused verification covers the cash-count dialog handoff and checkout,
+an explicit pre-close flush, and background writes scheduled or queued as the
+shift closes. Hosted register acceptance remains pending.
+
 ## SHIFT75 — report-only native Date normalization, 5 November
 
 - Owner reports local Electron Shifts-page failure: openedAt.localeCompare is
