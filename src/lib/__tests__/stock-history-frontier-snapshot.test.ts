@@ -123,9 +123,10 @@ describe('private bounded read-only native stock frontier snapshot',()=>{
   f.state.priorOpening=true;
   expect((await onFence()).blockers).toContain('LOCAL_COVERAGE_UNPROVEN');
   f.state.priorOpening=false;
+  // The uploader marks a pre-opening head incomplete after accepting stock.
   f.heads[0]!.coverage_state='incomplete';
-  expect((await onFence()).blockers).toContain('LOCAL_COVERAGE_UNPROVEN');
-  f.heads[0]!.coverage_state='unverified';
+  expect(await onFence()).toMatchObject({pending:{business:'0',metadata:'0',unsigned:'0',unknown:'0'},blockers:[],coverageProven:false});
+  expect((await f.run({transaction})).blockers).toContain('LOCAL_COVERAGE_UNPROVEN');
   f.journal.push({change_id:'1',entity_type:'sales',entity_id:'{}',operation:'insert',branch_id:'a',entity_version:'1',aggregate_id:null,failed:0});
   expect((await onFence()).pending.business).toBe('1');
   f.heads[0]!.baseline_id=id(7);

@@ -198,8 +198,10 @@ async function readStockHistoryFrontierSnapshot({manager,branchId,terminalId,ass
   const gap=(code,evidence,weight=1n)=>{if(weight===0n)return;const value=[code,evidence,String(weight)];gaps.set(JSON.stringify(value),value);};
   const sourceFingerprints=[],movementFingerprints=[],journalFingerprints=[],streamFingerprints=[],movementSummaryFingerprints=[],streams=new Map();
   let business=0n,metadata=0n,unsigned=0n;
+  // An accepted pre-opening movement can mark the head incomplete. The
+  // serializable opening check and evidence checks below still apply.
   const firstOpeningAbsent=firstStocktake&&priorOpening===false&&(!heads.length||
-   (heads[0].coverage_state==='unverified'&&heads[0].baseline_id==null&&heads[0].baseline_state==null));
+   (['unverified','incomplete'].includes(heads[0].coverage_state)&&heads[0].baseline_id==null&&heads[0].baseline_state==null));
   if(!firstOpeningAbsent&&(heads.length!==1||heads[0].coverage_state!=='complete'||!heads[0].baseline_id||heads[0].baseline_state!=='verified'))
    gap('LOCAL_COVERAGE_UNPROVEN',hash(heads));
   for(const row of sourceSummaries){
