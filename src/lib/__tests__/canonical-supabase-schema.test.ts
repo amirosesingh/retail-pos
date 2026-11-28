@@ -289,6 +289,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261117233612_native_refund_exact_financial_receipt_probe.sql",
       "supabase/migrations/20261118060529_deterministic_financial_fact_key_order.sql",
       "supabase/migrations/20261120082442_batched_scoped_feed.sql",
+      "supabase/migrations/20261128142527_restrict_internal_pin_service_rpcs.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
