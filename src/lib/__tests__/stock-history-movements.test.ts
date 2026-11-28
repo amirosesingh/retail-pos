@@ -21,6 +21,17 @@ const page = (): StockHistoryMovementPage => {
 };
 
 describe("exact stock movement page transport", () => {
+  it("keeps original sale time separate from the ordered database acceptance time", () => {
+    const sourceRevision = "stock-history-acceptance.v1:verified";
+    const originalAt = "2026-11-05T11:00:00.0000000Z";
+    const response = { ...page(), sourceRevision, coverage: {
+      acceptedLedger: "complete", writers: "unknown", balanceGrade: "verified", timeGrade: "accepted",
+    }, rows: [{ ...page().rows[0], originalAt }], next: null };
+    const expected = { ...request(), sourceRevision };
+    expect(checkedStockHistoryMovementPage(response, expected).rows[0]).toMatchObject({ originalAt, effectiveAt: time, recordedAt: time });
+    expect(() => checkedStockHistoryMovementPage({ ...response, rows: page().rows.slice(0,1) }, expected)).toThrow(/report time/);
+    expect(() => checkedStockHistoryMovementPage({ ...response, rows: [{ ...response.rows[0], recordedAt: "2026-11-06T00:00:00.1234568Z" }] }, expected)).toThrow(/report time/);
+  });
   it("preserves signed integer strings and orders equal 100ns times by movement UUID", () => {
     const response = page();
     expect(checkedStockHistoryMovementPage(response, request())).toEqual(response);

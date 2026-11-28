@@ -42,8 +42,11 @@ const movementLabels: Record<StockHistoryMovementPage["rows"][number]["kind"], s
 // eslint-disable-next-line react-refresh/only-export-components -- Pure presentation decision is independently regression tested.
 export function stockReportDisplayGrade(page: StockHistoryPage | null): "verified" | "provisional" | "unavailable" {
   if (!page || page.rows.some(row => row.quantity === null)) return "unavailable";
+  const accepted = page.coverage?.timeGrade === "accepted" && page.coverage.writers === "unknown" &&
+    page.sourceRevision?.startsWith("stock-history-acceptance.v1:") && page.pendingCount === undefined;
   if (page.status === "complete" && (!page.coverage || (page.coverage.acceptedLedger === "complete"
-    && page.coverage.writers === "confirmed" && page.coverage.balanceGrade === "verified"))) return "verified";
+    && (page.coverage.timeGrade === "accepted" ? accepted : page.coverage.writers === "confirmed")
+    && page.coverage.balanceGrade === "verified"))) return "verified";
   if (page.status === "incomplete" && page.coverage?.acceptedLedger === "complete"
     && page.coverage.balanceGrade === "recorded_provisional" && page.coverage.writers !== "confirmed"
     && page.baselineAt && page.readAt && page.sourceRevision
@@ -94,7 +97,7 @@ function existedAt(createdAt: string | undefined, cutoff: string | undefined) {
 type AsOfBalance = StockActivityProduct & { quantity: string | number | null; supportedAt?: string };
 type AsOfEvidenceScope = { identity: string; cutoff: string; branchId: string; zeroOnly: boolean; format: Intl.DateTimeFormat };
 
-function AsOfBalanceTable({ rows, verified, paginate, empty, checkingProduct, checkProduct, evidenceScope }: {
+function AsOfBalanceTable({ rows, verified, paginate, empty, checkingProduct, checkProduct, evidenceScope, openMovements, movementsBusy }: {
   rows: AsOfBalance[];
   verified: boolean;
   paginate: boolean;
@@ -102,6 +105,8 @@ function AsOfBalanceTable({ rows, verified, paginate, empty, checkingProduct, ch
   checkingProduct?: string;
   checkProduct?: (productId: string) => void;
   evidenceScope?: AsOfEvidenceScope;
+  openMovements?: (product: MovementProduct, trigger: HTMLButtonElement) => void;
+  movementsBusy?: boolean;
 }) {
   const { pageItems, setPage, setPageSize, ...pagination } = usePagination(rows, STOCK_ACTIVITY_BALANCE_PAGE_SIZE);
   const candidates = paginate ? pageItems : rows;
@@ -126,7 +131,10 @@ function AsOfBalanceTable({ rows, verified, paginate, empty, checkingProduct, ch
           <TableHead className="text-right">Stock quantity</TableHead>
         </TableRow></TableHeader>
         <TableBody>{visible.length ? visible.map(row => <TableRow key={row.productId}>
-          <TableCell className="min-w-36 whitespace-normal break-words">{row.name}</TableCell>
+          <TableCell className="min-w-36 whitespace-normal break-words">{row.name}
+            {openMovements && <Button variant="link" size="sm" className="block h-auto px-0 py-1" disabled={movementsBusy}
+              onClick={event => openMovements(row, event.currentTarget)}>View movements</Button>}
+          </TableCell>
           <TableCell className="whitespace-nowrap">{row.barcode || "—"}</TableCell>
           <TableCell className="numeric whitespace-nowrap text-right">
             {row.quantity !== null ? <>{row.quantity}
@@ -200,7 +208,8 @@ export function StockReport({ branchId, branchName, initialView = "current", his
   const matchesSearch = (row: StockActivityProduct) => !searchText ||
     [row.name, row.sku, row.barcode, row.productId].some(value => value?.toLocaleLowerCase().includes(searchText));
   const visibleRows = visiblePage?.rows.filter(row => (!zeroOnly || zeroQuantity(row)) && matchesSearch(row));
-  const canOpenMovements = !simpleHistory && grade === "verified" && Boolean(visiblePage?.sourceRevision && visiblePage.baselineAt);
+  const acceptedTime = visiblePage?.coverage?.timeGrade === "accepted";
+  const canOpenMovements = (!simpleHistory || acceptedTime) && grade === "verified" && Boolean(visiblePage?.sourceRevision && visiblePage.baselineAt);
   const visibleMovement = canOpenMovements && movement?.identity === identity ? movement : null;
   const movementProductId = visibleMovement?.product.productId, movementPageNumber = visibleMovement?.number;
   const unresolvedShift = Boolean(visibleRequest?.closedShiftId && visiblePage?.cutoff === unresolvedClosedShiftCutoff);
@@ -504,6 +513,7 @@ export function StockReport({ branchId, branchName, initialView = "current", his
         {grade === "verified" && <p className="sr-only" data-stock-report-print-summary>Verified historical balances at {visiblePage.cutoff} · {visiblePage.timeZone}</p>}
       </header>
       {simpleHistory ? <>
+        {acceptedTime && <p className="text-sm text-muted-foreground">Balances use the database stock ledger’s acceptance time. Pending till uploads are outside this report. Movement details show the original transaction time.</p>}
         {grade !== "verified" && <p className="text-sm text-muted-foreground" role="status">
           {grade === "provisional" ? "Recorded balances may change when outstanding stock movements arrive."
             : unresolvedShift || !historicalCutoff ? asOfCoverageMessage
@@ -520,6 +530,11 @@ export function StockReport({ branchId, branchName, initialView = "current", his
           verified={grade === "verified"} paginate={grade === "unavailable"}
           checkingProduct={itemBefore.loading || itemAfter.loading ? activityProduct : undefined}
           checkProduct={grade === "unavailable" && activityBranch && activityCutoff ? selectActivityProduct : undefined}
+          movementsBusy={shownBusy || shownExporting}
+          openMovements={canOpenMovements ? (product, trigger) => {
+            movementTrigger.current = trigger;
+            void readMovements(product);
+          } : undefined}
           empty={searchText ? "No matching products." : zeroOnly ? "No products with a known zero balance on this page." : "No stock balances are available for this time."} />
         {grade !== "unavailable" && visibleRequest && (pageStart || visiblePage.next) &&
           <div className="flex flex-wrap gap-2" aria-label="Stock balance pages">
@@ -555,6 +570,10 @@ export function StockReport({ branchId, branchName, initialView = "current", his
       {grade !== "verified" && !unresolvedShift && <p className="text-xs text-muted-foreground">
         Recorded balances can change as more data arrives. Items without a recorded balance can still have activity.
       </p>}
+      {!unresolvedShift && <StockReportActivity before={activityProduct ? itemBefore : before} after={activityProduct ? itemAfter : after}
+        products={activityProducts} selected={activityProduct} clearSelection={() => setActivitySelection(null)}
+        timeZone={timeZone} format={activityFormat} heading={activityHeading} />}
+      </>}
       {visiblePage.recordedThrough && <Button type="button" size="sm" variant="outline" disabled={shownBusy || shownExporting}
         onClick={() => void read({ cutoff: visiblePage.recordedThrough!, timeZone, branchId })}>View latest recorded stock</Button>}
       {visibleMovement && <section id={`${movementHeadingId}-panel`} className="space-y-3 rounded-md border p-3" aria-labelledby={movementHeadingId} aria-busy={shownBusy}>
@@ -567,9 +586,13 @@ export function StockReport({ branchId, branchName, initialView = "current", his
         {visibleMovement.error && <p role="alert" className="text-sm text-destructive">{visibleMovement.error}</p>}
         {visibleMovement.page && (visibleMovement.page.status === "complete" ? <>
           {visibleMovement.page.rows.length ? <div className="overflow-x-auto"><Table aria-label="Verified stock movements">
-            <TableHeader><TableRow><TableHead data-sortable={false}>Effective time (UTC)</TableHead><TableHead>Movement</TableHead><TableHead className="text-right">Quantity change</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead data-sortable={false}>
+              {visibleMovement.page.coverage?.timeGrade === "accepted" ? "Database stock ledger acceptance (UTC)" : "Effective time (UTC)"}
+            </TableHead>{visibleMovement.page.coverage?.timeGrade === "accepted" && <TableHead>Original transaction time (UTC)</TableHead>}
+              <TableHead>Movement</TableHead><TableHead className="text-right">Quantity change</TableHead></TableRow></TableHeader>
             <TableBody>{visibleMovement.page.rows.map(row => <TableRow key={row.id}>
               <TableCell className="break-all text-xs"><time dateTime={row.effectiveAt}>{row.effectiveAt}</time></TableCell>
+              {row.originalAt && <TableCell className="break-all text-xs"><time dateTime={row.originalAt}>{row.originalAt}</time></TableCell>}
               <TableCell>{movementLabels[row.kind]}</TableCell>
               <TableCell className="numeric whitespace-nowrap text-right">{row.delta.startsWith("-") ? row.delta : `+${row.delta}`}</TableCell>
             </TableRow>)}</TableBody>
@@ -582,10 +605,6 @@ export function StockReport({ branchId, branchName, initialView = "current", his
           </div>}
         </> : <p role="alert" className="text-sm text-muted-foreground">Movement details are unavailable for this report.{visibleMovement.page.reasons.length > 0 && ` ${stockHistoryExplanation(visibleMovement.page.reasons[0]!)}`}</p>)}
       </section>}
-      {!unresolvedShift && <StockReportActivity before={activityProduct ? itemBefore : before} after={activityProduct ? itemAfter : after}
-        products={activityProducts} selected={activityProduct} clearSelection={() => setActivitySelection(null)}
-        timeZone={timeZone} format={activityFormat} heading={activityHeading} />}
-      </>}
       {!simpleHistory && <details className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
         <summary className="cursor-pointer font-medium text-foreground">Report coverage details</summary>
         <div className="mt-2 space-y-1 break-words">
@@ -593,7 +612,8 @@ export function StockReport({ branchId, branchName, initialView = "current", his
           {visiblePage.baselineAt && <p>Verified opening: {visiblePage.baselineAt}</p>}
           {visiblePage.period && <p>Inventory changes from {visiblePage.period.start} through the selected time (inclusive).</p>}
           {visiblePage.coverage?.timeGrade === "recorded" && <p>Movements are counted when the central stock ledger recorded them.</p>}
-          {visiblePage.coverage && visiblePage.coverage.timeGrade !== "recorded" && <p>Movement times include authorized arrival-time entries.</p>}
+          {acceptedTime && <p>Balances use the database stock ledger’s acceptance time. Pending till uploads are outside this report. Movement details show the original transaction time.</p>}
+          {visiblePage.coverage && ["author_entered", "mixed"].includes(visiblePage.coverage.timeGrade) && <p>Movement times include authorized arrival-time entries.</p>}
           {grade !== "verified" && <p>Recorded balances are provisional. Excel export requires verified balances.</p>}
           {visiblePage.reasons.map(reason => <p key={reason}>{stockHistoryExplanation(reason)}</p>)}
           {grade !== "unavailable" && <p className="break-all">Read at {visiblePage.readAt} · Source {visiblePage.sourceRevision}</p>}

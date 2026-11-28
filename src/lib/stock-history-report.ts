@@ -34,7 +34,7 @@ export type StockHistoryPage={
  restatable?:true;
  /** Accepted ledger and all-writer knowledge are separate. No clock proof. */
  coverage?:{acceptedLedger:'complete'|'incomplete';writers:'confirmed'|'pending'|'unknown';
-  balanceGrade:'verified'|'recorded_provisional';timeGrade:'recorded'|'author_entered'|'mixed'};
+  balanceGrade:'verified'|'recorded_provisional';timeGrade:'accepted'|'recorded'|'author_entered'|'mixed'};
  /** The exclusive end bounds the final business day; fullDay indicates that its last tick was requested. */
  period?:{start:string;endExclusive:string;through:string;fullDay:boolean};
  rows:StockHistoryRow[];

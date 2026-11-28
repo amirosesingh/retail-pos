@@ -89,11 +89,12 @@ export async function readStockHistoryPage(proof:CallerProof,input:StockHistoryR
  const request=stockHistoryRequestSchema.parse(input);
  const {scope,branchId}=await authorizeStockHistoryRead(proof,request);
  const {serviceRest}=await import('@/core/api/pos-relay.server');
- const readRecorded=async():Promise<StockHistoryPage|null>=>{
-  const rpc='pos_stock_history_recorded_page';
+ const readRecorded=async(accepted:boolean):Promise<StockHistoryPage|null>=>{
+  const rpc=accepted?'pos_stock_history_acceptance_page_v1':'pos_stock_history_recorded_page';
   const response=await serviceRest('rpc/'+rpc,{method:'POST',body:JSON.stringify({
    p_actor:scope.staffUserId,p_terminal:scope.terminalId??null,p_branch:branchId,p_cutoff:request.cutoff,p_zone:request.timeZone,
    p_after:request.after??null,p_limit:request.limit??100,p_source_revision:request.sourceRevision??null,p_period_start:request.periodStart??null,
+   ...(accepted?{p_export:request.export??false}:{}),
   })});
   const result=await response.json().catch(()=>undefined) as unknown;
   if(!response.ok){
@@ -106,14 +107,17 @@ export async function readStockHistoryPage(proof:CallerProof,input:StockHistoryR
   }
   if(result===null)return null;
   const page=checkedStockHistoryPage(result,branchId);
-  if(page.cutoff!==request.cutoff||page.period?.start!==request.periodStart||(!page.recordedThrough&&
-     (page.coverage?.timeGrade!=='recorded'||page.coverage.balanceGrade!=='recorded_provisional')))
+  if(page.cutoff!==request.cutoff||page.timeZone!==request.timeZone||page.period?.start!==request.periodStart||
+     (request.sourceRevision&&page.sourceRevision!==request.sourceRevision)||
+     (accepted ? page.status!=='complete'||page.coverage?.timeGrade!=='accepted'
+      : !page.recordedThrough&&(page.coverage?.timeGrade!=='recorded'||page.coverage.balanceGrade!=='recorded_provisional')))
    throw new Error('The recorded stock history returned unexpected evidence.');
   return page;
  };
  const allowRecorded=!request.export&&!request.closedShiftId;
- if(allowRecorded&&request.sourceRevision?.startsWith('stock-history-recorded.v1:')){
-  const page=await readRecorded();
+ const acceptedRevision=request.sourceRevision?.startsWith('stock-history-acceptance.v1:');
+ if((!request.closedShiftId&&acceptedRevision)||(allowRecorded&&request.sourceRevision?.startsWith('stock-history-recorded.v1:'))){
+  const page=await readRecorded(Boolean(acceptedRevision));
   if(page)return page;
   throw Object.assign(new Error('Recorded stock history changed. Refresh the report before continuing.'),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
  }
@@ -144,7 +148,7 @@ export async function readStockHistoryPage(proof:CallerProof,input:StockHistoryR
  if(allowRecorded&&!request.sourceRevision&&!request.after&&page.status==='incomplete'&&
     page.reasons.includes('INCOMPLETE_MOVEMENTS')&&page.reasons.every(reason=>
      ['INCOMPLETE_MOVEMENTS','CLOCK_UNVERIFIED','BASELINE_PREHISTORY_CHANGED'].includes(reason)))
-  return await readRecorded()??page;
+  return await readRecorded(true)??await readRecorded(false)??page;
  return page;
 }
 
@@ -152,11 +156,13 @@ export async function readStockHistoryMovements(proof:CallerProof,input:StockHis
  const request=stockHistoryMovementRequestSchema.parse(input);
  const {scope,branchId}=await authorizeStockHistoryRead(proof,request);
  const {serviceRest}=await import('@/core/api/pos-relay.server');
- const rpc='pos_stock_history_movements_v1';
+ const accepted=request.sourceRevision.startsWith('stock-history-acceptance.v1:');
+ if(accepted&&request.closedShiftId)throw new Error('The database acceptance report is tied to its selected cutoff.');
+ const rpc=accepted?'pos_stock_history_acceptance_movements_v1':'pos_stock_history_movements_v1';
  const response=await serviceRest('rpc/'+rpc,{method:'POST',body:JSON.stringify({
   p_actor:scope.staffUserId,p_terminal:scope.terminalId??null,p_branch:branchId,p_product:request.productId,
   p_cutoff:request.cutoff,p_zone:request.timeZone,p_source_revision:request.sourceRevision,
-  p_period_start:request.periodStart??null,p_closed_shift:request.closedShiftId??null,
+  p_period_start:request.periodStart??null,...(accepted?{}:{p_closed_shift:request.closedShiftId??null}),
   p_after_effective:request.after?.effectiveAt??null,p_after_id:request.after?.id??null,p_limit:request.limit??50,
  })});
  if(response.ok)return checkedStockHistoryMovementPage(await response.json(),request);

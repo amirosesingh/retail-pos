@@ -43,16 +43,33 @@ describe('actual stock-history function with existing current-account scope reso
   const recorded={...complete(),status:'incomplete',reasons:['WRITER_COVERAGE_UNKNOWN'],sourceRevision:recordedRevision,
    coverage:{acceptedLedger:'complete',writers:'unknown',balanceGrade:'recorded_provisional',timeGrade:'recorded'}};
   rest.mockImplementation(async(path:string)=>Response.json(path.startsWith('app_users?')?[row]:
-   path==='rpc/pos_stock_history_recorded_page'?recorded:unavailable));
+   path==='rpc/pos_stock_history_recorded_page'?recorded:path==='rpc/pos_stock_history_acceptance_page_v1'?null:unavailable));
   expect(await call()).toMatchObject(recorded);
   expect(rest.mock.calls.filter(([path])=>path.startsWith('rpc/')).map(([path])=>path)).toEqual(
-   ['rpc/pos_stock_history_page','rpc/pos_stock_history_recorded_page']);
+   ['rpc/pos_stock_history_page','rpc/pos_stock_history_acceptance_page_v1','rpc/pos_stock_history_recorded_page']);
   rest.mockClear();
   expect(await call({sourceRevision:recordedRevision})).toMatchObject(recorded);
   expect(rest.mock.calls.filter(([path])=>path.startsWith('rpc/')).map(([path])=>path)).toEqual(['rpc/pos_stock_history_recorded_page']);
   rest.mockClear();row={...row,role:'admin',role_slug:'admin'};
   expect(await call({export:true})).toMatchObject(unavailable);
   expect(rest.mock.calls.some(([path])=>path==='rpc/pos_stock_history_recorded_page')).toBe(false);
+ });
+ it('uses the same acceptance report revision for an authorized export',async()=>{
+  const sourceRevision='stock-history-acceptance.v1:exact-source';
+  const cutoffTicks=(BigInt(Date.parse(request.cutoff))*10_000n+1n).toString();
+  const {pendingCount: _pendingCount,...baseline}=complete();
+  const accepted={...baseline,sourceRevision,coverageThroughTicks:cutoffTicks,
+   coverage:{acceptedLedger:'complete',writers:'unknown',balanceGrade:'verified',timeGrade:'accepted'}};
+  row={...row,role:'admin',role_slug:'admin'};
+  rest.mockImplementation(async(path:string)=>Response.json(path.startsWith('app_users?')?[row]:
+   path==='rpc/pos_stock_history_acceptance_page_v1'?accepted:{...complete(),status:'incomplete',reasons:['INCOMPLETE_MOVEMENTS'],rows:[]}));
+  expect(await call()).toMatchObject(accepted);
+  expect(()=>checkedStockHistoryPage({...accepted,pendingCount:'0'},request.branchId)).toThrow(/acceptance coverage/);
+  rest.mockClear();
+  expect(await call({export:true,sourceRevision})).toMatchObject(accepted);
+  const calls=rest.mock.calls.filter(([path])=>path.startsWith('rpc/'));
+  expect(calls.map(([path])=>path)).toEqual(['rpc/pos_stock_history_acceptance_page_v1']);
+  expect(JSON.parse(calls[0][1].body)).toMatchObject({p_export:true,p_source_revision:sourceRevision});
  });
  it('propagates secure proof and resolves current actor rather than trusting request identity',async()=>{
   expect(await call()).toMatchObject({status:'complete',rows:[{quantity:'9007199254740993'}]});

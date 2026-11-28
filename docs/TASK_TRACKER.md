@@ -1,5 +1,18 @@
 ## 28 November — Production Stock Report readiness
 
+The owner approved using database acceptance time with the original sale time
+shown separately. The web report uses the receipt time of the last stock ledger
+leg of a complete operation. Pending till uploads and the wall-clock time of
+the earlier business commit are outside that clock. The revised SQL checks the
+installed reader and helper, retains their privileges and adds service-only
+acceptance and detail readers. A receipt prefix is eligible only after a proven
+opening, and currently covers supported sale movements through the most recent
+accepted group. A partial sale, an unmatched inventory effect, or a requested
+cutoff beyond the verified horizon keeps the report incomplete. Complete
+coverage for ordinary Production locations, quiet periods and non-sale stock
+writers still requires acceptance. Keep Production traffic on the current
+version until that work and the exact schema review pass.
+
 The owner selected verified history for the Production promotion. Start the
 application work from `af5deaf4` on Beta. The Administrator readiness read now
 reports previously claimed location registrations, including revoked or

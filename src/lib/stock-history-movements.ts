@@ -42,6 +42,7 @@ export const stockHistoryMovementRequestSchema = scope.extend({
 
 const movement = cursor.extend({
   recordedAt: exactInstant,
+  originalAt: exactInstant.optional(),
   kind: z.enum(["sale", "refund", "receiving", "stock", "product", "transfer", "sponsorship", "missed_bill", "general"]),
   delta: z.string().regex(/^-?[1-9]\d{0,37}$/),
 }).strict();
@@ -53,7 +54,7 @@ const responseSchema = scope.extend({
     acceptedLedger: z.enum(["complete", "incomplete"]),
     writers: z.enum(["confirmed", "pending", "unknown"]),
     balanceGrade: z.enum(["verified", "recorded_provisional"]),
-    timeGrade: z.enum(["recorded", "author_entered", "mixed"]),
+    timeGrade: z.enum(["accepted", "recorded", "author_entered", "mixed"]),
   }).strict().optional(),
   rows: z.array(movement).max(STOCK_MOVEMENT_PAGE_MAX),
   next: cursor.nullable(),
@@ -83,8 +84,12 @@ export function checkedStockHistoryMovementPage(input: unknown, expected: StockH
     return page;
   }
   const { baselineAt, coverage } = page;
+  const accepted = coverage?.timeGrade === "accepted";
+  if (accepted !== page.sourceRevision.startsWith("stock-history-acceptance.v1:")) {
+    throw new Error("The movement page changed the verified time basis.");
+  }
   if (!baselineAt || baselineAt > page.cutoff || (page.periodStart && baselineAt >= page.periodStart) || page.reasons.length ||
-    (coverage && (coverage.acceptedLedger !== "complete" || coverage.writers !== "confirmed" || coverage.balanceGrade !== "verified"))) {
+    (coverage && (coverage.acceptedLedger !== "complete" || coverage.writers !== (accepted ? "unknown" : "confirmed") || coverage.balanceGrade !== "verified"))) {
     throw new Error("The stock movement page did not prove complete historical coverage.");
   }
   if (page.rows.length > (request.limit ?? STOCK_MOVEMENT_PAGE_SIZE)) {
@@ -98,7 +103,8 @@ export function checkedStockHistoryMovementPage(input: unknown, expected: StockH
   for (const row of page.rows) {
     if (ids.has(row.id) || row.id === request.after?.id || (prior && !follows(row, prior)) ||
       row.effectiveAt <= baselineAt || (page.periodStart && row.effectiveAt < page.periodStart) ||
-      row.effectiveAt > page.cutoff || row.recordedAt < row.effectiveAt) {
+      row.effectiveAt > page.cutoff || row.recordedAt < row.effectiveAt ||
+      (accepted ? !row.originalAt || row.effectiveAt !== row.recordedAt : row.originalAt !== undefined)) {
       throw new Error("The movements do not follow the selected report time and page order.");
     }
     ids.add(row.id);

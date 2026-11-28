@@ -17,7 +17,7 @@ const responseSchema=z.object({
  sourceRevision:z.string().min(1).max(512).nullable().optional(),pendingCount:z.string().regex(/^\d{1,20}$/).optional(),restatable:z.literal(true).optional(),
  period:z.object({start:exactInstant,endExclusive:exactInstant,through:exactInstant,fullDay:z.boolean()}).optional(),
  coverage:z.object({acceptedLedger:z.enum(['complete','incomplete']),writers:z.enum(['confirmed','pending','unknown']),
-  balanceGrade:z.enum(['verified','recorded_provisional']),timeGrade:z.enum(['recorded','author_entered','mixed'])}).strict().optional(),
+  balanceGrade:z.enum(['verified','recorded_provisional']),timeGrade:z.enum(['accepted','recorded','author_entered','mixed'])}).strict().optional(),
  rows:z.array(z.object({productId:z.string().uuid(),locationId:z.string().min(1).max(128),name:z.string().max(200000),sku:z.string().max(20000).nullable(),
   barcode:z.string().max(20000).nullable(),quantity:units.nullable(),negative:z.boolean().nullable(),
   openingQuantity:units.nullable().optional(),inQuantity:z.string().regex(/^(?:0|[1-9]\d{0,37})$/).nullable().optional(),
@@ -44,10 +44,15 @@ export function checkedStockHistoryPage(input:unknown,branchId?:string):StockHis
    !page.reasons.includes('INCOMPLETE_MOVEMENTS')||String(stockInstant(page.recordedThrough))!==page.coverageThroughTicks||
    stockInstant(page.recordedThrough)<=stockInstant(page.baselineAt)||stockInstant(page.recordedThrough)>stockInstant(page.readAt)||
    stockInstant(page.recordedThrough)>=stockInstant(page.cutoff)))throw new Error('The recorded stock cutoff could not be verified.');
+ const accepted=page.coverage?.timeGrade==='accepted';
  if(page.coverage){
+  if(accepted&&(page.status!=='complete'||!page.sourceRevision?.startsWith('stock-history-acceptance.v1:')||
+    page.coverage.writers!=='unknown'||page.pendingCount!==undefined||
+    !page.coverageThroughTicks||BigInt(page.coverageThroughTicks)<stockInstant(page.cutoff)))
+   throw new Error('The database acceptance coverage could not be verified.');
   const provisional=page.coverage.acceptedLedger==='complete'&&page.coverage.balanceGrade==='recorded_provisional'&&page.coverage.writers!=='confirmed';
   if(page.coverage.balanceGrade==='recorded_provisional'&&!provisional||page.status==='complete'&&
-    (page.coverage.acceptedLedger!=='complete'||page.coverage.writers!=='confirmed'||page.coverage.balanceGrade!=='verified'))
+    (page.coverage.acceptedLedger!=='complete'||(!accepted&&page.coverage.writers!=='confirmed')||page.coverage.balanceGrade!=='verified'))
    throw new Error('The accepted ledger and writer coverage grades do not agree.');
   if(provisional&&(!page.baselineAt||!page.readAt||!page.sourceRevision||page.status!=='incomplete'||
     !page.reasons.some(reason=>['WRITER_COVERAGE_PENDING','WRITER_COVERAGE_UNKNOWN'].includes(reason))||page.rows.some(row=>row.quantity===null)||
@@ -57,7 +62,7 @@ export function checkedStockHistoryPage(input:unknown,branchId?:string):StockHis
     page.reasons.some(reason=>!['WRITER_COVERAGE_PENDING','WRITER_COVERAGE_UNKNOWN','CLOCK_UNVERIFIED'].includes(reason))))
    throw new Error('Unproven historical quantities cannot be displayed as recorded stock.');
  }else if(page.status!=='complete'&&page.rows.some(row=>row.quantity!==null))throw new Error('Recorded stock requires explicit accepted-ledger coverage.');
- if(page.status==='complete'&&(!page.baselineAt||!page.readAt||!page.sourceRevision||page.reasons.length||page.pendingCount!=='0'||page.rows.some(row=>row.quantity===null)||
+ if(page.status==='complete'&&(!page.baselineAt||!page.readAt||!page.sourceRevision||page.reasons.length||(!accepted&&page.pendingCount!=='0')||page.rows.some(row=>row.quantity===null)||
   stockInstant(page.baselineAt)>stockInstant(page.cutoff)||stockInstant(page.cutoff)>stockInstant(page.readAt)))throw new Error('The report did not prove complete historical coverage.');
  return page;
 }

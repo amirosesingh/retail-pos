@@ -25,6 +25,8 @@ export const useReportShifts=(_seed,branch,_from,_to,enabled)=>({shifts:enabled?
 const first='20000000-0000-4000-8000-000000000001',second='20000000-0000-4000-8000-000000000002';
 const response=(r)=>{const base={status:model.kind,reasons:[],cutoff:r.closedShiftId?'2026-11-05T13:00:00.1234567Z':r.cutoff,timeZone:r.timeZone,branchId:r.branchId,baselineAt:'2026-11-01T00:00:00.0000000Z',readAt:'2099-01-01T00:00:00.0000000Z',sourceRevision:'source-'+r.branchId,pendingCount:'0',restatable:true,next:null};
  const row=(id,qty)=>({productId:id,locationId:r.branchId,name:r.branchId==='a'?'Fixture A product':'Fixture B product',sku:'00001',barcode:'0000001',quantity:qty,negative:qty.startsWith('-')});
+ if(model.kind==='acceptance')return{...base,status:'complete',pendingCount:undefined,sourceRevision:'stock-history-acceptance.v1:fixture',rows:[row(first,'6')],
+  coverageThroughTicks:'17944526456789010',coverage:{acceptedLedger:'complete',writers:'unknown',balanceGrade:'verified',timeGrade:'accepted'}};
  if(model.kind==='recorded'){
   const recordedThrough='2026-11-12T03:04:05.6789010Z';
   if(r.cutoff>recordedThrough)return{...base,status:'incomplete',reasons:['INCOMPLETE_MOVEMENTS'],recordedThrough,rows:[]};
@@ -34,14 +36,17 @@ const response=(r)=>{const base={status:model.kind,reasons:[],cutoff:r.closedShi
  if(model.kind!=='complete')return{...base,status:'incomplete',baselineAt:undefined,reasons:['NO_VERIFIED_OPENING'],rows:[]};
  return{...base,rows:r.after?[row(second,'-2')]:[row(first,'9007199254740993')],next:r.after?null:first};};
 export const loadStockHistoryPage=async(r)=>{calls.push(r);const page=response(r);if(defer){defer=false;return new Promise(resolve=>pending.push(()=>resolve(page)));}return page;};
-export const loadStockHistoryMovements=async()=>{throw new Error('Movement details are outside this fixture');};
+export const loadStockHistoryMovements=async({after,limit,...scope})=>{if(model.kind!=='acceptance')throw new Error('Movement details are outside this fixture');
+ return{...scope,status:'complete',reasons:[],baselineAt:'2026-11-01T00:00:00.0000000Z',next:null,coverage:{acceptedLedger:'complete',writers:'unknown',balanceGrade:'verified',timeGrade:'accepted'},
+ rows:[{id:first,effectiveAt:'2026-11-12T03:04:05.0000000Z',recordedAt:'2026-11-12T03:04:05.0000000Z',originalAt:'2026-11-11T03:04:05.0000000Z',kind:'sale',delta:'-1'}]};};
 export const loadStockActivityPage=async({cursor,limit,...scope})=>({...scope,rows:[],next:null});
+export const loadStockActivityBalances=async()=>null;
 export const deferNext=()=>defer=true;export const resolve=()=>pending.shift()?.();export const xlsx={utils:{book_new:()=>({sheets:[]}),aoa_to_sheet:rows=>rows,json_to_sheet:rows=>rows,book_append_sheet:(book,sheet,name)=>book.sheets.push({name,sheet})},writeFile:(book,name)=>exports.push({book,name})};
 `);
   fs.writeFileSync(path.join(directory, "xlsx.ts"), `export{utils,writeFile};import{xlsx}from'./fixture';const{utils,writeFile}=xlsx;`);
   fs.writeFileSync(path.join(directory, "shell.tsx"), `export const AppShell=({children})=><main>{children}</main>;`);
   fs.writeFileSync(path.join(directory, "main.tsx"), `import React from'react';import{createRoot}from'react-dom/client';import{StockReport}from'@/platforms/web/components/pos/StockReport';import*as f from'./fixture';import'@/styles.css';
-window.fixture=f;function App(){const m=f.watch();return <main className="pos-page-container"><h1>Stock report</h1><p>Stock quantities for {m.name}.</p>{m.inventory?<StockReport branchId={m.branch} branchName={m.name}/>:<p role="status">Inventory permission is required to view this report.</p>}</main>;}createRoot(document.getElementById('root')).render(<App/>);`);
+window.fixture=f;function App(){const m=f.watch();return <main className="pos-page-container"><h1>Stock report</h1><p>Stock quantities for {m.name}.</p>{m.inventory?<StockReport branchId={m.branch} branchName={m.name} initialView={m.kind==='acceptance'?'history':'current'}/>:<p role="status">Inventory permission is required to view this report.</p>}</main>;}createRoot(document.getElementById('root')).render(<App/>);`);
   const { createServer } = await import("vite"), react = (await import("@vitejs/plugin-react")).default, tailwind = (await import("@tailwindcss/vite")).default;
   const { popupRuntimeAliases } = await import(pathToFileURL(path.join(root,"scripts/popup-runtime-aliases.mjs")).href);
   let server,browser,passed=0;
@@ -91,6 +96,23 @@ window.fixture=f;function App(){const m=f.watch();return <main className="pos-pa
       assert(await page.getByRole("button",{name:"Export Excel"}).isDisabled());
       assert.equal((await page.evaluate(()=>window.fixture.calls.at(-1))).cutoff,"2026-11-12T03:04:05.6789010Z");
       passed++;console.log("PASS same-day recorded sale and precise cutoff shortcut do not promote verified export");await page.close();
+    }
+    {
+      const page=await fresh(390);await page.evaluate(()=>window.fixture.set({kind:"acceptance"}));
+      await page.getByRole("combobox",{name:"Stock cutoff method"}).click();
+      await page.getByRole("option",{name:"Selected date and time"}).click();
+      await page.getByLabel("Stock report date and time").fill("2026-11-12T11:04:05");
+      await page.getByRole("button",{name:"Generate Report",exact:true}).click();
+      await page.getByText(/Pending till uploads are outside this report/).waitFor();
+      await page.getByRole("button",{name:"View movements"}).click();
+      const movement=page.getByRole("table",{name:"Verified stock movements"});
+      await movement.getByRole("columnheader",{name:"Database stock ledger acceptance (UTC)"}).waitFor();
+      await movement.getByRole("columnheader",{name:"Original transaction time (UTC)"}).waitFor();
+      await movement.getByText("2026-11-12T03:04:05.0000000Z",{exact:true}).waitFor();
+      await movement.getByText("2026-11-11T03:04:05.0000000Z",{exact:true}).waitFor();
+      await page.getByRole("button",{name:"Close movements"}).click();
+      assert(await page.getByRole("button",{name:"View movements"}).evaluate(element=>element===document.activeElement));
+      passed++;console.log("PASS Stock History shows separate acceptance and original sale times, with movement focus restored");await page.close();
     }
     {
       const page=await fresh(390);await page.evaluate(()=>window.fixture.deferNext());await page.getByRole("button",{name:"Show stock at selected time",exact:true}).click();

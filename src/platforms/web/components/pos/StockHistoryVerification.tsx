@@ -42,7 +42,7 @@ function CoverageReadout({ report }: { report: StockHistoryPage }) {
       {coverage && <>
         <div><dt className="text-xs text-muted-foreground">Accepted movement records</dt><dd>{coverage.acceptedLedger === "complete" ? "Complete" : "Incomplete"}</dd></div>
         <div><dt className="text-xs text-muted-foreground">Location writer coverage</dt><dd>{coverage.writers === "confirmed" ? "Confirmed" : coverage.writers === "pending" ? "Pending uploads" : "Unknown"}</dd></div>
-        <div><dt className="text-xs text-muted-foreground">Movement timestamps</dt><dd>{coverage.timeGrade === "recorded" ? "Ledger recording time" : coverage.timeGrade === "author_entered" ? "Original transaction time" : "Mixed sources"}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">Movement timestamps</dt><dd>{coverage.timeGrade === "accepted" ? "Database acceptance time" : coverage.timeGrade === "recorded" ? "Ledger recording time" : coverage.timeGrade === "author_entered" ? "Original transaction time" : "Mixed sources"}</dd></div>
       </>}
     </dl>
     {report.reasons.length > 0 && <ul className="list-inside list-disc space-y-1 text-sm text-muted-foreground">

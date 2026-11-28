@@ -6,6 +6,7 @@ import { stockCoverageFrontierJson } from "../../../electron/shared/stock-covera
 
 const require = createRequire(import.meta.url);
 const { createActualStockWriter } = require("../../../scripts/lib/stock-actual-writer-fixture.cjs");
+const { commitProtectedStockSale } = require("../../../scripts/lib/protected-stock-sale-fixture.cjs");
 const { stockCoverageFrontierMessage } = require("../../../electron/security/stock-event-author-protocol.cjs");
 const observationSql = readFileSync("scripts/preparation/stock-history-recorded-openings.sql", "utf8");
 const rolloutSql = readFileSync("scripts/preparation/stock-history-rollout-observation.sql", "utf8");
@@ -30,6 +31,9 @@ beforeAll(async () => {
   await fixture.db.exec(rolloutSql);
   await fixture.db.exec(activationSql);
   await fixture.db.exec(activationSql);
+  for (const name of ["stock-history-replica-export", "stock-history-recorded-continuation", "stock-history-multi-day-report", "stock-history-acceptance-time", "stock-history-acceptance-time"]) {
+    await fixture.db.exec(readFileSync(`scripts/preparation/${name}.sql`, "utf8"));
+  }
 }, 30_000);
 afterAll(async () => fixture?.db.close());
 beforeEach(async () => fixture.db.exec("BEGIN"));
@@ -295,7 +299,12 @@ it("addresses immutable lease and release readbacks to the exact enrolled termin
 
 it("activates a fenced reporting-only opening at database time, including zero stock", async () => {
   const { project, database, key, pair } = fixture.stockSourceFixture;
-  const id = randomUUID(), marker = "CODEX-STOCK401-ROLLOUT";
+  const id = randomUUID(), marker = "CODEX-STOCK401-ROLLOUT", secondProduct = randomUUID();
+  // Establish synthetic pre-existing stock before the isolated opening.
+  await fixture.db.exec("ALTER TABLE public.products DISABLE TRIGGER stock_history_accepted_products");
+  await fixture.db.query(`INSERT INTO public.products(id,name,barcode,owner_store_id,stock_by_store,stock_quantity)
+    VALUES($1,'Second Stock Fixture','stock-fixture-second','A','{"A":4}'::jsonb,4)`, [secondProduct]);
+  await fixture.db.exec("ALTER TABLE public.products ENABLE TRIGGER stock_history_accepted_products");
   const scope = [fixture.admin, fixture.terminal, project, "A", id];
   const hash = (value: string) => createHash("sha256").update(value).digest("hex");
   const dbTime = () => scalar<string>("SELECT private.stock_history_cutover_utc(clock_timestamp())");
@@ -340,19 +349,61 @@ it("activates a fenced reporting-only opening at database time, including zero s
   const opened = await activate([claim]);
   const after = await dbTime();
   expect(opened).toEqual({ baselineId: id, branchId: "A", cutoff: expect.any(String), verificationState: "verified",
-    openingKind: "system_snapshot", productCount: 2 });
+    openingKind: "system_snapshot", productCount: 3 });
   expect(opened.cutoff > before && opened.cutoff < after).toBe(true);
   expect(await readReport(opened.cutoff)).toMatchObject({ status: "complete" });
   expect(await readReport(after)).toMatchObject({ reasons: expect.arrayContaining(["INCOMPLETE_MOVEMENTS"]) });
   const pairs = await scalar("SELECT jsonb_object_agg(product_id::text,quantity::text) FROM public.stock_history_openings WHERE baseline_id=$1", [id]);
-  expect(pairs).toEqual({ [fixture.product]: "10", [zeroProduct]: "0" });
+  expect(pairs).toEqual({ [fixture.product]: "10", [secondProduct]: "4", [zeroProduct]: "0" });
   expect(await fixture.stock()).toBe("10");
   await scalar("SELECT public.pos_stock_history_release_stocktake_pause($1,$2,$3,$4,$5)", scope);
   expect(await activate([claim])).toEqual(opened);
   await denied(() => activate([{ ...claim, fenceGeneration: randomUUID() }]), "STOCK_CUTOVER_REPLAY_CONFLICT");
+  await fixture.db.query(`UPDATE public.app_users SET permissions=permissions||'{"can_open_shift":true,"can_process_sale":true,"can_view_inventory":true,"can_export_reports":false}'::jsonb
+    WHERE id=$1`, [fixture.author]);
+  await fixture.db.query(`INSERT INTO fin62_rollout_preparation.approvals(organization_id,branch_id,terminal_id,revision,rollout_id,status)
+    VALUES('default','A',$1,1,$2,'approved')`, [fixture.terminal, randomUUID()]);
+  const original = "2026-11-05T00:00:00.1234567Z";
+  const acceptedPage = (cutoff: string, revision: string | null = null, exportReport = false, actor = fixture.admin, branch = "A") =>
+    scalar<{sourceRevision:string}>("SELECT public.pos_stock_history_acceptance_page_v1($1,$2,$3,$4,'UTC',NULL,100,$5,NULL,$6)",
+      [actor, fixture.terminal, branch, cutoff, revision, exportReport]);
+  expect(await acceptedPage(after)).toBeNull();
+  let firstReceiptTime: string | undefined;
+  const { stockAck } = await commitProtectedStockSale(fixture, { pair, keyId: key, project, recorded: original,
+    productIds: [fixture.product, secondProduct],
+    flushEffects: () => fixture.db.exec("SET CONSTRAINTS private.stock_history_effect_source_link,private.stock_history_receipt_effect_link IMMEDIATE"),
+    afterFirstClaim: async (receipt: { acceptedAt: string }) => {
+      firstReceiptTime = receipt.acceptedAt;
+      expect(await acceptedPage(receipt.acceptedAt)).toBeNull();
+    },
+  });
+  const acceptedAt = stockAck.receipts.map((receipt: { acceptedAt: string }) => receipt.acceptedAt).sort().at(-1);
+  expect(acceptedAt > after).toBe(true);
+  expect(await acceptedPage(original)).toBeNull();
+  expect(await acceptedPage(after)).toMatchObject({ status: "complete", rows: expect.arrayContaining([{ productId: fixture.product,
+    locationId: "A", name: expect.any(String), sku: null, barcode: expect.any(String), quantity: "10", negative: false }]) });
+  expect(await acceptedPage(firstReceiptTime!)).toMatchObject({ rows: expect.arrayContaining([
+    expect.objectContaining({ productId: fixture.product, quantity: "10" }),
+    expect.objectContaining({ productId: secondProduct, quantity: "4" }),
+  ]) });
+  const accepted = await acceptedPage(acceptedAt);
+  expect(accepted).toMatchObject({ status: "complete", sourceRevision: expect.stringMatching(/^stock-history-acceptance\.v1:/),
+    coverage: { timeGrade: "accepted" }, rows: expect.arrayContaining([
+      expect.objectContaining({ productId: fixture.product, quantity: "9" }),
+      expect.objectContaining({ productId: secondProduct, quantity: "3" }),
+    ]) });
+  expect(await acceptedPage(acceptedAt, accepted.sourceRevision, true)).toMatchObject({ status: "complete", sourceRevision: accepted.sourceRevision });
+  await denied(() => acceptedPage(acceptedAt, accepted.sourceRevision, true, fixture.author), "STOCK_HISTORY_EXPORT_DENIED");
+  await denied(() => acceptedPage(acceptedAt, null, false, fixture.admin, "B"), "STOCK_HISTORY_BRANCH_DENIED");
+  expect(await scalar("SELECT public.pos_stock_history_acceptance_movements_v1($1,$2,'A',$3,$4,'UTC',$5,NULL,NULL,NULL,50)",
+    [fixture.admin, fixture.terminal, fixture.product, acceptedAt, accepted.sourceRevision])).toMatchObject({
+    status: "complete", rows: [{ kind: "sale", delta: "-1", effectiveAt: acceptedAt, recordedAt: acceptedAt, originalAt: original }],
+  });
+  await denied(() => acceptedPage(acceptedAt, "stock-history-acceptance.v1:changed"), "STOCK_HISTORY_SOURCE_CHANGED");
+  expect(await fixture.stock()).toBe("9");
   const next = [...scope.slice(0, 4), randomUUID()];
   await prepare(next);
   await denied(() => activate([claim], next), "STOCK_CUTOVER_ALREADY_PUBLISHED");
-  expect(await counts()).toEqual([1, 2, 0]);
+  expect(await counts()).toEqual([1, 3, 0]);
   expect(await scalar("SELECT has_function_privilege('authenticated','public.pos_stock_history_activate_rollout(text,text,text,text,uuid,jsonb)','EXECUTE')")).toBe(false);
 });
