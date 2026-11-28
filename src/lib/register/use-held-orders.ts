@@ -1,7 +1,8 @@
 import { db } from "@/core/api/pos-db";
 import { draftTicketId, registerSessionDraft } from "@/lib/session-draft";
 import { documentDevice } from "@/lib/document-origin";
-import { sameBranchId } from "@/lib/branch-id";
+import { canonicalBranchId, sameBranchId } from "@/lib/branch-id";
+import { isCurrentEpoch, sessionEpoch } from "@/lib/session-epoch";
 /**
  * Parked tickets.
  *
@@ -93,36 +94,60 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   const released = useRef(new Set<string>());
   const writes = useRef<Promise<unknown>>(Promise.resolve());
   const savedDraft = useRef<string | null>(null);
+  const refusedDraft = useRef<string | null>(null);
   const enqueue = useCallback(<T,>(work: () => Promise<T>): Promise<T> => {
     const next = writes.current.then(work, work);
     writes.current = next.catch(() => undefined);
     return next;
   }, []);
-  const saveDraft = useCallback(async () => {
+  const saveDraft = useCallback(async (background = false) => {
     const current = latestDeps.current;
+    const epoch = sessionEpoch();
     if (!current.lines.length || !current.shiftId || (current.billNo && released.current.has(current.billNo))) return;
     if (!current.billNo) {
       const bill = await current.ensureBillNumber();
       current.billNo = bill;
       current.setBillNo(bill);
     }
-    const id = activeId.current ?? draftTicketId(current.storeId, current.billNo);
+    const { billNo, shiftId, storeId, cashier } = current;
+    const id = activeId.current ?? draftTicketId(storeId, billNo);
     activeId.current = id;
     const cleaned = current.activeApproval ? removeApprovedDiscount(current, current.activeApproval) : current;
     const order: HeldOrder = {
-      id, label: `Draft ${current.billNo}`, billNo: current.billNo,
-      storeId: current.storeId, shiftId: current.shiftId, heldBy: current.cashier,
+      id, label: `Draft ${billNo}`, billNo,
+      storeId, shiftId, heldBy: cashier,
       lines: cleaned.lines, total: current.activeApproval ? current.calculateTotal?.(cleaned.lines, cleaned.cartDiscount, cleaned.cartDiscountType) ?? current.total : current.total,
       cartDiscount: cleaned.cartDiscount, cartDiscountType: cleaned.cartDiscountType,
       exchangeRef: current.exchangeRef, memberId: current.memberId, memberName: current.memberName,
       coupon: current.coupon, heldAt: new Date().toISOString(), status: "draft",
       note: `draft:${documentDevice()}`,
     };
-    const signature = JSON.stringify({...order,heldAt:null});
+    const signature = JSON.stringify([epoch, {...order,heldAt:null}]);
+    const draftScope = JSON.stringify([epoch, canonicalBranchId(storeId), shiftId, id, billNo, cashier]);
+    const isCurrentDraft = () => {
+      const latest = latestDeps.current;
+      return isCurrentEpoch(epoch) && latest.lines.length > 0 && !released.current.has(billNo) &&
+        activeId.current === id && latest.billNo === billNo && latest.shiftId === shiftId &&
+        sameBranchId(latest.storeId, storeId) && latest.cashier === cashier;
+    };
     await enqueue(async () => {
-      if (!released.current.has(order.billNo!) && savedDraft.current !== signature) {
+      if (released.current.has(billNo) || savedDraft.current === signature ||
+          (background && refusedDraft.current === draftScope)) return;
+      try {
         await addHeldOrder(order);
+        if (!isCurrentDraft()) return;
         savedDraft.current = signature;
+        if (refusedDraft.current === draftScope) refusedDraft.current = null;
+      } catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "P0001" ||
+            error.message !== "This shift is closing or closed. The draft cannot be changed.") throw error;
+        const stillCurrent = isCurrentDraft();
+        if (stillCurrent) refusedDraft.current = draftScope;
+        if (!background) throw error;
+        if (!stillCurrent) return;
+        toast.error("Draft could not be saved because its shift is unavailable", {
+          description: "Verify the shift before trying to save the draft again.",
+        });
       }
     });
   }, [enqueue]);
@@ -370,12 +395,12 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   }
 
   useEffect(() => () => {
-    void saveDraft().catch(error => notifyError(error, "Saving draft bill"));
+    void saveDraft(true).catch(error => notifyError(error, "Saving draft bill"));
   }, [saveDraft]);
 
   useEffect(() => {
     if (!deps.lines.length || !deps.billNo) return;
-    const timer = setTimeout(() => { void saveDraft().catch(error => notifyError(error, "Saving draft bill")); }, 1000);
+    const timer = setTimeout(() => { void saveDraft(true).catch(error => notifyError(error, "Saving draft bill")); }, 1000);
     return () => clearTimeout(timer);
   }, [deps.lines, deps.billNo, deps.total, deps.cartDiscount, deps.cartDiscountType, deps.memberId, deps.coupon, deps.exchangeRef, saveDraft]);
 
