@@ -6,7 +6,8 @@ logged repeated `FIN62_OPEN_ORIGIN_NOT_NEW` refusals for a pending protected
 opening that reached the cloud through ordinary change tracking first. Keep
 new protected openings under their exact pending journal until acknowledged
 through the signed opening route. Test a change committed after tracking was
-sampled, ordinary shifts, and lost replies on the protected route. Use the
+sampled, another till on the same SQL database, a legacy reader, ordinary
+shifts, and lost replies on the protected route. Use the
 existing scoped retry hold and a distinct shift-opening notice when the cloud
 already has an opening without exact acceptance. Preserve both sides of these
 conflicts for authorized review. Treat hosted schema

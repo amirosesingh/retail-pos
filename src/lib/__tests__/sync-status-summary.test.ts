@@ -434,7 +434,7 @@ describe("actual local panel database freshness", () => {
     expect(panel.findText(panel.render(), "Saved shift opening needs review")).toBeUndefined();
     expect(panel.findText(panel.render(), "Open Database Settings")).toBeUndefined();
     await panel.findText(panel.render(), "Sync now")!.props.onClick!();
-    expect(panel.findText(panel.render(), "Existing shift opening needs review. The central database already has this shift. The saved opening still needs matching acceptance evidence.")).toBeDefined();
+    expect(panel.findText(panel.render(), "Existing shift opening needs review. The central database already has this shift or its opening record. Verify the saved opening before retrying.")).toBeDefined();
     expect(panel.findText(panel.render(), "Synchronization completed.")).toBeUndefined();
   });
 

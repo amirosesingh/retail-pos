@@ -74,7 +74,7 @@ const financialReview = {
   },
   FIN62_OPEN_ORIGIN_NOT_NEW: {
     title: "Existing shift opening needs review",
-    message: "The central database already has this shift. The saved opening still needs matching acceptance evidence.",
+    message: "The central database already has this shift or its opening record. Verify the saved opening before retrying.",
     kind: "shift",
   },
   FIN62_SALE_BIRTH_ALREADY_EXISTS: {
