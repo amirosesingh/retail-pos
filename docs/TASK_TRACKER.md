@@ -1153,6 +1153,21 @@ exact final file/hash/target approval remains required before live installation.
 The observed equal-version competing-draft zero-applied acknowledgement remains
 a separately tracked defect; do not silently bundle its writer/financial fix.
 
+### 28 November — repeated web draft save rejections
+
+Production logs show 58 authenticated browser `held_orders` upserts rejected
+because the draft's shift was missing or inactive. The request logs identify the
+browser upsert route and omit which register action sent it. The
+register's automatic draft save can repeat the same refusal on cart changes.
+On Beta, suspend only background saves of that exact draft and shift after the
+guard refusal. Scope background warnings and retry state to the current branch,
+shift, bill and sign-in. Keep the current cart, saved draft and explicit retry
+available.
+The 98 focused tests cover late rejections after scope changes, explicit retry,
+the original Postgres error code, transient failures and the distinct SQL Server
+rejection. TypeScript and targeted lint passed. Hosted Beta register verification
+is pending.
+
 Implementation contract after fresh independent investigation: Operations history
 is ONLY explicit BRANCH attribution matching its trusted registered branch and
 exact organization. GLOBAL, PRIVATE, CLUSTER, TERMINAL and unknown/unattributed

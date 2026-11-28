@@ -300,7 +300,9 @@ export async function runOpLive(context: string, op: SyncOp): Promise<void> {
     }
     const message = describeError(op.table, res.error);
     logSync("push", op.table, false, `${context}: ${message}`);
-    throw new Error(message);
+    const failure = new Error(message);
+    if (op.table === "held_orders") Object.assign(failure, { code: res.error.code });
+    throw failure;
   }
   logSync("push", op.table, true, context);
   await broadcastSettingsChange(op.table);

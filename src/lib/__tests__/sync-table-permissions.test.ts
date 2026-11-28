@@ -101,6 +101,16 @@ describe("cashier sign-in recording without history read access", () => {
 });
 
 describe("protected background table access", () => {
+  it("passes the cloud held-order guard code back to the register", async () => {
+    mocks.relayAllowed.mockReturnValue(false);
+    const error = { code: "P0001", message: "This shift is closing or closed. The draft cannot be changed." };
+    mocks.upsert.mockResolvedValueOnce({ error });
+    await expect(runOpLive("Holding ticket", {
+      kind: "upsert", table: "held_orders", rows: [{ id: "ticket-1", store_id: "branch-1" }],
+    })).rejects.toMatchObject(error);
+    expect(mocks.relay).not.toHaveBeenCalled();
+  });
+
   it("does not send anonymous delta reads or advance their checkpoints", async () => {
     await expect(pullDelta()).resolves.toEqual({ merged: 0 });
     expect(mocks.from).not.toHaveBeenCalled();
