@@ -14,6 +14,7 @@ const table = (name: string, key = "id", order = 1) => ({ sqlServerTable: name, 
     { sqlServerColumn: "store_id", cloudColumn: "store_id", sqlServerType: "nvarchar(128)", cloudType: "text" },
   ] });
 const sales = table("sales"), stock = table("stock_delta_applied", "movement_id", 2), audit = table("audit_logs", "id", 3);
+const shifts = table("shifts");
 const change = (entity_type: string, key: Row) => ({ entity_type, key, entity_id: JSON.stringify(key), operation: "insert" });
 
 function workerFixture(mode: "metadata-error" | "approval-hold" | "history-pending" | "capture-race" | "ambiguous-business-ack") {
@@ -114,6 +115,7 @@ describe("native pending-financial key and capture contract", () => {
     const state = { pending: true, owned: true, receipt: null as Row | null };
     const physical = { movement_id: movement, store_id: branch };
     const saleParent = { id: saleId, store_id: branch };
+    const protectedShift = { id: uuid(17), store_id: branch };
     class Transaction { begin = async () => { events.push("begin"); }; commit = async () => { events.push("commit"); }; rollback = async () => { events.push("rollback"); }; }
     class Request {
       inputs: Row = {};
@@ -138,16 +140,17 @@ describe("native pending-financial key and capture contract", () => {
           events.push("business-receipt");
           return { recordset: state.receipt ? [state.receipt] : [] };
         }
+        if (text.includes("FROM dbo.[shifts] source")) { events.push("shift-row"); return { recordset: [protectedShift] }; }
         if (text.includes("__financial_row_json")) { events.push("rows");return { recordset: [{ ...physical, __financial_row_json: JSON.stringify(physical) }] }; }
         throw Error("Unexpected fixture query");
       }
     }
-    const manager = { sql: () => ({ Request, Transaction, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }), pool: {} };
+    const manager = { sql: () => ({ Request, Transaction, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }), pool: { request: () => new Request(new Transaction()) } };
     const source = { identity: { branchId: branch, terminalId: terminal, databaseGuid: uuid(7), projectOrigin: "https://fixture.test",
       backend: "https://fixture-pos.test", activation: "synthetic", profile: "fixture" }, assertSource: vi.fn() };
-    const reader = new ChangeReader(manager, { tables: [sales, stock] }, { financialOperations: { enabled: true, schema: async () => {} }, financialCoverageSource: source });
+    const reader = new ChangeReader(manager, { tables: [sales, stock, shifts] }, { financialOperations: { enabled: true, schema: async () => {} }, financialCoverageSource: source });
     const changes = [{ key: { movement_id: movement }, operation: "I" }];
-    return { reader, state, changes, events, queries, source, saleParent };
+    return { reader, state, changes, events, queries, source, saleParent, protectedShift };
   }
   it("matches movement_id and current branch/terminal against pending aggregate financial evidence", async () => {
     const f = readerFixture();expect(await f.reader.financialBusinessPending(stock, f.changes, branch, terminal)).toBe(true);
@@ -166,6 +169,20 @@ describe("native pending-financial key and capture contract", () => {
     await expect(f.reader.rows(stock, f.changes, { branchId: branch, exactFinancial: true })).resolves.toEqual([{ movement_id: movement, store_id: branch }]);
     f.state.pending = false;
     await expect(f.reader.rows(stock, f.changes, { branchId: branch })).resolves.toEqual([{ movement_id: movement, store_id: branch }]);
+  });
+  it("reserves the exact unacknowledged OPEN origin for the protected shift journal", async () => {
+    const f = readerFixture();
+    const changes = [{ key: { id: f.protectedShift.id }, operation: "I" }];
+    await expect(f.reader.financialBusinessPending(shifts, changes, branch, terminal)).resolves.toBe(true);
+    expect(f.queries[0].text).toContain("o.local_aggregate_id=j.aggregate_id");
+    expect(f.queries[0].text).toContain("o.origin_kind=N'OPEN' AND o.branch_id=@branch AND o.terminal_id=@terminal");
+    expect(f.queries[0].inputs).toMatchObject({ branch, terminal, table: "shifts", ids: JSON.stringify([f.protectedShift.id]) });
+    await expect(f.reader.rows(shifts, changes, { branchId: branch })).rejects.toMatchObject({ code: "EFINANCIAL_BUSINESS_PENDING", table: "shifts" });
+    expect(f.events.slice(-4)).toEqual(["begin", "shift-row", "pending", "rollback"]);
+    expect(f.queries.at(-2)?.transaction).toBe(f.queries.at(-1)?.transaction);
+    await expect(f.reader.rows(shifts, changes, { branchId: branch, exactFinancial: true })).resolves.toEqual([f.protectedShift]);
+    f.state.pending = false;
+    await expect(f.reader.rows(shifts, changes, { branchId: branch })).resolves.toEqual([f.protectedShift]);
   });
   it("does not introduce a SQL query on legacy, disabled financial paths", async () => {
     const reader = new ChangeReader({}, { tables: [stock] });
