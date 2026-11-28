@@ -14,6 +14,28 @@ existing movement evidence and the one durable sync lane. Historical cost,
 older-writer coverage, Management offline history and a concurrent reporting
 baseline require their own evidence before they can be shown as available.
 
+## 28 November — browser shift closure and summary status
+
+The owner requested Beta-first verification of web shift opening, closing and
+messages. An authorized browser count can commit the closure before any follow-up
+activity or summary is published. Preserve that authoritative success and show
+unconfirmed summary publication separately. Keep authorization, close routing,
+native operation, pending work and delivery rules intact.
+
+Read-only logs recorded seven successful Production and two successful Beta
+browser cash count submissions in the week checked. All nine shifts reached
+`CLOSED`, with no matching closure summaries or closure activity. The earlier
+browser renderer also sent a compatibility shift upsert immediately after the
+authoritative close, which could be refused as `SHIFT_OPEN_REPLAY_CONFLICT`
+before follow-up publication. Current Beta `af5deaf4` and the `v1.4.85` tag
+include the source correction that removes the redundant write. The Beta
+follow-up surfaces a summary warning and diagnostic if publication cannot be
+confirmed, and ignores late results from a previous session or branch. All 63
+focused tests passed, including transport and credential failure, missing
+confirmation, and a branch switch away and back. Hosted notification delivery
+still needs a fresh isolated Beta browser opening and close with matching
+activity and summary read-back.
+
 ## 23 November — approved two-till protected financial rollout
 
 The owner approved an application-managed protected financial enrollment only
