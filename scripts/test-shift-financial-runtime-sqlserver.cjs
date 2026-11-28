@@ -8,6 +8,7 @@ const{ShiftSyncJournal}=require('../electron/db/shift-sync-journal.cjs');
 const{AggregateRepository}=require('../electron/db/repositories/aggregates.cjs');
 const{ReceiptRepository}=require('../electron/db/repositories/receipts.cjs');
 const{CheckpointRepository}=require('../electron/sync/checkpoints.cjs');
+const{ChangeReader}=require('../electron/sync/change-reader.cjs');
 const{ShiftAuthorAuthority}=require('../electron/shift-authority.cjs');
 const{createFinancialCapabilityVault}=require('../electron/security/financial-capability-vault.cjs');
 const{createStockHistoryRuntime}=require('../electron/stock-history-runtime.cjs');
@@ -28,6 +29,11 @@ async function main(){
  const runtime=new ShiftFinancialRuntime({manager,cloud,terminal:()=>activation,authority,vault:createFinancialCapabilityVault({safeStorage,directory:()=>directory}),operationsRepository:repository,registry,checkpoints:new CheckpointRepository(manager),legacy});
  const test=async(name,run)=>{await run();passed++;console.log('PASS '+name);};
  try{
+  const legacyReader=new ChangeReader(manager,registry);
+  const shiftTable=registry.tables.find(table=>table.cloudTable==='shifts');
+  await test('ordinary shift capture works before the optional opening-origin table is installed',async()=>{
+   assert.deepEqual(await legacyReader.rows(shiftTable,[{key:{id:randomUUID()}}],{branchId:branch}),[]);
+  });
   await manager.pool.request().batch('CREATE TABLE dbo.pos_jobs(job_id uniqueidentifier PRIMARY KEY,job_type nvarchar(80),status nvarchar(32),branch_id nvarchar(128));CREATE TABLE dbo.stock_delta_applied(movement_id uniqueidentifier PRIMARY KEY,product_id uniqueidentifier,store_id nvarchar(128),delta int,applied_at datetimeoffset);');
   await manager.pool.request().batch(readFileSync('scripts/preparation/025_shift_financial_bases.sql','utf8'));await manager.pool.request().batch(readFileSync('scripts/preparation/026_shift_financial_operations.sql','utf8'));
   await db.query("UPDATE app_users SET permissions=permissions||'{\"can_open_shift\":true,\"can_close_shift\":true,\"can_shift_cash_count\":true,\"can_shift_cash_recount\":true}'::jsonb WHERE id=$1",[authorId]);
@@ -55,6 +61,29 @@ async function main(){
   offline=true;
   await test('approved offline Main assembly saves actual OPEN and exact SALE before any upload',async()=>{await(await runtime.forAggregate(open)).commit('shift',open);const saleInput={operationId:randomUUID(),branchId:branch,terminalId:terminal,permissions:{can_process_sale:true},operations:[{kind:'insert',table:'sales',rows:[{id:sale,store_id:branch,shift_id:shift,bill_number:'OWNED-RUNTIME-1',total_amount:'10.005',subtotal_amount:'10.005',discount_amount:'0',tax_amount:'0',payment_type:'cash',payments:[],points_earned:'0',points_redeemed:'0',is_exchange:false,is_refunded:false,paid_amount:'10.005',change_amount:'0',exchange_credit:'0',coupon_discount:'0',rounding_adjustment:'0',created_at:'2026-11-05T01:00:00Z',row_version:1}]}]};await(await runtime.forAggregate(saleInput)).commit('sale',saleInput);assert.equal((await manager.pool.request().input('sale',sale).query('SELECT is_refunded FROM dbo.sales WHERE id=@sale;')).recordset[0].is_refunded,false);assert.equal(await scalar('SELECT count(*)::int FROM sales WHERE id=$1',[sale]),0);});
   assert.deepEqual((await manager.pool.request().input('open',open.operationId).query("SELECT operation,entity_type FROM dbo.sync_change_journal WHERE aggregate_id=@open AND acknowledged_at IS NULL;")).recordset,[{operation:'update',entity_type:'shifts'}]);
+  await test('both shared-database upload routes hold the exact pending opening',async()=>{
+   const changes=[{key:{id:shift}}];
+   assert.equal(await context.reader.financialBusinessPending(shiftTable,changes,branch,randomUUID()),true);
+   await assert.rejects(legacyReader.rows(shiftTable,changes,{branchId:branch}),{code:'EFINANCIAL_BUSINESS_PENDING'});
+   assert.equal(await legacyReader.financialBusinessPending(shiftTable,changes,'B',randomUUID()),false);
+   assert.equal(await scalar('SELECT count(*)::int FROM shifts WHERE id=$1',[shift]),0);
+  });
+  await test('a limited login cannot treat a hidden pending opening as an old schema',async()=>{
+   const sql=manager.sql(),tx=new sql.Transaction(manager.pool);
+   await manager.pool.request().batch(`CREATE USER [fixture_limited_opening] WITHOUT LOGIN;
+     GRANT SELECT ON dbo.sync_change_journal TO [fixture_limited_opening];`);
+   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+   const request=()=>new sql.Request(tx);
+   try{
+    await request().batch("EXECUTE AS USER=N'fixture_limited_opening';");
+    try{
+     const visible=await request().query("SELECT OBJECT_ID(N'dbo.pos_sync_shift_financial_origins',N'U') AS origin_table;");
+     assert.equal(visible.recordset[0].origin_table,null);
+     await assert.rejects(legacyReader.financialBusinessPending(shiftTable,[{key:{id:shift}}],branch,randomUUID(),tx),
+       {code:'EFINANCIAL_HISTORY_UNCONFIRMED'});
+    }finally{await request().batch('REVERT;');}
+   }finally{await tx.rollback();}
+  });
   await test('unchanged and own-known generations avoid another full basis download or full local scan',async()=>{offline=false;let fullScans=0;const query=context.operations.query;context.operations.query=async(t,statement,params)=>{if(statement.includes('Main-private READ ONLY capture'))fullScans++;return query(t,statement,params);};const countBefore=requests.length;await runtime.shiftContext(branch,shift);await runtime.shiftContext(branch,shift);assert.equal(fullScans,0);assert.equal(requests.slice(countBefore).filter(name=>name==='sqlServerFinancialBasis').length,0);assert.equal(requests.slice(countBefore).filter(name=>name==='sqlServerFinancialCapability').length,2);offline=true;});
   const calls=mainCalls(repository,legacy.journal,branch,terminal,session,authority,runtime),count={shiftId:shift,cash:'30.01',card:null,digital:null,clientKey:'owned-original'};
   await test('actual Main offline start and count freeze historical exact financial basis',async()=>{await calls.startLocalShiftClose({shiftId:shift,reason:'owned count',terminalId:terminal});assert.equal((await calls.commitLocalShiftCashCount(count)).state,'CLOSED');const rows=(await manager.pool.request().input('shift',shift).query('SELECT expected_cash,final_counted_cash,state FROM dbo.shifts WHERE id=@shift;')).recordset[0];assert.equal(Number(rows.expected_cash),30.01);assert.equal(rows.state,'CLOSED');});

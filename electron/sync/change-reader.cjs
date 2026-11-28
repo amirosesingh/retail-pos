@@ -434,7 +434,8 @@ class ChangeReader {
     if (this.financialOperations?.enabled !== true && this.table(value).table.sqlServerTable === "shifts") {
       const ids = [...new Set(changes.map(change => recordId((change.key ?? change).id)).filter(id => UUID.test(id)))];
       if (!branchId || !ids.length) return false;
-      const read = async tx => Boolean((await this.financialQuery(tx, `DECLARE @pending bit=0;
+      const read = async tx => {
+        const result = await this.financialQuery(tx, `DECLARE @pending bit=0;
         IF OBJECT_ID(N'dbo.pos_sync_shift_financial_origins',N'U') IS NOT NULL
           EXEC sys.sp_executesql N'SELECT @found=CASE WHEN EXISTS(
             SELECT 1 FROM dbo.pos_sync_shift_financial_origins o WITH(HOLDLOCK)
@@ -445,7 +446,20 @@ class ChangeReader {
                 THEN JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id END,N''$.id'') ELSE j.entity_id END)
             WHERE o.origin_kind=N''OPEN'' AND o.branch_id=@scope) THEN 1 ELSE 0 END;',
             N'@scope nvarchar(128),@keys nvarchar(max),@found bit OUTPUT',@scope=@branch,@keys=@ids,@found=@pending OUTPUT;
-        SELECT @pending AS pending;`, { branch: branchId, ids: JSON.stringify(ids) })).recordset?.[0]?.pending);
+        ELSE IF ISNULL(HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'VIEW DEFINITION'),0)<>1 AND EXISTS(
+          SELECT 1 FROM dbo.sync_change_journal j WITH(HOLDLOCK)
+          JOIN OPENJSON(@ids) wanted ON TRY_CONVERT(uniqueidentifier,wanted.[value])=
+            TRY_CONVERT(uniqueidentifier,CASE WHEN ISJSON(j.entity_id)=1
+              THEN JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id END,N'$.id') ELSE j.entity_id END)
+          WHERE j.branch_id=@branch AND j.entity_type=N'shifts' AND j.acknowledged_at IS NULL)
+          SET @pending=NULL;
+        SELECT @pending AS pending;`, { branch: branchId, ids: JSON.stringify(ids) });
+        const pending = result.recordset?.[0]?.pending;
+        if (pending == null) throw Object.assign(new Error("This connection cannot verify ownership of the pending shift opening."), {
+          code: "EFINANCIAL_HISTORY_UNCONFIRMED", table: "shifts",
+        });
+        return Boolean(pending);
+      };
       return transaction ? read(transaction) : this.serializableTransaction(read);
     }
     return this.financialBusinessOwnership(value,changes,branchId,terminalId,transaction,true);

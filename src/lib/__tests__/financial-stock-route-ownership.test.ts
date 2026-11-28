@@ -112,7 +112,7 @@ describe("financial journal ownership of untagged stock CT", () => {
 describe("native pending-financial key and capture contract", () => {
   function readerFixture({ financialEnabled = true, sourceTerminal = terminal } = {}) {
     const events: string[] = [], queries: { text: string; inputs: Row; transaction: unknown }[] = [];
-    const state = { pending: true, owned: true, openingDuringCapture: false, hasOpeningTable: true, receipt: null as Row | null };
+    const state = { pending: true, owned: true, openingDuringCapture: false, hasOpeningTable: true, canSeeSchema: true, receipt: null as Row | null };
     const physical = { movement_id: movement, store_id: branch };
     const saleParent = { id: saleId, store_id: branch };
     const shift = { id: uuid(17), store_id: branch };
@@ -125,7 +125,8 @@ describe("native pending-financial key and capture contract", () => {
         queries.push({ text, inputs: { ...this.inputs }, transaction: this.transaction });
         if (text.includes("DECLARE @pending bit=0")) {
           events.push("legacy-opening-check");
-          return { recordset: [{ pending: state.hasOpeningTable && state.pending ? 1 : 0 }] };
+          const pending = state.pending && !state.canSeeSchema ? null : state.hasOpeningTable && state.pending ? 1 : 0;
+          return { recordset: [{ pending }] };
         }
         if (text.includes("FROM dbo.sync_change_journal j WITH(HOLDLOCK)")) {
           const pendingOnly = text.includes("j.acknowledged_at IS NULL");
@@ -226,6 +227,12 @@ describe("native pending-financial key and capture contract", () => {
     expect(f.queries[1].text).toContain("j.aggregate_id=o.local_aggregate_id");
     expect(f.queries[1].inputs).toMatchObject({ branch, ids: JSON.stringify([f.shift.id]) });
     f.state.hasOpeningTable = false;
+    await expect(f.reader.rows(shifts, changes, { branchId: branch })).resolves.toEqual([f.shift]);
+    f.state.canSeeSchema = false;
+    await expect(f.reader.rows(shifts, changes, { branchId: branch })).rejects.toMatchObject({
+      code: "EFINANCIAL_HISTORY_UNCONFIRMED", table: "shifts",
+    });
+    f.state.pending = false;
     await expect(f.reader.rows(shifts, changes, { branchId: branch })).resolves.toEqual([f.shift]);
   });
   it("holds an independent completed ticket until its exact financial sale is proved present", async () => {
