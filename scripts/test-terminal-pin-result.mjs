@@ -5,7 +5,15 @@ import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
 const migration = await readFile(new URL('../supabase/migrations/20261030075132_typed_terminal_pin_verification.sql', import.meta.url), 'utf8');
+const serviceGrantMigration = await readFile(new URL('../supabase/migrations/20261128142527_restrict_internal_pin_service_rpcs.sql', import.meta.url), 'utf8');
 const schema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
+const serviceGrantStatement = serviceGrantMigration.slice(serviceGrantMigration.indexOf('REVOKE EXECUTE ON FUNCTION'));
+const pinServiceRoutines = [
+  'public.legacy_cashiers_for_migration()',
+  'public.pin_throttle_fail(text, integer, integer, integer)',
+  'public.pin_throttle_reset(text)',
+  'public.pin_throttle_status(text)',
+];
 function routine(name) {
   const start = schema.indexOf(`CREATE OR REPLACE FUNCTION public.${name}(`);
   const end = schema.indexOf('$$;', start) + 3;
@@ -22,11 +30,14 @@ try {
       email text,full_name text,role app_role,store_id text,is_active boolean DEFAULT true,
       offline_login_pin_hash text, pin_hash text, last_login_at timestamptz);
     CREATE TABLE cashiers(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),username text,is_active boolean DEFAULT true,
-      pin_hash text,updated_at timestamptz DEFAULT now(),last_login_at timestamptz);
+      full_name text,role_slug text,store_id text,pin_hash text,updated_at timestamptz DEFAULT now(),last_login_at timestamptz);
     CREATE TABLE pin_attempts(key text PRIMARY KEY,attempts int NOT NULL DEFAULT 0,
       window_started_at timestamptz NOT NULL DEFAULT now(),locked_until timestamptz,
       created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now());
     ${routine('pin_throttle_status')} ${routine('pin_throttle_fail')} ${routine('pin_throttle_reset')}
+    ${routine('legacy_cashiers_for_migration')}
+    REVOKE EXECUTE ON FUNCTION ${pinServiceRoutines.join(', ')} FROM PUBLIC;
+    GRANT EXECUTE ON FUNCTION ${pinServiceRoutines.join(', ')} TO authenticated, service_role;
     INSERT INTO app_users(user_id,login_username,email,full_name,role,store_id,pin_hash) VALUES
       ('cashier','alias','cashier@pos.local','Fixture','staff','A',extensions.crypt('9999',extensions.gen_salt('bf',4))),
       ('external','external-alias','external@example.test','Fixture','manager',NULL,extensions.crypt('9999',extensions.gen_salt('bf',4))),
@@ -35,11 +46,30 @@ try {
     UPDATE app_users SET is_active=false WHERE user_id='inactive';
     UPDATE app_users SET offline_login_pin_hash=extensions.crypt('123456',extensions.gen_salt('bf',4)) WHERE user_id='external';
     INSERT INTO cashiers(username,pin_hash) VALUES('cashier',extensions.crypt('1234',extensions.gen_salt('bf',4))),
-      ('external',extensions.crypt('7777',extensions.gen_salt('bf',4)));`);
+      ('external',extensions.crypt('7777',extensions.gen_salt('bf',4))),('legacy-only',NULL);`);
   await db.exec(migration);
   const verify = async (name, pin) => (await db.query('SELECT public.verify_terminal_pin_result($1,$2) result', [name,pin])).rows[0].result;
   const attempts = async name => (await db.query('SELECT * FROM pin_attempts WHERE key=$1', [`terminal-pin:${name}`])).rows[0];
   const check = async (name, run) => { await run(); passed++; console.log(`PASS ${name}`); };
+  await check('fresh schema includes the same service-only grant correction', async () => {
+    assert(schema.includes(serviceGrantStatement));
+  });
+  await check('PIN service grants match Production after applying the correction twice', async () => {
+    const canExecute = async (role, signature) => (await db.query(
+      'SELECT has_function_privilege($1::name, $2::text, $3) AS allowed',
+      [role, signature, 'EXECUTE'],
+    )).rows[0].allowed;
+    for (const signature of pinServiceRoutines) {
+      assert.equal(await canExecute('authenticated', signature), true, signature);
+    }
+    await db.exec(serviceGrantMigration);
+    await db.exec(serviceGrantMigration);
+    for (const signature of pinServiceRoutines) {
+      assert.equal(await canExecute('anon', signature), false, signature);
+      assert.equal(await canExecute('authenticated', signature), false, signature);
+      assert.equal(await canExecute('service_role', signature), true, signature);
+    }
+  });
   await check('correct terminal PIN accepts canonical username, alias and case', async () => {
     for (const name of ['cashier','ALIAS','cashier@pos.local']) {
       const result = await verify(name,'1234');
@@ -111,7 +141,13 @@ try {
       await db.exec('RESET ROLE');
     }
     await db.exec('SET ROLE service_role');
+    assert.equal((await verify('cashier','0000')).status,'invalid');
     assert.equal((await verify('cashier','1234')).status,'verified');
+    const manager = await verify('external-alias','123456');
+    assert.equal(manager.status,'verified');
+    assert.equal(manager.account.role,'manager');
+    const { rows } = await db.query("SELECT username FROM public.legacy_cashiers_for_migration() WHERE username = 'legacy-only'");
+    assert.deepEqual(rows, [{ username: 'legacy-only' }]);
     await db.exec('RESET ROLE');
   });
   console.log(`${passed} isolated terminal PIN result scenarios passed`);

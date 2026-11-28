@@ -7021,6 +7021,14 @@ GRANT ALL ON FUNCTION public.pin_throttle_reset(_key text) TO service_role;
 
 GRANT ALL ON FUNCTION public.pin_throttle_status(_key text) TO service_role;
 
+-- Apply the same PIN service grants as the incremental migration on fresh installs.
+REVOKE EXECUTE ON FUNCTION
+  public.legacy_cashiers_for_migration(),
+  public.pin_throttle_fail(text, integer, integer, integer),
+  public.pin_throttle_reset(text),
+  public.pin_throttle_status(text)
+FROM PUBLIC, anon, authenticated;
+
 GRANT ALL ON FUNCTION public.products_bump_row_version() TO service_role;
 
 GRANT ALL ON FUNCTION public.schema_inventory() TO service_role;
