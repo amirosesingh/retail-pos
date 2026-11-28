@@ -1,7 +1,12 @@
 const { createHash } = require("node:crypto");
 const {prepareFinancialOpening,prepareFinancialHistory,assertFinancialHistoryAcknowledgement}=require("./financial-history-ack.cjs");
 const OPEN_BIRTH_CONFLICT = "FIN62_OPEN_BIRTH_NOT_EMPTY";
+const OPEN_ORIGIN_CONFLICT = "FIN62_OPEN_ORIGIN_NOT_NEW";
 const SALE_BIRTH_CONFLICT = "FIN62_SALE_BIRTH_ALREADY_EXISTS";
+const FINANCIAL_REVIEW_REASONS = {
+  shifts: [OPEN_BIRTH_CONFLICT, OPEN_ORIGIN_CONFLICT],
+  sales: [SALE_BIRTH_CONFLICT],
+};
 const isFinancialReviewError = (error, code) =>
   error?.code === code || (error?.code === "P0001" && error.message === code);
 const { recordId } = require("./uuid-fields.cjs");
@@ -291,8 +296,8 @@ class PushWorker {
         // of the same immutable facts (even if a gateway reports it as 500).
         if ([error?.code, error?.message].some(value =>
           /^SYNC_SHIFT_CLOSURE_(CONFLICT|DUPLICATE)$/.test(String(value ?? "")))) throw error;
-        if (isFinancialReviewError(error, OPEN_BIRTH_CONFLICT) ||
-            isFinancialReviewError(error, SALE_BIRTH_CONFLICT)) throw error;
+        if (Object.values(FINANCIAL_REVIEW_REASONS).some(reasons =>
+          reasons.some(reason => isFinancialReviewError(error, reason)))) throw error;
         const status = Number(error?.status ?? 0);
         const retryable = status === 408 || status === 429 || status >= 500 ||
           ["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "TimeoutError", "AbortError"].includes(error?.code ?? error?.name) ||
@@ -304,7 +309,7 @@ class PushWorker {
     }
     throw new Error("The synchronization retry loop ended unexpectedly.");
   }
-  async sendFinancialReviewable(branchId, terminalId, code, identity, work) {
+  async sendFinancialReviewable(branchId, terminalId, table, identity, work) {
     const pool = this.reader.connectionManager?.pool;
     // Use the same site, connection profile, relay and binding as the actual request.
     const scope = JSON.stringify([branchId, terminalId, this.cloud.requestContext?.().fingerprint]);
@@ -313,19 +318,19 @@ class PushWorker {
       this.financialReviewPool = pool;
       this.financialReviewScope = scope;
     }
-    const key = JSON.stringify([code, identity]);
-    const table = code === OPEN_BIRTH_CONFLICT ? "shifts" : "sales";
+    const key = JSON.stringify([table, identity]);
     const prior = this.financialReviewHolds.get(key);
     if (prior && performance.now() < prior.retryAt)
-      throw Object.assign(new Error(code), { code: prior.code, status: prior.status, table, cachedFinancialReview: true });
+      throw Object.assign(new Error(prior.reason), { code: prior.code, status: prior.status, table, cachedFinancialReview: true });
     this.financialReviewHolds.delete(key);
     try {
       return await this.retry(work);
     } catch (error) {
-      if (!isFinancialReviewError(error, code)) throw error;
+      const reason = FINANCIAL_REVIEW_REASONS[table].find(code => isFinancialReviewError(error, code));
+      if (!reason) throw error;
       if (this.financialReviewHolds.size >= 100)
         this.financialReviewHolds.delete(this.financialReviewHolds.keys().next().value);
-      this.financialReviewHolds.set(key, { code: error.code, status: error.status, retryAt: performance.now() + 300000 });
+      this.financialReviewHolds.set(key, { reason, code: error.code, status: error.status, retryAt: performance.now() + 300000 });
       error.table ??= table;
       throw error;
     }
@@ -349,7 +354,7 @@ class PushWorker {
           const fingerprint = sale && this.cloud.requestContext?.().fingerprint;
           try {
             ack=sale
-              ? await this.sendFinancialReviewable(branchId,terminalId,SALE_BIRTH_CONFLICT,key,send)
+              ? await this.sendFinancialReviewable(branchId,terminalId,"sales",key,send)
               : await this.retry(send);
           } catch(error) {
             if(!sale || !isFinancialReviewError(error,SALE_BIRTH_CONFLICT))throw error;
@@ -528,7 +533,10 @@ class PushWorker {
             rows: await uploadRows(table.cloudTable, rowsForBranch(
               table,
               (savedBookingRows ? savedBookingRows.map(entry => entry.row)
-                : await this.reader.rows(table, live, { branchId,exactFinancial:financialRequired }))
+                : await this.reader.rows(table, live, {
+                  branchId,
+                  exactFinancial: table.cloudTable === "shifts" ? Boolean(financialOpening) : financialRequired,
+                }))
                 .map(row=>table.cloudTable==="shifts" ? openings.get(recordId(row.id))??row:row),
               branchId,
             )),
@@ -624,7 +632,7 @@ class PushWorker {
           this.cloud.pushAggregate({ batchId, branchId, operations,...(openingSidecar?{shiftFinancialOpening:openingSidecar}:{}),...(financialRequired?{financialLedgerProjection:true}:{}),...(financialRefundApprovals.length?{financialRefundApprovals}:{}),
             ...(stockSource?{stockSourceCohorts:stockSource.cohorts}:{}) });
         const acknowledged = openingSidecar
-          ? await this.sendFinancialReviewable(branchId,terminalId,OPEN_BIRTH_CONFLICT,batchId,send)
+          ? await this.sendFinancialReviewable(branchId,terminalId,"shifts",batchId,send)
           : await this.retry(send);
         assertBatchAcknowledgement(acknowledged, batchId);
         assertShiftClosureAcknowledgement(acknowledged, operations, branchId);

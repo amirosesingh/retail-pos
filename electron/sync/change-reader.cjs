@@ -161,19 +161,32 @@ class ChangeReader {
         return wire;});
       source.assertSource();return rows;
     });
-    const request = this.connectionManager.pool.request();
-    const clauses = changes.map((change, index) => {
-      const key = change.key ?? change;
-      return `(${primary.map((column, part) => { request.input(`k${index}_${part}`, key[column]); return `[${column}]=@k${index}_${part}`; }).join(" AND ")})`;
-    });
-    const scope = branchId && table.scope === "branch"
-      // Recover unowned legacy purchase headers (and their children) before
-      // PushWorker stamps the verified branch. Other branches stay excluded.
-      ? table.cloudTable === "products" ? branchPredicate(this.registry, table, "source") : rendererReadBranchPredicate(this.registry, table, "source")
-      : null;
-    if (scope) request.input("branch", String(branchId));
-    const result = await request.query(`SELECT * FROM dbo.[${table.sqlServerTable}] source WHERE (${clauses.join(" OR ")})${scope ? ` AND (${scope})` : ""};`);
-    return (result.recordset ?? []).map((row) => toCloudRow(table, row));
+    const read = async (tx, source) => {
+      const request = tx ? new (this.connectionManager.sql().Request)(tx) : this.connectionManager.pool.request();
+      const clauses = changes.map((change, index) => {
+        const key = change.key ?? change;
+        return `(${primary.map((column, part) => { request.input(`k${index}_${part}`, key[column]); return `[${column}]=@k${index}_${part}`; }).join(" AND ")})`;
+      });
+      const scope = branchId && table.scope === "branch"
+        // Recover unowned legacy purchase headers (and their children) before
+        // PushWorker stamps the verified branch. Other branches stay excluded.
+        ? table.cloudTable === "products" ? branchPredicate(this.registry, table, "source") : rendererReadBranchPredicate(this.registry, table, "source")
+        : null;
+      if (scope) request.input("branch", String(branchId));
+      const result = await request.query(`SELECT * FROM dbo.[${table.sqlServerTable}] source${tx ? " WITH(HOLDLOCK)" : ""} WHERE (${clauses.join(" OR ")})${scope ? ` AND (${scope})` : ""};`);
+      if (source) {
+        // The signed opening can commit after Change Tracking was sampled.
+        if (await this.financialBusinessPending(table, changes, branchId, source.identity.terminalId, tx))
+          throw financialBusinessPendingError(table.sqlServerTable);
+        source.assertSource();
+      }
+      return (result.recordset ?? []).map((row) => toCloudRow(table, row));
+    };
+    if (table.sqlServerTable === "shifts" && !exactFinancial && this.financialCoverageSource && this.financialOperations?.enabled === true) {
+      return this.financialTransaction(tx =>
+        read(tx, this.financialCoverageBinding(branchId, this.financialCoverageSource.identity.terminalId)));
+    }
+    return read();
   }
   /** Capture current closing facts together; journal entries contain keys, not
    * frozen rows. An offline recount may have superseded an older queued close. */
@@ -435,6 +448,9 @@ class ChangeReader {
         CASE WHEN ISJSON(j.entity_id)=1 THEN JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id END,'$.${primary.sqlServerColumn}') ELSE j.entity_id END)
       WHERE j.branch_id=@branch AND j.entity_type=@table ${pendingOnly?"AND j.acknowledged_at IS NULL":""} AND (
         EXISTS(SELECT 1 FROM dbo.pos_sync_shift_financial_events e WHERE e.operation_id=j.aggregate_id AND e.branch_id=@branch AND e.terminal_id=@terminal)
+        OR EXISTS(SELECT 1 FROM dbo.pos_sync_shift_financial_origins o WITH(HOLDLOCK)
+          WHERE @table=N'shifts' AND o.origin_kind=N'OPEN' AND o.branch_id=@branch AND o.terminal_id=@terminal
+            AND o.shift_id=TRY_CONVERT(uniqueidentifier,wanted.[value]) AND o.local_aggregate_id=j.aggregate_id)
         OR EXISTS(SELECT 1 FROM dbo.sync_change_journal owner JOIN dbo.pos_sync_shift_financial_sale_lineage l
           ON l.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(owner.entity_id)=1 THEN owner.entity_id ELSE N'{}' END,'$.id'))
           WHERE owner.aggregate_id=j.aggregate_id AND owner.branch_id=@branch AND owner.entity_type=N'sales' AND l.branch_id=@branch)

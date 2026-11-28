@@ -422,6 +422,22 @@ describe("actual local panel database freshness", () => {
     expect(panel.findText(panel.render(), "Synchronization completed.")).toBeUndefined();
   });
 
+  it("keeps an existing central shift separate from a sale-linked opening or a connectivity failure", async () => {
+    const code = "FIN62_OPEN_ORIGIN_NOT_NEW";
+    const raw = `${code} (table: shifts)`;
+    const panel = panelHarness(ready, { ok: false, error: raw }, {
+      sync: native({ lastError: raw, pending: 1 }),
+      failures: { databaseErrors: [{ id: "opening", stage: "push", code: "P0001", message: raw }] },
+    });
+    await panel.settle();
+    expect(panel.findText(panel.render(), "Existing shift opening needs review")?.type).toBe("summary");
+    expect(panel.findText(panel.render(), "Saved shift opening needs review")).toBeUndefined();
+    expect(panel.findText(panel.render(), "Open Database Settings")).toBeUndefined();
+    await panel.findText(panel.render(), "Sync now")!.props.onClick!();
+    expect(panel.findText(panel.render(), "Existing shift opening needs review. The central database already has this shift. The saved opening still needs matching acceptance evidence.")).toBeDefined();
+    expect(panel.findText(panel.render(), "Synchronization completed.")).toBeUndefined();
+  });
+
   it("opens a read-only verification for the exact stock batch and never treats a missing receipt as verified", async () => {
     const batchId = "11111111-1111-4111-8111-111111111111";
     const reference = "22222222-2222-4222-8222-222222222222";
