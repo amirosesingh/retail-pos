@@ -1,3 +1,23 @@
+## 28 November — Supabase PIN service grants applied on Beta
+
+The owner approved the exact Retail POS Beta migration to align the four
+internal PIN service routines with Production's service-only permissions.
+The migration revokes direct execution by client roles and preserves the
+routine owners, definitions, and service access. It changes no business data.
+
+Retail POS Beta (`irjkmhgrjgcaoixcixut`) recorded one migration, `20261128142527`.
+The [checked-in SQL](../supabase/migrations/20261128142527_restrict_internal_pin_service_rpcs.sql)
+uses that ledger version and the same SHA-256
+`505a7307ceeb87c512fb68728181401f64c62c703a1d0e1c6e49cfb745824f07` as the
+approved proposal `20261128133550`. Read-back confirmed the exact statement
+hash, service execution, and unchanged routine definitions. The repository and
+hosted entry represent one application.
+
+This is a central permission change for all clients connected to Retail POS
+Beta. The local SQL Server schema and installer SQL are separate. Keep each
+PC's configured project and workflow-specific verification in scope. Hosted
+supervisor sign-in on physical tills remains a separate acceptance check.
+
 ## 28 November — Supabase errors and protected shift-opening uploads
 
 The owner requested a read-only review of Supabase Postgres and Authentication

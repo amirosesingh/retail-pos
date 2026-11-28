@@ -63,3 +63,4 @@
 /supabase/schema.sql text eol=lf
 /supabase/migrations/20261117052540_sale_item_parent_sync_scope.sql text eol=lf
 /database/beta/retail-pos-supabase-beta-sale-item-scope.sql text eol=lf
+/supabase/migrations/20261128142527_restrict_internal_pin_service_rpcs.sql text eol=lf
