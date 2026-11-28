@@ -529,7 +529,7 @@ class PushWorker {
               table,
               (savedBookingRows ? savedBookingRows.map(entry => entry.row)
                 : await this.reader.rows(table, live, { branchId,
-                  exactFinancial: financialRequired || (table.cloudTable === "shifts" && Boolean(financialOpening)) }))
+                  exactFinancial: table.cloudTable === "shifts" ? Boolean(financialOpening) : financialRequired }))
                 .map(row=>table.cloudTable==="shifts" ? openings.get(recordId(row.id))??row:row),
               branchId,
             )),

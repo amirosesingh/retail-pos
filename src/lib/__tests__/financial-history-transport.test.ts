@@ -59,6 +59,7 @@ describe('two-phase exact financial history transport',()=>{
   expect(original).toMatchObject({shiftFinancialOpening:f.opening,
    operations:[{table:'shifts',rows:[f.openingRow],changes:[{...f.openingChange,operation:'insert'}]}]});
   expect(f.openingChange.operation).toBe('update');
+  expect(f.reader.rows).toHaveBeenCalledWith(expect.objectContaining({cloudTable:'shifts'}),expect.any(Array),{branchId:branch,exactFinancial:true});
   await f.run();
   expect(f.cloud.pushAggregate.mock.calls[1][0]).toEqual(original);
   expect(f.reader.acknowledgeFinancialOpening).toHaveBeenCalledOnce();

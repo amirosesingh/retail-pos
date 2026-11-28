@@ -34,6 +34,40 @@ writers against the same cutoff. Await exact schema review and separate
 approval for any live stocktake pause. PR #498 remains a draft. No live
 opening, writer enrollment, schema application or traffic switch was made.
 
+The owner approved fresh synthetic location `codex-stock401-cb30a401b4` and two
+isolated tills in Retail POS Beta. The original pending sale and its local
+SQL databases remain under their existing ownership. Verify a new sale in
+local SQL with the fresh relay unavailable, then confirm exact cloud acceptance
+and the matching report on both tills after reconnect. Use the verified
+database receipt time for the cutoff and show the original sale time
+separately. A hosted stocktake pause for this location requires separate
+approval. Release Production web first only after the hosted acceptance and
+verified live schema upgrade. Keep Production installer publication later.
+
+Both isolated Electron tills enrolled successfully. Retail POS Beta and both
+local SQL replicas agreed on the synthetic quantities 7 and 0 after native
+creation and adjustment. Both reports returned incomplete coverage before a
+verified opening. A read-only check of the original till found its saved sale,
+item, payment, stock activity, and five unacknowledged journal entries. Beta
+still had only the header for that original sale. As of this check the new
+branch had no sale or active stocktake pause. The owner explicitly approved the brief stocktake pause for isolated Beta
+location codex-stock401-cb30a401b4. Run the scoped opening and release the
+pause before financial admission and the disconnected sale.
+
+The stocktake created one verified opening on the new Beta branch after the
+first-opening guard was corrected. Both local reports verified quantities
+7 and 0 at the exact cutoff. The cloud pause released, and both tills
+completed financial enrollment. Before any test sale, ordinary Change
+Tracking published the test shift outside the protected opening route. Beta
+records a normal shifts upload, with no protected opening receipt, and the
+local opening remains pending with FIN62_OPEN_ORIGIN_NOT_NEW. The upload fix
+now reserves the pending original in the serializable reader. The corrected
+guard held the existing shift in a read-only test against the physical test
+SQL database. Preserve both records. Complete the hosted sale and after-sale
+history after resolving that already-published test shift through an
+authorized application workflow. Do not promote the Production release while
+that live acceptance or the reviewed Production rollout remains pending.
+
 ## 26 November — Advanced Inventory Reports and local Beta preview
 
 The owner requested one existing Stock Report route with Current Stock, Stock
